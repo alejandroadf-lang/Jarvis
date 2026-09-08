@@ -30,11 +30,15 @@ CEO
 ├── CTO (technology & product)
 │   ├── Engineering Lead
 │   ├── Product Manager
-│   └── Solutions Architect
+│   ├── Solutions Architect
+│   ├── Security Reviewer
+│   └── QA & Test Engineer
 ├── CFO (finance)
 │   └── Finance & Accounting Manager
 ├── CMO (marketing)
-│   └── Marketing Manager
+│   ├── Marketing Manager
+│   ├── SEO Specialist
+│   └── Brand Strategist
 └── COO (operations)
     ├── Sales & Commercial Manager
     ├── Customer Support Manager
@@ -81,6 +85,10 @@ Product Manager`).
 | Customer Support Manager | COO | Post-sale support, ticket triage, customer health |
 | Implementation Manager | COO | Onboarding and delivery of signed projects |
 | HR & People Manager | COO | Hiring, onboarding, culture, policy |
+| SEO Specialist | CMO | Technical SEO, on-page optimization, keyword/content strategy |
+| Brand Strategist | CMO | Voice consistency, competitive positioning research |
+| Security Reviewer | CTO | Vulnerability review (OWASP Top 10, secrets, unsafe patterns) |
+| QA & Test Engineer | CTO | Code review rigor, test coverage, correctness |
 
 This is deliberately close to how a real early-stage IT company is
 structured — a lean C-suite, with one specialist owning each of the
@@ -88,6 +96,21 @@ functions a company actually needs to sell, build, deliver, and support a
 product: marketing, engineering/product, commercial (solutions +
 sales), customer support, implementation, and finance/accounting, plus
 people operations to keep the team itself running.
+
+### Credit: roles adapted from ECC
+
+The SEO Specialist, Brand Strategist, Security Reviewer, and QA & Test
+Engineer are adapted from [Affaan Mustafa](https://github.com/affaan-m)'s
+["Everything Claude Code" (ECC)](https://github.com/affaan-m/ecc) — the
+MIT-licensed library of Claude Code subagents and skills he open-sourced
+after winning the Anthropic x Forum Ventures hackathon. Their
+responsibilities, review priorities (e.g. the SEO Specialist's
+critical/high/medium audit tiers, the Security Reviewer's OWASP-Top-10
+pattern table, the QA Engineer's confidence-gated review checklist), and
+quality bars are drawn from ECC's `seo-specialist`, `brand-voice`,
+`security-reviewer`, and `code-reviewer` agents/skills — rewritten as
+personas for this org chart's `agentRunner.js` rather than copied
+verbatim. See `server/agents/orgChart.js` for the adapted prompts.
 
 ## How it works, end to end
 
