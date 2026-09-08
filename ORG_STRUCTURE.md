@@ -229,19 +229,33 @@ history; the Studio sidebar shows the balance live.
    Executive Team conversation, and the UI switches you to that tab so you
    can see the company start planning execution right away.
 
-### Revenue flowing back in
+### Money flowing in and out
 
 There's no real payment integration in a personal project like this, so
-revenue isn't detected automatically — but it is trackable through the
-Executive Team. The Finance & Accounting Manager (reports to the CFO) has
-a `log_revenue` action tool, the same mechanism as `propose_venture`: tell
-the CFO or Finance Manager that real money came in (e.g. "we got $200 from
-the newsletter's first paying subscribers"), and it records a `revenue`
-transaction against the treasury, attributed to a venture id when there is
-one. Both the Executive Team and Venture Studio sidebars show the Treasury
-panel, and it refreshes after every chat turn in either mode, so a logged
-payment shows up immediately regardless of which tab you're in.
+neither revenue nor spending is detected automatically — but both are
+trackable through the Executive Team. The Finance & Accounting Manager
+(reports to the CFO) has two action tools, the same mechanism as
+`propose_venture`:
 
-The agent is instructed to only log money that's actually landed, not a
-forecast or a verbal promise — so the treasury stays an honest running
-total rather than a wish list.
+- `log_revenue` — tell the CFO or Finance Manager that real money came in
+  (e.g. "we got $200 from the newsletter's first paying subscribers"), and
+  it records a `revenue` transaction against the treasury.
+- `log_expense` — tell them about real money you actually spent (e.g. "I
+  just paid $12 for the domain"), and it records an `expense` transaction.
+
+Both accept an optional venture id to attribute the transaction to a
+specific venture, and both are instructed to only log money that's
+actually moved — not a forecast, a verbal promise, or a planned purchase —
+so the treasury stays an honest running total rather than a wish list.
+
+This is deliberately a **manual, human-in-the-loop** ledger, not an
+autonomous one: nothing in this codebase can move real money on its own.
+The intended workflow is to fund a venture with real capital yourself
+(e.g. a $100-capped virtual card, so nothing can ever go over budget no
+matter what happens on the software side), have the agents recommend what
+to spend it on, make each purchase yourself, and then tell Finance what
+actually happened so the app's numbers track reality.
+
+Both the Executive Team and Venture Studio sidebars show the Treasury
+panel, and it refreshes after every chat turn in either mode, so a logged
+transaction shows up immediately regardless of which tab you're in.

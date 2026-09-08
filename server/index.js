@@ -103,7 +103,7 @@ async function runCompanyTurn(sessionId, message) {
     agents: COMPANY_AGENTS,
     agentId: COMPANY_ROOT,
     messages: workingMessages,
-    actionHandlers: { log_revenue: handleLogRevenue },
+    actionHandlers: { log_revenue: handleLogRevenue, log_expense: handleLogExpense },
     extraContext: buildTreasuryContext(),
   });
 
@@ -155,27 +155,48 @@ async function handleProposeVenture(input) {
   return `Logged venture proposal ${venture.id} ("${venture.title}"), asking $${venture.budgetRequested}. Status: proposed. Tell the founder they can greenlight it from the Ventures panel to allocate budget and hand it to the executive team.`;
 }
 
-async function handleLogRevenue(input) {
+// Shared validation for log_revenue/log_expense: a positive amount and,
+// when given, a ventureId that actually exists. Returns either
+// { amount, ventureId, description } or { error }.
+function resolveTransactionInput(input, defaultDescription) {
   const amount = Number(input.amount);
   if (!Number.isFinite(amount) || amount <= 0) {
-    return 'Could not log revenue: amount must be a positive number.';
+    return { error: 'amount must be a positive number.' };
   }
 
   let ventureId = null;
   if (input.ventureId) {
     const venture = getVenture(input.ventureId);
     if (!venture) {
-      return `Could not log revenue: no venture found with id "${input.ventureId}". Log it without a ventureId, or double-check the id.`;
+      return { error: `no venture found with id "${input.ventureId}". Log it without a ventureId, or double-check the id.` };
     }
     ventureId = venture.id;
   }
 
   const description =
-    typeof input.description === 'string' && input.description.trim() ? input.description.trim() : 'Revenue';
+    typeof input.description === 'string' && input.description.trim() ? input.description.trim() : defaultDescription;
 
+  return { amount, ventureId, description };
+}
+
+async function handleLogRevenue(input) {
+  const resolved = resolveTransactionInput(input, 'Revenue');
+  if (resolved.error) return `Could not log revenue: ${resolved.error}`;
+
+  const { amount, ventureId, description } = resolved;
   addTransaction({ type: 'revenue', amount, description, ventureId });
   const { balance } = getLedger();
   return `Logged $${amount} in revenue${ventureId ? ` for venture ${ventureId}` : ''} ("${description}"). Treasury balance is now $${balance.toFixed(2)}.`;
+}
+
+async function handleLogExpense(input) {
+  const resolved = resolveTransactionInput(input, 'Expense');
+  if (resolved.error) return `Could not log expense: ${resolved.error}`;
+
+  const { amount, ventureId, description } = resolved;
+  addTransaction({ type: 'expense', amount, description, ventureId });
+  const { balance } = getLedger();
+  return `Logged $${amount} in expenses${ventureId ? ` for venture ${ventureId}` : ''} ("${description}"). Treasury balance is now $${balance.toFixed(2)}.`;
 }
 
 app.get('/api/studio/org-chart', (_req, res) => {
