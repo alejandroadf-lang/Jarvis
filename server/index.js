@@ -147,7 +147,10 @@ function buildTreasuryContext() {
   return `Company treasury: $${balance.toFixed(2)} available out of a $${startingCapital} starting seed.
 Active (funded) ventures: ${summarize(ventures.filter((v) => v.status === 'active'))}
 Proposed (not yet funded) ventures: ${summarize(ventures.filter((v) => v.status === 'proposed'))}
-Keep any budget ask realistic against what is actually left in the treasury.`;
+This treasury funds cheap first experiments, not the ceiling on how big any
+venture is allowed to become — keep the budget *ask* realistic against
+what's actually left, but keep the *ambition* aimed at a real venture-scale
+outcome.`;
 }
 
 async function handleProposeVenture(input) {

@@ -25,6 +25,16 @@ function VentureCard({ venture, action }) {
         <StatusBadge status={venture.status} />
       </div>
       <p className="text-[11px] text-cyan-500/60 mt-0.5">{venture.oneLiner}</p>
+      {venture.marketSize && (
+        <p className="text-[11px] text-cyan-500/50 mt-1">
+          <span className="text-cyan-500/70">Market:</span> {venture.marketSize}
+        </p>
+      )}
+      {venture.pathToMillions && (
+        <p className="text-[11px] text-cyan-500/50 mt-1">
+          <span className="text-cyan-500/70">Path to $1M+:</span> {venture.pathToMillions}
+        </p>
+      )}
       <p className="text-[11px] text-cyan-400/70 mt-1">
         {venture.status === 'active' ? 'Funded' : 'Asking'} ${venture.budgetRequested}
       </p>

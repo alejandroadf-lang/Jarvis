@@ -174,10 +174,11 @@ venture proposal sized against the company's actual cash.
 
 ```
 Venture Partner
-├── Market Researcher       — market sizing, trends, competitors
-├── Ideation Facilitator    — wide, divergent raw idea generation
-├── Business Case Analyst   — costs, pricing, path to revenue, milestones
-└── Validation Critic       — deliberate skeptic, stress-tests assumptions
+├── Market Researcher       — market sizing, megatrends, competitors
+├── Ideation Facilitator    — wide, divergent, ambitious raw idea generation
+├── Business Case Analyst   — costs, pricing, path to $1M+ revenue, milestones
+├── Scale Strategist        — TAM/ceiling sizing, expansion mechanism
+└── Validation Critic       — deliberate skeptic (including "is this big enough")
 ```
 
 It's the same orchestrator-workers engine as the Executive Team (see
@@ -185,6 +186,25 @@ It's the same orchestrator-workers engine as the Executive Team (see
 execution: the Venture Partner runs the session, pulls in whichever
 specialist a step of the conversation actually needs, and converges on one
 strong idea rather than assuming the first idea is the right one.
+
+### Calibrated for ambition, not just cash-on-hand
+
+Early versions of this team converged on trivially small ideas (a resume
+app, a to-do list) because every prompt kept reminding agents how little
+money was in the treasury — a classic failure mode where "budget is small"
+quietly becomes "so pick something small." That's fixed at the prompt
+level: every agent is told the treasury funds the *first cheap experiment*,
+never the ceiling on the business itself, and the ambition bar is explicit
+— a believable path to **$1M+ in annual revenue within a few years**, in a
+market big enough to support that. The Ideation Facilitator has a standing
+list of oversaturated, low-ambition categories (generic resume/CV builders,
+to-do apps, habit trackers, note-taking apps) to skip by default unless
+there's a real differentiated wedge, and the Validation Critic is
+instructed to flag "too small to matter" with the same force it flags
+infeasibility. `propose_venture` enforces this structurally too: `marketSize`
+and `pathToMillions` are *required* fields, so the Venture Partner literally
+cannot log a proposal without naming the market and the mechanism to real
+scale.
 
 ### The treasury
 
@@ -210,10 +230,11 @@ history; the Studio sidebar shows the balance live.
    existing ventures injected into context, so the Business Case Analyst
    sizes its numbers against what's actually left, not a hypothetical
    budget.
-2. Once you've converged on something real, the Venture Partner calls its
-   `propose_venture` action — a tool that isn't delegation but a genuine
-   side effect: it logs a venture (title, problem, target customer,
-   business model, a budget ask, and milestones) via
+2. Once you've converged on something real — and it clears the ambition
+   bar — the Venture Partner calls its `propose_venture` action — a tool
+   that isn't delegation but a genuine side effect: it logs a venture
+   (title, problem, target customer, business model, market size, the path
+   to $1M+ revenue, a budget ask, and milestones) via
    `server/finance/ventures.js`, with status `proposed`. This shows up
    immediately in the **Ventures** panel in the sidebar.
 3. You **greenlight** a proposed venture from that panel
