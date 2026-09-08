@@ -33,6 +33,9 @@ app.get('/api/health', (_req, res) => {
   res.json({ ok: true, configured: Boolean(process.env.ANTHROPIC_API_KEY) });
 });
 
+// Streams the reply back as plain text chunks (chunked transfer, no SSE
+// framing needed) so the client can start speaking a sentence before the
+// rest of the reply has even finished generating.
 app.post('/api/chat', async (req, res) => {
   const { sessionId, message } = req.body || {};
   if (!sessionId || typeof message !== 'string' || !message.trim()) {
@@ -46,14 +49,23 @@ app.post('/api/chat', async (req, res) => {
   history.push({ role: 'user', content: message });
 
   try {
-    const response = await anthropic.messages.create({
+    const stream = anthropic.messages.stream({
       model: 'claude-sonnet-5',
       max_tokens: 1024,
       system: SYSTEM_PROMPT,
       messages: history,
     });
 
-    const reply = response.content
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    stream.on('text', (delta) => res.write(delta));
+    // Without a listener, the SDK also fires an independent unhandled promise
+    // rejection on stream errors (on top of the one finalMessage() below
+    // surfaces) — that can crash the process on newer Node versions. The
+    // catch block already handles the real error via finalMessage() rejecting.
+    stream.on('error', () => {});
+
+    const finalMessage = await stream.finalMessage();
+    const reply = finalMessage.content
       .filter((block) => block.type === 'text')
       .map((block) => block.text)
       .join('\n');
@@ -61,10 +73,14 @@ app.post('/api/chat', async (req, res) => {
     history.push({ role: 'assistant', content: reply });
     sessions.set(sessionId, history.slice(-MAX_TURNS));
 
-    res.json({ reply });
+    res.end();
   } catch (err) {
     console.error('Anthropic API error:', err);
-    res.status(502).json({ error: 'Failed to reach the assistant' });
+    if (res.headersSent) {
+      res.end();
+    } else {
+      res.status(502).json({ error: 'Failed to reach the assistant' });
+    }
   }
 });
 
