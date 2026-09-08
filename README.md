@@ -3,6 +3,11 @@
 A personal voice assistant. React chat UI (with browser speech-to-text and
 text-to-speech) talking to an Express backend that calls the Claude API.
 
+It also ships an **Executive Team** mode: a virtual IT-company org chart
+(CEO, CTO, CFO, CMO, COO, and their department leads) built as a hierarchy
+of Claude agents that delegate to each other to answer a request. See
+[ORG_STRUCTURE.md](./ORG_STRUCTURE.md) for the architecture and roster.
+
 ## Stack
 
 - **Client:** React + Vite 5 + Tailwind CSS v4, Web Speech API for voice in/out

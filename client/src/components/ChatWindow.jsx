@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import MessageBubble from './MessageBubble.jsx';
 
-export default function ChatWindow({ messages }) {
+export default function ChatWindow({ messages, emptyHint }) {
   const bottomRef = useRef(null);
 
   useEffect(() => {
@@ -12,11 +12,11 @@ export default function ChatWindow({ messages }) {
     <div className="flex-1 overflow-y-auto px-4 py-6 space-y-3">
       {messages.length === 0 && (
         <p className="text-center text-cyan-500/50 text-sm mt-12">
-          Say something, or type below to get started.
+          {emptyHint || 'Say something, or type below to get started.'}
         </p>
       )}
       {messages.map((m, i) => (
-        <MessageBubble key={i} role={m.role} content={m.content} />
+        <MessageBubble key={i} role={m.role} content={m.content} trace={m.trace} />
       ))}
       <div ref={bottomRef} />
     </div>
