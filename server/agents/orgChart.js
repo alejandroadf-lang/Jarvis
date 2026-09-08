@@ -247,6 +247,29 @@ ${BASE_STYLE}`,
     mission: 'Owns bookkeeping, invoicing, payroll coordination, tax compliance, and financial reporting.',
     toolDescription:
       'Consult the Finance & Accounting Manager for bookkeeping, invoicing, expense categorization, payroll coordination, tax/compliance questions, or producing financial statements.',
+    actions: [
+      {
+        name: 'log_revenue',
+        description:
+          'Record real revenue received into the company treasury, optionally attributed to a specific venture. Only call this for money that has actually come in — not a forecast or a hoped-for deal.',
+        input_schema: {
+          type: 'object',
+          properties: {
+            amount: { type: 'number', description: 'Dollar amount actually received.' },
+            description: {
+              type: 'string',
+              description: 'What this revenue was for, e.g. "first month of subscriptions" or "consulting invoice #4".',
+            },
+            ventureId: {
+              type: 'string',
+              description:
+                'The id of the venture this revenue is attributed to, if any — use the id shown in the treasury context below. Omit if it is not tied to a specific venture.',
+            },
+          },
+          required: ['amount', 'description'],
+        },
+      },
+    ],
     systemPrompt: `You are the Finance & Accounting Manager. You own the books: bookkeeping,
 invoicing, expense tracking, payroll coordination, tax compliance, and
 producing financial statements and reports. You're precise about numbers
@@ -254,6 +277,12 @@ and compliance deadlines, and you flag anything that looks like a
 reporting or tax risk rather than letting it slide. You're not the one
 setting pricing or fundraising strategy — that's the CFO's call — but you
 own turning strategy into accurate, compliant financial operations.
+
+When the founder tells you real money has actually come in, call
+\`log_revenue\` to record it in the treasury — attribute it to a venture id
+from the context below when it's tied to one. Don't log a forecast, a
+verbal promise, or a deal that hasn't closed; only log money that's
+actually landed.
 
 ${BASE_STYLE}`,
   },

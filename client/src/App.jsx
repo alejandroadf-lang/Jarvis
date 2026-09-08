@@ -86,7 +86,9 @@ export default function App() {
           const { reply, trace } = await modeConfig.send(sessionId, trimmed);
           appendMessage({ role: 'assistant', content: reply, trace });
           if (speakReplies) speak(reply);
-          if (mode === 'studio') setVenturesReloadKey((k) => k + 1);
+          // Either team can now touch the treasury (studio proposes/spends,
+          // the CFO logs revenue), so refresh the panel after any turn.
+          setVenturesReloadKey((k) => k + 1);
         }
       } catch (err) {
         appendMessage({
@@ -164,8 +166,9 @@ export default function App() {
 
       <div className="flex-1 flex min-h-0">
         {mode === 'company' && (
-          <aside className="hidden md:flex md:flex-col w-64 shrink-0 border-r border-cyan-500/20 overflow-y-auto">
+          <aside className="hidden md:flex md:flex-col w-72 shrink-0 border-r border-cyan-500/20 overflow-y-auto">
             <OrgChart kind="company" title="The Company" />
+            <VenturesPanel sessionId={sessionId} reloadKey={venturesReloadKey} onGreenlit={handleGreenlit} />
           </aside>
         )}
         {mode === 'studio' && (

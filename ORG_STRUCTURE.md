@@ -229,9 +229,19 @@ history; the Studio sidebar shows the balance live.
    Executive Team conversation, and the UI switches you to that tab so you
    can see the company start planning execution right away.
 
-Revenue a venture earns back isn't wired to anything automatic yet (there's
-no real payment integration in a personal project like this) — for now,
-log it yourself as a `revenue` transaction against the venture's id via
-`addTransaction()` in `server/finance/ledger.js`, or extend the Executive
-Team (e.g. give the CFO an action tool to record it) the same way
-`propose_venture` was added to the Venture Partner.
+### Revenue flowing back in
+
+There's no real payment integration in a personal project like this, so
+revenue isn't detected automatically — but it is trackable through the
+Executive Team. The Finance & Accounting Manager (reports to the CFO) has
+a `log_revenue` action tool, the same mechanism as `propose_venture`: tell
+the CFO or Finance Manager that real money came in (e.g. "we got $200 from
+the newsletter's first paying subscribers"), and it records a `revenue`
+transaction against the treasury, attributed to a venture id when there is
+one. Both the Executive Team and Venture Studio sidebars show the Treasury
+panel, and it refreshes after every chat turn in either mode, so a logged
+payment shows up immediately regardless of which tab you're in.
+
+The agent is instructed to only log money that's actually landed, not a
+forecast or a verbal promise — so the treasury stays an honest running
+total rather than a wish list.

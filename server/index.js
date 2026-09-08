@@ -87,6 +87,8 @@ async function runCompanyTurn(sessionId, message) {
     agents: COMPANY_AGENTS,
     agentId: COMPANY_ROOT,
     messages: workingMessages,
+    actionHandlers: { log_revenue: handleLogRevenue },
+    extraContext: buildTreasuryContext(),
   });
 
   history.push({ role: 'user', content: message });
@@ -135,6 +137,29 @@ Keep any budget ask realistic against what is actually left in the treasury.`;
 async function handleProposeVenture(input) {
   const venture = createVenture(input);
   return `Logged venture proposal ${venture.id} ("${venture.title}"), asking $${venture.budgetRequested}. Status: proposed. Tell the founder they can greenlight it from the Ventures panel to allocate budget and hand it to the executive team.`;
+}
+
+async function handleLogRevenue(input) {
+  const amount = Number(input.amount);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return 'Could not log revenue: amount must be a positive number.';
+  }
+
+  let ventureId = null;
+  if (input.ventureId) {
+    const venture = getVenture(input.ventureId);
+    if (!venture) {
+      return `Could not log revenue: no venture found with id "${input.ventureId}". Log it without a ventureId, or double-check the id.`;
+    }
+    ventureId = venture.id;
+  }
+
+  const description =
+    typeof input.description === 'string' && input.description.trim() ? input.description.trim() : 'Revenue';
+
+  addTransaction({ type: 'revenue', amount, description, ventureId });
+  const { balance } = getLedger();
+  return `Logged $${amount} in revenue${ventureId ? ` for venture ${ventureId}` : ''} ("${description}"). Treasury balance is now $${balance.toFixed(2)}.`;
 }
 
 app.get('/api/studio/org-chart', (_req, res) => {
