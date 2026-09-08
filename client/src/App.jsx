@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from 'react';
 import ChatWindow from './components/ChatWindow.jsx';
 import VoiceButton from './components/VoiceButton.jsx';
 import OrgChart from './components/OrgChart.jsx';
+import VenturesPanel from './components/VenturesPanel.jsx';
 import { useSpeechRecognition } from './hooks/useSpeechRecognition.js';
 import { useSpeechSynthesis } from './hooks/useSpeechSynthesis.js';
 import {
@@ -9,6 +10,8 @@ import {
   resetConversation,
   sendCompanyMessage,
   resetCompanyConversation,
+  sendStudioMessage,
+  resetStudioConversation,
 } from './api/chat.js';
 
 function getSessionId() {
@@ -25,30 +28,46 @@ const MODES = {
     label: 'Jarvis',
     placeholder: 'Message Jarvis…',
     emptyHint: 'Say something, or type below to get started.',
+    send: sendMessage,
+    reset: resetConversation,
   },
   company: {
     label: 'Executive Team',
     placeholder: 'Ask the executive team…',
     emptyHint: "Ask for anything — the CEO will route it to the right department.",
+    send: sendCompanyMessage,
+    reset: resetCompanyConversation,
+  },
+  studio: {
+    label: 'Venture Studio',
+    placeholder: 'Pitch an idea, or ask the team to brainstorm…',
+    emptyHint:
+      "Brainstorm here. When an idea is ready, the Venture Partner logs it as a proposal you can greenlight and push to the company.",
+    send: sendStudioMessage,
+    reset: resetStudioConversation,
   },
 };
 
 export default function App() {
   const sessionId = useMemo(getSessionId, []);
   const [mode, setMode] = useState('jarvis');
-  const [messagesByMode, setMessagesByMode] = useState({ jarvis: [], company: [] });
+  const [messagesByMode, setMessagesByMode] = useState({ jarvis: [], company: [], studio: [] });
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [speakReplies, setSpeakReplies] = useState(true);
+  const [venturesReloadKey, setVenturesReloadKey] = useState(0);
 
   const messages = messagesByMode[mode];
-  const isCompany = mode === 'company';
+  const modeConfig = MODES[mode];
 
   const { speak, speaking, cancel, supported: ttsSupported } = useSpeechSynthesis();
 
-  const appendMessage = useCallback((m) => {
-    setMessagesByMode((prev) => ({ ...prev, [mode]: [...prev[mode], m] }));
-  }, [mode]);
+  const appendMessage = useCallback(
+    (m, targetMode = mode) => {
+      setMessagesByMode((prev) => ({ ...prev, [targetMode]: [...prev[targetMode], m] }));
+    },
+    [mode]
+  );
 
   const submit = useCallback(
     async (text) => {
@@ -59,14 +78,15 @@ export default function App() {
       setInput('');
       setSending(true);
       try {
-        if (isCompany) {
-          const { reply, trace } = await sendCompanyMessage(sessionId, trimmed);
-          appendMessage({ role: 'assistant', content: reply, trace });
-          if (speakReplies) speak(reply);
-        } else {
-          const reply = await sendMessage(sessionId, trimmed);
+        if (mode === 'jarvis') {
+          const reply = await modeConfig.send(sessionId, trimmed);
           appendMessage({ role: 'assistant', content: reply });
           if (speakReplies) speak(reply);
+        } else {
+          const { reply, trace } = await modeConfig.send(sessionId, trimmed);
+          appendMessage({ role: 'assistant', content: reply, trace });
+          if (speakReplies) speak(reply);
+          if (mode === 'studio') setVenturesReloadKey((k) => k + 1);
         }
       } catch (err) {
         appendMessage({
@@ -77,7 +97,7 @@ export default function App() {
         setSending(false);
       }
     },
-    [sending, sessionId, speak, speakReplies, isCompany, appendMessage]
+    [sending, sessionId, speak, speakReplies, mode, modeConfig, appendMessage]
   );
 
   const { listening, start, stop, supported: sttSupported } = useSpeechRecognition({
@@ -85,14 +105,23 @@ export default function App() {
   });
 
   const handleReset = async () => {
-    if (isCompany) {
-      await resetCompanyConversation(sessionId);
-    } else {
-      await resetConversation(sessionId);
-    }
+    await modeConfig.reset(sessionId);
     setMessagesByMode((prev) => ({ ...prev, [mode]: [] }));
     cancel();
   };
+
+  const handleGreenlit = useCallback(
+    (result) => {
+      if (!result.companyBriefing) return;
+      appendMessage({ role: 'user', content: result.companyBriefing.message }, 'company');
+      appendMessage(
+        { role: 'assistant', content: result.companyBriefing.reply, trace: result.companyBriefing.trace },
+        'company'
+      );
+      setMode('company');
+    },
+    [appendMessage]
+  );
 
   return (
     <div className="min-h-screen flex flex-col bg-[#0b0d10] text-cyan-50">
@@ -105,9 +134,7 @@ export default function App() {
                 key={key}
                 onClick={() => setMode(key)}
                 className={`px-3 py-1 transition-colors ${
-                  mode === key
-                    ? 'bg-cyan-600 text-white'
-                    : 'text-cyan-400/80 hover:text-cyan-300'
+                  mode === key ? 'bg-cyan-600 text-white' : 'text-cyan-400/80 hover:text-cyan-300'
                 }`}
               >
                 {cfg.label}
@@ -136,13 +163,19 @@ export default function App() {
       </header>
 
       <div className="flex-1 flex min-h-0">
-        {isCompany && (
-          <aside className="hidden md:block w-64 shrink-0 border-r border-cyan-500/20">
-            <OrgChart />
+        {mode === 'company' && (
+          <aside className="hidden md:flex md:flex-col w-64 shrink-0 border-r border-cyan-500/20 overflow-y-auto">
+            <OrgChart kind="company" title="The Company" />
+          </aside>
+        )}
+        {mode === 'studio' && (
+          <aside className="hidden md:flex md:flex-col w-72 shrink-0 border-r border-cyan-500/20 overflow-y-auto">
+            <OrgChart kind="studio" title="The Studio" />
+            <VenturesPanel sessionId={sessionId} reloadKey={venturesReloadKey} onGreenlit={handleGreenlit} />
           </aside>
         )}
         <div className="flex-1 flex flex-col min-w-0">
-          <ChatWindow messages={messages} emptyHint={MODES[mode].emptyHint} />
+          <ChatWindow messages={messages} emptyHint={modeConfig.emptyHint} />
 
           <form
             onSubmit={(e) => {
@@ -159,7 +192,7 @@ export default function App() {
             <input
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder={listening ? 'Listening…' : MODES[mode].placeholder}
+              placeholder={listening ? 'Listening…' : modeConfig.placeholder}
               className="flex-1 bg-white/5 border border-cyan-500/20 rounded-full px-4 py-2 text-sm outline-none focus:border-cyan-400/60"
             />
             <button

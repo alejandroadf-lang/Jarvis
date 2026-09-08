@@ -338,20 +338,3 @@ ${BASE_STYLE}`,
   },
 };
 
-export function getAgent(id) {
-  const agent = AGENTS[id];
-  if (!agent) throw new Error(`Unknown agent id: ${id}`);
-  return agent;
-}
-
-// Sanitized view of the org chart for the frontend (no system prompts).
-export function listOrgChart() {
-  return Object.values(AGENTS).map(({ id, title, department, reportsTo, reports, mission }) => ({
-    id,
-    title,
-    department,
-    reportsTo,
-    reports,
-    mission,
-  }));
-}

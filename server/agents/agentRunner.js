@@ -1,4 +1,6 @@
-// Orchestrator-workers engine for "The Company" org chart (see orgChart.js).
+// Orchestrator-workers engine, generic over any agent map (the operating
+// company's org chart, the venture studio, or anything else shaped the same
+// way — see registry.js).
 //
 // Each agent that has direct reports is run through a Claude tool-use loop
 // where every report is exposed as a callable tool named `consult_<id>`.
@@ -6,18 +8,23 @@
 // its own (possibly further-delegating) agent, feed its answer back as a
 // tool_result, and let the manager keep going until it produces a final
 // text answer. This mirrors Anthropic's orchestrator-workers workflow and
-// the Claude Agent SDK's subagent model, just applied to a company org
-// chart instead of a coding task.
+// the Claude Agent SDK's subagent model.
+//
+// An agent can also define `actions`: extra tools that aren't delegation,
+// but a real side effect (e.g. the venture studio's `propose_venture`,
+// which logs a venture proposal). The caller supplies `actionHandlers`, a
+// map from tool name to an async function that performs the effect and
+// returns the text to feed back to the agent as the tool_result.
 
-import { getAgent } from './orgChart.js';
+import { getAgent } from './registry.js';
 
 const MODEL = 'claude-sonnet-5';
 const MAX_TOKENS = 1024;
 const MAX_ROUNDS = 6; // safety cap on tool-calling rounds within one agent's turn
 
-function buildTools(agent) {
-  return agent.reports.map((reportId) => {
-    const report = getAgent(reportId);
+function buildTools(agents, agent) {
+  const delegationTools = agent.reports.map((reportId) => {
+    const report = getAgent(agents, reportId);
     return {
       name: `consult_${report.id}`,
       description: report.toolDescription,
@@ -34,6 +41,14 @@ function buildTools(agent) {
       },
     };
   });
+
+  const actionTools = (agent.actions || []).map((action) => ({
+    name: action.name,
+    description: action.description,
+    input_schema: action.input_schema,
+  }));
+
+  return [...delegationTools, ...actionTools];
 }
 
 /**
@@ -42,15 +57,28 @@ function buildTools(agent) {
  *
  * @param {object} opts
  * @param {import('@anthropic-ai/sdk').default} opts.anthropic
+ * @param {Record<string, object>} opts.agents - the org chart / team this agent belongs to
  * @param {string} opts.agentId
  * @param {Array<{role: string, content: any}>} opts.messages
  * @param {Array<object>} [opts.trace] - shared array collecting every agent consulted
  * @param {number} [opts.depth]
+ * @param {Record<string, (input: object) => Promise<string>>} [opts.actionHandlers]
+ * @param {string} [opts.extraContext] - extra text appended to every agent's system prompt for this run
  * @returns {Promise<{text: string, trace: object[]}>}
  */
-export async function runAgent({ anthropic, agentId, messages, trace = [], depth = 0 }) {
-  const agent = getAgent(agentId);
-  const tools = buildTools(agent);
+export async function runAgent({
+  anthropic,
+  agents,
+  agentId,
+  messages,
+  trace = [],
+  depth = 0,
+  actionHandlers = {},
+  extraContext = '',
+}) {
+  const agent = getAgent(agents, agentId);
+  const tools = buildTools(agents, agent);
+  const system = extraContext ? `${agent.systemPrompt}\n\n${extraContext}` : agent.systemPrompt;
   const working = [...messages];
 
   let finalText = '';
@@ -59,7 +87,7 @@ export async function runAgent({ anthropic, agentId, messages, trace = [], depth
     const response = await anthropic.messages.create({
       model: MODEL,
       max_tokens: MAX_TOKENS,
-      system: agent.systemPrompt,
+      system,
       messages: working,
       ...(tools.length ? { tools } : {}),
     });
@@ -79,22 +107,35 @@ export async function runAgent({ anthropic, agentId, messages, trace = [], depth
 
     const toolResults = [];
     for (const toolUse of toolUses) {
-      const reportId = toolUse.name.replace(/^consult_/, '');
       let resultText;
-      try {
-        const report = getAgent(reportId);
-        const brief = typeof toolUse.input?.task === 'string' ? toolUse.input.task : '';
-        const sub = await runAgent({
-          anthropic,
-          agentId: reportId,
-          messages: [{ role: 'user', content: brief }],
-          trace,
-          depth: depth + 1,
-        });
-        resultText = sub.text;
-        trace.push({ id: report.id, title: report.title, department: report.department, depth: depth + 1 });
-      } catch (err) {
-        resultText = `(Could not reach ${reportId}: ${err.message})`;
+      if (toolUse.name.startsWith('consult_')) {
+        const reportId = toolUse.name.slice('consult_'.length);
+        try {
+          const report = getAgent(agents, reportId);
+          const brief = typeof toolUse.input?.task === 'string' ? toolUse.input.task : '';
+          const sub = await runAgent({
+            anthropic,
+            agents,
+            agentId: reportId,
+            messages: [{ role: 'user', content: brief }],
+            trace,
+            depth: depth + 1,
+            actionHandlers,
+            extraContext,
+          });
+          resultText = sub.text;
+          trace.push({ id: report.id, title: report.title, department: report.department, depth: depth + 1 });
+        } catch (err) {
+          resultText = `(Could not reach ${toolUse.name}: ${err.message})`;
+        }
+      } else if (actionHandlers[toolUse.name]) {
+        try {
+          resultText = await actionHandlers[toolUse.name](toolUse.input || {});
+        } catch (err) {
+          resultText = `(Action ${toolUse.name} failed: ${err.message})`;
+        }
+      } else {
+        resultText = `(Unknown tool: ${toolUse.name})`;
       }
       toolResults.push({ type: 'tool_result', tool_use_id: toolUse.id, content: resultText });
     }

@@ -13,15 +13,16 @@ function Node({ agent, byId, depth }) {
   );
 }
 
-export default function OrgChart() {
+export default function OrgChart({ kind = 'company', title = 'The Company' }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    fetchOrgChart()
+    setData(null);
+    fetchOrgChart(kind)
       .then(setData)
       .catch((err) => setError(err.message));
-  }, []);
+  }, [kind]);
 
   if (error) {
     return <p className="text-xs text-red-400 p-4">Couldn't load the org chart.</p>;
@@ -35,8 +36,8 @@ export default function OrgChart() {
   if (!root) return null;
 
   return (
-    <div className="h-full overflow-y-auto p-4">
-      <h2 className="text-xs font-semibold uppercase tracking-wide text-cyan-300 mb-3">The Company</h2>
+    <div className="p-4">
+      <h2 className="text-xs font-semibold uppercase tracking-wide text-cyan-300 mb-3">{title}</h2>
       <Node agent={root} byId={byId} depth={0} />
     </div>
   );
