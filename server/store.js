@@ -9,8 +9,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// Overridable so tests can point at an isolated temp directory instead of
-// the real server/data/ (see server/test/).
+// Overridable: tests point this at an isolated temp directory (see
+// server/test/), and in production it should point at a mounted
+// persistent volume (e.g. JARVIS_DATA_DIR=/data on Railway — see
+// README.md's "Deploy to Railway" section) so state survives a redeploy
+// instead of living in the container's ephemeral filesystem.
 const DATA_DIR = process.env.JARVIS_DATA_DIR
   ? path.resolve(process.env.JARVIS_DATA_DIR)
   : path.join(__dirname, 'data');

@@ -82,6 +82,46 @@ for all three chat modes is persisted to `server/data/sessions.json` (see
 `server/sessionStore.js`) — still no real database, but it survives a
 server restart instead of vanishing.
 
+## Deploy to Railway
+
+The daily meeting cycle (see above) only fires if the server is actually
+running at 8 AM Bangkok time — on a laptop that's usually off, it won't
+be. [Railway](https://railway.app) is a simple way to keep it running
+24/7:
+
+1. **Create a new project from this GitHub repo.** Railway detects the
+   `Dockerfile` at the repo root automatically (`railway.json` pins the
+   builder explicitly, so it won't try to guess otherwise) — no other
+   config needed to get it building.
+2. **Add a Volume**, mounted at `/data`. The app stores everything it
+   shouldn't lose — the treasury, ventures, session history, daily
+   reports — as JSON files (see `server/store.js`) under whatever
+   `JARVIS_DATA_DIR` points at. Without a volume, that state lives in the
+   container's writable layer and is wiped on every redeploy; with one,
+   it survives.
+3. **Set environment variables** on the service:
+   - `ANTHROPIC_API_KEY` — required for any of this to work at all.
+   - `JARVIS_DATA_DIR=/data` — points persistence at the volume from
+     step 2.
+   - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`,
+     `REPORT_EMAIL_TO` — optional, to get the Daily Report emailed (see
+     `server/.env.example` for details; Gmail needs an app password, not
+     your normal one).
+   - `DAILY_MEETING_DISABLED=true` — optional, if you want the app
+     running without the autonomous daily cycle.
+
+   Railway injects its own `PORT`, which `server/index.js` already reads
+   (`process.env.PORT`), so nothing needs setting there.
+4. **Deploy.** `railway.json`'s healthcheck (`GET /api/health`) tells
+   Railway to restart the service if it ever stops responding, so the
+   scheduler in `server/scheduler.js` gets to actually run every day
+   instead of depending on someone remembering to keep a laptop open.
+
+A push to `main` doesn't auto-redeploy unless you connect Railway's
+GitHub integration for this repo (its own setting, separate from
+anything above) — without it, redeploy manually from the Railway
+dashboard after a merge.
+
 ### Voice experience
 
 Jarvis mode streams Claude's reply as it's generated and speaks it
