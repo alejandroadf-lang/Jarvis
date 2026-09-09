@@ -206,6 +206,22 @@ and `pathToMillions` are *required* fields, so the Venture Partner literally
 cannot log a proposal without naming the market and the mechanism to real
 scale.
 
+### Grounded in real research, not just recall
+
+The Market Researcher and Scale Strategist both have Anthropic's hosted
+`web_search_20250305` tool enabled (`serverTools` on the agent definition
+in `ideationTeam.js`, passed straight through to the API by
+`agentRunner.js` — Anthropic executes the search server-side and folds the
+results into the same response, so no extra round trip is needed in our
+dispatch loop). This is what lets those two agents cite a real TAM figure,
+recent funding activity, or actual competitor pricing instead of reciting
+a number from training data that might be stale or simply invented-sounding.
+Each is capped at `max_uses: 4` per invocation to bound cost and latency;
+both are instructed to say when a claim came from a search versus their
+own estimate. Web search is billed per search by Anthropic, separately
+from token usage — a Studio conversation that leans on these two agents
+will cost a bit more than one that doesn't.
+
 ### The treasury
 
 The company starts with **$100 in seed capital** — a small, real (if
