@@ -7,6 +7,8 @@ import {
   sendTrancheRequestEmail,
   formatVentureProposedEmail,
   sendVentureProposedEmail,
+  formatWeeklyReflectionEmail,
+  sendWeeklyReflectionEmail,
 } from '../email.js';
 
 function makeReport(overrides = {}) {
@@ -93,6 +95,41 @@ test('sendTrancheRequestEmail and sendVentureProposedEmail are no-ops without SM
   try {
     assert.equal(await sendTrancheRequestEmail(makeVenture()), false);
     assert.equal(await sendVentureProposedEmail(makeVenture()), false);
+  } finally {
+    if (savedHost !== undefined) process.env.SMTP_HOST = savedHost;
+    if (savedTo !== undefined) process.env.REPORT_EMAIL_TO = savedTo;
+  }
+});
+
+function makeReflection(overrides = {}) {
+  return {
+    weekEnding: '2026-01-04',
+    generatedAt: '2026-01-04T01:30:00.000Z',
+    reportsConsidered: 7,
+    reflection: 'Only one flagged opportunity got followed up on this week.',
+    trace: [],
+    usage: { inputTokens: 100, outputTokens: 50 },
+    costUsd: 0.001,
+    durationMs: 5000,
+    ...overrides,
+  };
+}
+
+test('formatWeeklyReflectionEmail includes the week and the reflection text', () => {
+  const { subject, text } = formatWeeklyReflectionEmail(makeReflection());
+  assert.match(subject, /2026-01-04/);
+  assert.match(text, /7 daily report/);
+  assert.match(text, /Only one flagged opportunity/);
+});
+
+test('sendWeeklyReflectionEmail is a no-op without SMTP configured', async () => {
+  const savedHost = process.env.SMTP_HOST;
+  const savedTo = process.env.REPORT_EMAIL_TO;
+  delete process.env.SMTP_HOST;
+  delete process.env.REPORT_EMAIL_TO;
+
+  try {
+    assert.equal(await sendWeeklyReflectionEmail(makeReflection()), false);
   } finally {
     if (savedHost !== undefined) process.env.SMTP_HOST = savedHost;
     if (savedTo !== undefined) process.env.REPORT_EMAIL_TO = savedTo;

@@ -107,3 +107,18 @@ export async function sendVentureProposedEmail(venture) {
   const { subject, text } = formatVentureProposedEmail(venture);
   return sendEmail(subject, text);
 }
+
+export function formatWeeklyReflectionEmail(reflection) {
+  const subject = `Weekly Reflection — week ending ${reflection.weekEnding}`;
+  const lines = [`Based on ${reflection.reportsConsidered} daily report(s) this week.`];
+  if (typeof reflection.costUsd === 'number' && typeof reflection.durationMs === 'number') {
+    lines.push(`Ran in ${(reflection.durationMs / 1000).toFixed(1)}s · ${formatUsd(reflection.costUsd)}`);
+  }
+  lines.push('', reflection.reflection);
+  return { subject, text: lines.join('\n') };
+}
+
+export async function sendWeeklyReflectionEmail(reflection) {
+  const { subject, text } = formatWeeklyReflectionEmail(reflection);
+  return sendEmail(subject, text);
+}
