@@ -403,14 +403,18 @@ runs on its own, once a day, with nobody prompting it:
    bar? If so, it logs a proposal with the same `propose_venture` action
    used in an interactive brainstorm; if not, it says so plainly rather
    than forcing one.
-3. **The report is saved and that's it.** Both replies, their full
+3. **The report is saved, then emailed.** Both replies, their full
    delegation traces, any new venture ids, and a treasury snapshot are
    written to `server/dailyReports.json` (via `server/dailyReports.js`),
    keyed by date. A **Daily Report** tab
    (`client/src/components/DailyReportView.jsx`) lists every past report
    and shows the selected one; a "Run today's meeting now" button
    (`POST /api/reports/daily/run`) triggers a cycle on demand instead of
-   waiting for the schedule.
+   waiting for the schedule. Right after saving, `server/email.js` sends
+   the same report by email if `SMTP_HOST`/`REPORT_EMAIL_TO` are
+   configured (see `server/.env.example`) — opt-in and best-effort: a
+   failed send is logged but never fails the cycle, since the report is
+   already saved and viewable either way.
 
 **This cycle cannot move money or kill a venture on its own.** The
 leadership sync isn't given the treasury/venture action handlers at
@@ -424,12 +428,18 @@ the same human-in-the-loop guarantee every other capital-moving action in
 this app already has. Autonomy here means the *information gathering and
 recommending* runs itself; spending real (simulated) money never does.
 
-`server/scheduler.js` is intentionally simple rather than a real cron:
-shortly after the server starts, it runs today's cycle if one hasn't
-happened yet today, then checks again every 24 hours. That's enough for
-an app with no guaranteed uptime — a server that's up once a day still
-gets a report every day, and one that's down for a stretch just picks up
-on the next day it's running instead of going silently dark. It's
+`server/scheduler.js` targets a specific wall-clock time — **8:00 AM
+Bangkok time**, which is always 01:00 UTC (`Asia/Bangkok` is a fixed
+UTC+7 with no DST, so no timezone library is needed: `TARGET_UTC_HOUR =
+1`). Rather than a real cron, it's a self-rescheduling `setTimeout` loop:
+`nextTargetUTC()` computes today's 01:00 UTC if it hasn't passed yet, or
+tomorrow's otherwise, and the cycle reschedules itself against that fresh
+computation every time it runs — no drift from chaining `setInterval`.
+That's enough for an app with no guaranteed uptime: a server that's
+running at 8 AM ICT gets its report right on time; one that starts up
+later the same day with nothing generated yet catches up soon rather
+than waiting until tomorrow's slot; one that's down for a whole day just
+picks up the next day it's running instead of going silently dark. It's
 skipped entirely without `ANTHROPIC_API_KEY` configured, and can be
 disabled outright with `DAILY_MEETING_DISABLED=true` if you'd rather
 trigger it manually every time.

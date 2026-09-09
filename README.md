@@ -21,15 +21,17 @@ active, or killed) with its own slice of the ledger and milestone
 progress, so you can compare the whole company at a glance instead of one
 venture at a time.
 
-The management team also runs itself day to day: once every 24 hours (no
-one needs to start the conversation), the Executive Team holds a
-leadership sync — the CEO checks in with the C-suite, who check in with
-their own teams — and the Venture Studio reviews whatever opportunities
-came out of it for a possible new proposal. The result is saved as a
-**Daily Report** you can read at any time, or trigger on demand with a
-"run now" button. It's read-only by design: this cycle can log a new
-venture *proposal*, but it can never move treasury money or kill a
-venture on its own — a human still greenlights anything that spends.
+The management team also runs itself day to day: once every 24 hours, at
+8:00 AM Bangkok time (no one needs to start the conversation), the
+Executive Team holds a leadership sync — the CEO checks in with the
+C-suite, who check in with their own teams — and the Venture Studio
+reviews whatever opportunities came out of it for a possible new
+proposal. The result is saved as a **Daily Report** you can read at any
+time, or trigger on demand with a "run now" button, and — if you set
+`SMTP_HOST`/`REPORT_EMAIL_TO` in `server/.env` — emailed to you as soon
+as it's ready. It's read-only by design: this cycle can log a new venture
+*proposal*, but it can never move treasury money or kill a venture on its
+own — a human still greenlights anything that spends.
 
 See [ORG_STRUCTURE.md](./ORG_STRUCTURE.md) for the full architecture,
 roster, and how capital flows from idea to execution.

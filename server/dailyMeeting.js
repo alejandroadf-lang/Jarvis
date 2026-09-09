@@ -23,6 +23,7 @@ import { getLedger } from './finance/ledger.js';
 import { listVentures } from './finance/ventures.js';
 import { handleProposeVenture } from './actionHandlers.js';
 import { todayKey, saveDailyReport } from './dailyReports.js';
+import { sendDailyReportEmail } from './email.js';
 
 function leadershipKickoff(date) {
   return `It's ${date}. Time for today's daily leadership sync.
@@ -120,5 +121,16 @@ export async function runDailyMeeting({ anthropic }) {
     treasury: { balance, startingCapital },
   };
 
-  return saveDailyReport(report);
+  saveDailyReport(report);
+
+  try {
+    await sendDailyReportEmail(report);
+  } catch (err) {
+    // Email delivery is a notification on top of a report that's already
+    // saved and viewable in the Daily Report tab — don't fail the whole
+    // cycle just because SMTP had a bad day.
+    console.error('Failed to email daily report:', err);
+  }
+
+  return report;
 }
