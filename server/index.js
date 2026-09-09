@@ -9,7 +9,16 @@ import { listAgents } from './agents/registry.js';
 import { AGENTS as COMPANY_AGENTS, ROOT_AGENT_ID as COMPANY_ROOT } from './agents/orgChart.js';
 import { AGENTS as STUDIO_AGENTS, ROOT_AGENT_ID as STUDIO_ROOT } from './agents/ideationTeam.js';
 import { getLedger, addTransaction } from './finance/ledger.js';
-import { listVentures, getVenture, createVenture, activateVenture } from './finance/ventures.js';
+import {
+  listVentures,
+  getVenture,
+  createVenture,
+  activateVenture,
+  setMilestoneStatus,
+  requestTranche,
+  approveTranche,
+  denyTranche,
+} from './finance/ventures.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3001;
@@ -103,7 +112,12 @@ async function runCompanyTurn(sessionId, message) {
     agents: COMPANY_AGENTS,
     agentId: COMPANY_ROOT,
     messages: workingMessages,
-    actionHandlers: { log_revenue: handleLogRevenue, log_expense: handleLogExpense },
+    actionHandlers: {
+      log_revenue: handleLogRevenue,
+      log_expense: handleLogExpense,
+      report_milestone_progress: handleReportMilestoneProgress,
+      request_tranche: handleRequestTranche,
+    },
     extraContext: buildTreasuryContext(),
   });
 
@@ -138,19 +152,45 @@ app.post('/api/company/reset', (req, res) => {
   res.json({ ok: true });
 });
 
+function describeMilestones(venture) {
+  if (!venture.milestones.length) return 'none listed';
+  return venture.milestones.map((m, i) => `[${i}] ${m.title} (${m.status})`).join('; ');
+}
+
+function describeActiveVenture(venture) {
+  const pending = venture.pendingTranche
+    ? ` — PENDING TRANCHE REQUEST: $${venture.pendingTranche.amount} for "${venture.pendingTranche.description}" (awaiting founder approval; don't request another for this venture until it's resolved)`
+    : '';
+  return `"${venture.title}" [id: ${venture.id}] — milestones: ${describeMilestones(venture)}${pending}`;
+}
+
 function buildTreasuryContext() {
   const { balance, startingCapital } = getLedger();
   const ventures = listVentures();
-  const summarize = (list) =>
-    list.length ? list.map((v) => `${v.title} ($${v.budgetRequested})`).join('; ') : 'none yet';
+  const active = ventures.filter((v) => v.status === 'active');
+  const proposed = ventures.filter((v) => v.status === 'proposed');
+
+  const activeList = active.length ? active.map(describeActiveVenture).join('\n') : 'none yet';
+  const proposedList = proposed.length
+    ? proposed.map((v) => `"${v.title}" [id: ${v.id}] (asking $${v.budgetRequested})`).join('; ')
+    : 'none yet';
 
   return `Company treasury: $${balance.toFixed(2)} available out of a $${startingCapital} starting seed.
-Active (funded) ventures: ${summarize(ventures.filter((v) => v.status === 'active'))}
-Proposed (not yet funded) ventures: ${summarize(ventures.filter((v) => v.status === 'proposed'))}
+
+Active (funded) ventures:
+${activeList}
+
+Proposed (not yet funded) ventures: ${proposedList}
+
 This treasury funds cheap first experiments, not the ceiling on how big any
 venture is allowed to become — keep the budget *ask* realistic against
 what's actually left, but keep the *ambition* aimed at a real venture-scale
-outcome.`;
+outcome. Funding here is staged: when the founder reports a real outcome
+for a specific milestone on an active venture, use its id and milestone
+index above to call report_milestone_progress. Once a venture's current
+milestone is marked done and there's a concrete next step, request_tranche
+can ask the founder to fund it — never while a tranche is already pending
+for that venture.`;
 }
 
 async function handleProposeVenture(input) {
@@ -200,6 +240,36 @@ async function handleLogExpense(input) {
   addTransaction({ type: 'expense', amount, description, ventureId });
   const { balance } = getLedger();
   return `Logged $${amount} in expenses${ventureId ? ` for venture ${ventureId}` : ''} ("${description}"). Treasury balance is now $${balance.toFixed(2)}.`;
+}
+
+async function handleReportMilestoneProgress(input) {
+  const index = Number(input.milestoneIndex);
+  if (!Number.isInteger(index) || index < 0) {
+    return 'Could not update milestone: milestoneIndex must be a non-negative integer.';
+  }
+  if (!['done', 'missed'].includes(input.status)) {
+    return 'Could not update milestone: status must be "done" or "missed".';
+  }
+  try {
+    const venture = setMilestoneStatus(input.ventureId, index, input.status, input.note);
+    const milestone = venture.milestones[index];
+    return `Marked milestone [${index}] "${milestone.title}" as ${input.status} for "${venture.title}".`;
+  } catch (err) {
+    return `Could not update milestone: ${err.message}`;
+  }
+}
+
+async function handleRequestTranche(input) {
+  const amount = Number(input.amount);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return 'Could not request tranche: amount must be a positive number.';
+  }
+  try {
+    const venture = requestTranche(input.ventureId, { amount, description: input.description });
+    return `Requested a $${amount} tranche for "${venture.title}" (${input.description}). Tell the founder they can approve it from the Ventures panel to add it to the treasury allocation.`;
+  } catch (err) {
+    return `Could not request tranche: ${err.message}`;
+  }
 }
 
 app.get('/api/studio/org-chart', (_req, res) => {
@@ -290,7 +360,7 @@ Problem: ${activated.problem}
 Target customer: ${activated.targetCustomer}
 Business model: ${activated.businessModel}
 Approved budget: $${activated.budgetRequested} out of the company's $${result.ledger.balance.toFixed(2)} remaining treasury
-Milestones: ${activated.milestones.join('; ') || 'none specified'}
+Milestones: ${activated.milestones.map((m) => m.title).join('; ') || 'none specified'}
 
 Put together an execution plan and tell me which departments start on what first.`;
 
@@ -303,6 +373,61 @@ Put together an execution plan and tell me which departments start on what first
   }
 
   res.json(result);
+});
+
+app.post('/api/ventures/:id/tranche/approve', async (req, res) => {
+  const { id } = req.params;
+  const { sessionId } = req.body || {};
+
+  const venture = getVenture(id);
+  if (!venture) return res.status(404).json({ error: 'Venture not found' });
+  if (!venture.pendingTranche) {
+    return res.status(400).json({ error: 'No pending tranche request for this venture' });
+  }
+
+  const { balance } = getLedger();
+  if (venture.pendingTranche.amount > balance) {
+    return res.status(400).json({
+      error: `Not enough in the treasury: tranche asks for $${venture.pendingTranche.amount}, only $${balance.toFixed(2)} available.`,
+    });
+  }
+
+  const { venture: updated, tranche } = approveTranche(id);
+  addTransaction({
+    type: 'investment',
+    amount: tranche.amount,
+    description: `Tranche: ${tranche.description || updated.title}`,
+    ventureId: updated.id,
+  });
+
+  const result = { venture: updated, ledger: getLedger() };
+
+  if (sessionId && process.env.ANTHROPIC_API_KEY) {
+    const briefing = `The board approved a follow-on tranche of $${tranche.amount} for "${updated.title}": ${tranche.description}.
+
+Remaining treasury: $${result.ledger.balance.toFixed(2)}.
+
+Continue execution with this.`;
+
+    try {
+      const { reply, trace } = await runCompanyTurn(sessionId, briefing);
+      result.companyBriefing = { message: briefing, reply, trace };
+    } catch (err) {
+      console.error('Failed to push tranche briefing to company:', err);
+    }
+  }
+
+  res.json(result);
+});
+
+app.post('/api/ventures/:id/tranche/deny', (req, res) => {
+  const { id } = req.params;
+  try {
+    const venture = denyTranche(id);
+    res.json({ venture });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 const clientDist = path.join(__dirname, '..', 'client', 'dist');

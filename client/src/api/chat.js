@@ -78,3 +78,13 @@ export async function greenlightVenture(ventureId, sessionId) {
   const { data } = await axios.post(`/api/ventures/${ventureId}/greenlight`, { sessionId });
   return data; // { venture, ledger, companyBriefing? }
 }
+
+export async function approveTranche(ventureId, sessionId) {
+  const { data } = await axios.post(`/api/ventures/${ventureId}/tranche/approve`, { sessionId });
+  return data; // { venture, ledger, companyBriefing? }
+}
+
+export async function denyTranche(ventureId) {
+  const { data } = await axios.post(`/api/ventures/${ventureId}/tranche/deny`);
+  return data; // { venture }
+}

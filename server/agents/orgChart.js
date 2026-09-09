@@ -105,6 +105,40 @@ ${BASE_STYLE}`,
     mission: 'Owns financial strategy, fundraising narrative, pricing, and fiscal discipline.',
     toolDescription:
       'Consult the CFO for financial strategy, fundraising, pricing decisions, unit economics, or budget tradeoffs at the company level.',
+    actions: [
+      {
+        name: 'report_milestone_progress',
+        description:
+          "Record whether a venture's milestone was actually hit or missed. Only call this when the founder reports a real outcome for a specific milestone — not a plan or an estimate.",
+        input_schema: {
+          type: 'object',
+          properties: {
+            ventureId: { type: 'string', description: 'The venture id, from the treasury context below.' },
+            milestoneIndex: {
+              type: 'integer',
+              description: 'The 0-based index of the milestone, from the treasury context below.',
+            },
+            status: { type: 'string', enum: ['done', 'missed'], description: 'Whether the milestone was hit or missed.' },
+            note: { type: 'string', description: 'A short note on what actually happened.' },
+          },
+          required: ['ventureId', 'milestoneIndex', 'status'],
+        },
+      },
+      {
+        name: 'request_tranche',
+        description:
+          "Request the founder's approval to allocate the next chunk of treasury to an active venture, funding its next milestone. Only call this once the venture's current milestone is marked done and there's a clear, funded next step — and never while a tranche request is already pending for that venture.",
+        input_schema: {
+          type: 'object',
+          properties: {
+            ventureId: { type: 'string', description: 'The venture id, from the treasury context below.' },
+            amount: { type: 'number', description: 'Dollars requested for the next milestone. Must be realistic against what is left in the treasury.' },
+            description: { type: 'string', description: 'What this tranche funds — the next milestone or step.' },
+          },
+          required: ['ventureId', 'amount', 'description'],
+        },
+      },
+    ],
     systemPrompt: `You are the CFO. You own financial strategy: runway, fundraising narrative,
 pricing strategy, unit economics, and fiscal discipline across every
 department. You think in cash flow and margin, and you're the person who
@@ -115,6 +149,16 @@ books, bookkeeping, invoicing, tax compliance, and day-to-day financial
 operations. Bring them in for anything operational (reconciling numbers,
 producing a statement, invoice terms); keep strategic calls (pricing,
 fundraising, big spend decisions) for yourself.
+
+You also own staged funding for active ventures — capital here is
+progressive, not handed over all at once. When the founder reports a real
+outcome for a specific milestone, call \`report_milestone_progress\` to
+record it (done or missed, with a short note). Once a venture's current
+milestone is marked done and there's a concrete next step, you can call
+\`request_tranche\` to ask the founder to fund it — never request a new
+tranche while one is already pending for that venture, and never inflate
+the ask just to keep a venture alive after a missed milestone; say plainly
+when a venture isn't earning its next tranche.
 
 ${DELEGATION_STYLE}
 

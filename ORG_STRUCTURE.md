@@ -239,6 +239,34 @@ over history:
 `GET /api/ventures/ledger` returns the current balance and full transaction
 history; the Studio sidebar shows the balance live.
 
+### Progressive capital: staged funding, not one check
+
+A venture's initial `budgetRequested` at greenlight only funds its first
+milestone — capital into a venture grows in tranches as it actually proves
+itself, not all at once. The CFO (`server/agents/orgChart.js`) owns this:
+
+- `report_milestone_progress` — records whether a specific milestone (by
+  index) was actually hit or missed, with a note. Call this when the
+  founder reports a real outcome, not a plan.
+- `request_tranche` — once a venture's current milestone is marked `done`
+  and there's a concrete next step, asks the founder to fund it. Only one
+  tranche request can be pending per venture at a time.
+
+Every venture the CFO can see comes with its id, its milestones (with
+index and status), and any pending tranche request injected into context
+by `buildTreasuryContext()` in `index.js` — that's what lets the CFO call
+these tools with the right ids without guessing.
+
+A requested tranche doesn't touch the treasury until the founder approves
+it — `POST /api/ventures/:id/tranche/approve` checks the ask against the
+current balance (same insufficient-funds guard as the initial greenlight),
+records an `investment` transaction, and pushes a briefing into the
+Executive Team conversation the same way greenlighting does.
+`POST /api/ventures/:id/tranche/deny` clears the request without spending
+anything. Both the pending request and every milestone's status show up on
+the venture's card in the Ventures panel, with Approve/Deny buttons when
+there's something to act on.
+
 ### From brainstorm to venture to execution
 
 1. You brainstorm with the Venture Partner and its team in **Venture

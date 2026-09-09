@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { fetchVentures, fetchLedger, greenlightVenture } from '../api/chat.js';
+import { fetchVentures, fetchLedger, greenlightVenture, approveTranche, denyTranche } from '../api/chat.js';
 
 function StatusBadge({ status }) {
   const styles = {
@@ -17,7 +17,25 @@ function StatusBadge({ status }) {
   );
 }
 
-function VentureCard({ venture, action }) {
+function MilestoneList({ milestones }) {
+  if (!milestones?.length) return null;
+  const styles = {
+    done: 'text-emerald-400/70',
+    missed: 'text-red-400/60 line-through',
+    pending: 'text-cyan-500/50',
+  };
+  return (
+    <ul className="mt-1 space-y-0.5">
+      {milestones.map((m, i) => (
+        <li key={i} className={`text-[11px] ${styles[m.status] || 'text-cyan-500/50'}`}>
+          {m.title} · {m.status}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function VentureCard({ venture, action, onApproveTranche, onDenyTranche, busy }) {
   return (
     <div className="border border-cyan-500/20 rounded-lg p-2">
       <div className="flex items-center justify-between gap-2">
@@ -36,8 +54,32 @@ function VentureCard({ venture, action }) {
         </p>
       )}
       <p className="text-[11px] text-cyan-400/70 mt-1">
-        {venture.status === 'active' ? 'Funded' : 'Asking'} ${venture.budgetRequested}
+        {venture.status === 'active' ? 'Funded so far' : 'Asking'} ${venture.budgetRequested}
       </p>
+      <MilestoneList milestones={venture.milestones} />
+      {venture.pendingTranche && (
+        <div className="mt-2 border border-amber-500/30 rounded p-2 space-y-1">
+          <p className="text-[11px] text-amber-400/80">
+            Tranche requested: ${venture.pendingTranche.amount} — {venture.pendingTranche.description}
+          </p>
+          <div className="flex gap-2">
+            <button
+              onClick={() => onApproveTranche(venture.id)}
+              disabled={busy}
+              className="text-xs bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-white rounded-full px-3 py-1"
+            >
+              {busy ? 'Approving…' : 'Approve tranche'}
+            </button>
+            <button
+              onClick={() => onDenyTranche(venture.id)}
+              disabled={busy}
+              className="text-xs border border-cyan-500/30 text-cyan-400/80 hover:text-cyan-300 disabled:opacity-40 rounded-full px-3 py-1"
+            >
+              Deny
+            </button>
+          </div>
+        </div>
+      )}
       {action}
     </div>
   );
@@ -69,6 +111,33 @@ export default function VenturesPanel({ sessionId, reloadKey, onGreenlit }) {
       const result = await greenlightVenture(id, sessionId);
       load();
       onGreenlit?.(result);
+    } catch (err) {
+      setError(err.response?.data?.error || err.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleApproveTranche = async (id) => {
+    setBusyId(id);
+    setError(null);
+    try {
+      const result = await approveTranche(id, sessionId);
+      load();
+      onGreenlit?.(result);
+    } catch (err) {
+      setError(err.response?.data?.error || err.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleDenyTranche = async (id) => {
+    setBusyId(id);
+    setError(null);
+    try {
+      await denyTranche(id);
+      load();
     } catch (err) {
       setError(err.response?.data?.error || err.message);
     } finally {
@@ -125,7 +194,13 @@ export default function VenturesPanel({ sessionId, reloadKey, onGreenlit }) {
         <div className="mt-4 space-y-2">
           <h3 className="text-[11px] uppercase tracking-wide text-cyan-500/60">Active</h3>
           {active.map((v) => (
-            <VentureCard key={v.id} venture={v} />
+            <VentureCard
+              key={v.id}
+              venture={v}
+              onApproveTranche={handleApproveTranche}
+              onDenyTranche={handleDenyTranche}
+              busy={busyId === v.id}
+            />
           ))}
         </div>
       )}
