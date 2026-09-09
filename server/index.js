@@ -8,8 +8,19 @@ import { runAgent } from './agents/agentRunner.js';
 import { listAgents } from './agents/registry.js';
 import { AGENTS as COMPANY_AGENTS, ROOT_AGENT_ID as COMPANY_ROOT } from './agents/orgChart.js';
 import { AGENTS as STUDIO_AGENTS, ROOT_AGENT_ID as STUDIO_ROOT } from './agents/ideationTeam.js';
+import { loadSessions, saveSession, deleteSession } from './sessionStore.js';
 import { getLedger, addTransaction } from './finance/ledger.js';
-import { listVentures, getVenture, createVenture, activateVenture } from './finance/ventures.js';
+import {
+  listVentures,
+  getVenture,
+  createVenture,
+  activateVenture,
+  setMilestoneStatus,
+  requestTranche,
+  approveTranche,
+  denyTranche,
+  killVenture,
+} from './finance/ventures.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3001;
@@ -21,9 +32,11 @@ and quietly witty — never rambling. Address the user directly and skip unneces
 preamble. When you don't know something, say so plainly instead of guessing.`;
 
 const MAX_TURNS = 20; // messages kept per session (user+assistant combined)
-const sessions = new Map(); // sessionId -> [{ role, content }]
-const companySessions = new Map(); // sessionId -> [{ role, content }], CEO-level only
-const studioSessions = new Map(); // sessionId -> [{ role, content }], Venture Partner-level only
+// Each Map is seeded from disk at startup and kept in sync on every write
+// via sessionStore.js, so conversation history survives a server restart.
+const sessions = loadSessions('jarvis'); // sessionId -> [{ role, content }]
+const companySessions = loadSessions('company'); // sessionId -> [{ role, content }], CEO-level only
+const studioSessions = loadSessions('studio'); // sessionId -> [{ role, content }], Venture Partner-level only
 
 const app = express();
 app.use(cors());
@@ -71,7 +84,9 @@ app.post('/api/chat', async (req, res) => {
       .join('\n');
 
     history.push({ role: 'assistant', content: reply });
-    sessions.set(sessionId, history.slice(-MAX_TURNS));
+    const trimmed = history.slice(-MAX_TURNS);
+    sessions.set(sessionId, trimmed);
+    saveSession('jarvis', sessionId, trimmed);
 
     res.end();
   } catch (err) {
@@ -86,7 +101,10 @@ app.post('/api/chat', async (req, res) => {
 
 app.post('/api/reset', (req, res) => {
   const { sessionId } = req.body || {};
-  if (sessionId) sessions.delete(sessionId);
+  if (sessionId) {
+    sessions.delete(sessionId);
+    deleteSession('jarvis', sessionId);
+  }
   res.json({ ok: true });
 });
 
@@ -103,13 +121,21 @@ async function runCompanyTurn(sessionId, message) {
     agents: COMPANY_AGENTS,
     agentId: COMPANY_ROOT,
     messages: workingMessages,
-    actionHandlers: { log_revenue: handleLogRevenue, log_expense: handleLogExpense },
+    actionHandlers: {
+      log_revenue: handleLogRevenue,
+      log_expense: handleLogExpense,
+      report_milestone_progress: handleReportMilestoneProgress,
+      request_tranche: handleRequestTranche,
+      kill_venture: handleKillVenture,
+    },
     extraContext: buildTreasuryContext(),
   });
 
   history.push({ role: 'user', content: message });
   history.push({ role: 'assistant', content: text });
-  companySessions.set(sessionId, history.slice(-MAX_TURNS));
+  const trimmed = history.slice(-MAX_TURNS);
+  companySessions.set(sessionId, trimmed);
+  saveSession('company', sessionId, trimmed);
 
   return { reply: text, trace };
 }
@@ -134,23 +160,52 @@ app.post('/api/company/chat', async (req, res) => {
 
 app.post('/api/company/reset', (req, res) => {
   const { sessionId } = req.body || {};
-  if (sessionId) companySessions.delete(sessionId);
+  if (sessionId) {
+    companySessions.delete(sessionId);
+    deleteSession('company', sessionId);
+  }
   res.json({ ok: true });
 });
+
+function describeMilestones(venture) {
+  if (!venture.milestones.length) return 'none listed';
+  return venture.milestones.map((m, i) => `[${i}] ${m.title} (${m.status})`).join('; ');
+}
+
+function describeActiveVenture(venture) {
+  const pending = venture.pendingTranche
+    ? ` — PENDING TRANCHE REQUEST: $${venture.pendingTranche.amount} for "${venture.pendingTranche.description}" (awaiting founder approval; don't request another for this venture until it's resolved)`
+    : '';
+  return `"${venture.title}" [id: ${venture.id}] — milestones: ${describeMilestones(venture)}${pending}`;
+}
 
 function buildTreasuryContext() {
   const { balance, startingCapital } = getLedger();
   const ventures = listVentures();
-  const summarize = (list) =>
-    list.length ? list.map((v) => `${v.title} ($${v.budgetRequested})`).join('; ') : 'none yet';
+  const active = ventures.filter((v) => v.status === 'active');
+  const proposed = ventures.filter((v) => v.status === 'proposed');
+
+  const activeList = active.length ? active.map(describeActiveVenture).join('\n') : 'none yet';
+  const proposedList = proposed.length
+    ? proposed.map((v) => `"${v.title}" [id: ${v.id}] (asking $${v.budgetRequested})`).join('; ')
+    : 'none yet';
 
   return `Company treasury: $${balance.toFixed(2)} available out of a $${startingCapital} starting seed.
-Active (funded) ventures: ${summarize(ventures.filter((v) => v.status === 'active'))}
-Proposed (not yet funded) ventures: ${summarize(ventures.filter((v) => v.status === 'proposed'))}
+
+Active (funded) ventures:
+${activeList}
+
+Proposed (not yet funded) ventures: ${proposedList}
+
 This treasury funds cheap first experiments, not the ceiling on how big any
 venture is allowed to become — keep the budget *ask* realistic against
 what's actually left, but keep the *ambition* aimed at a real venture-scale
-outcome.`;
+outcome. Funding here is staged: when the founder reports a real outcome
+for a specific milestone on an active venture, use its id and milestone
+index above to call report_milestone_progress. Once a venture's current
+milestone is marked done and there's a concrete next step, request_tranche
+can ask the founder to fund it — never while a tranche is already pending
+for that venture.`;
 }
 
 async function handleProposeVenture(input) {
@@ -202,6 +257,45 @@ async function handleLogExpense(input) {
   return `Logged $${amount} in expenses${ventureId ? ` for venture ${ventureId}` : ''} ("${description}"). Treasury balance is now $${balance.toFixed(2)}.`;
 }
 
+async function handleReportMilestoneProgress(input) {
+  const index = Number(input.milestoneIndex);
+  if (!Number.isInteger(index) || index < 0) {
+    return 'Could not update milestone: milestoneIndex must be a non-negative integer.';
+  }
+  if (!['done', 'missed'].includes(input.status)) {
+    return 'Could not update milestone: status must be "done" or "missed".';
+  }
+  try {
+    const venture = setMilestoneStatus(input.ventureId, index, input.status, input.note);
+    const milestone = venture.milestones[index];
+    return `Marked milestone [${index}] "${milestone.title}" as ${input.status} for "${venture.title}".`;
+  } catch (err) {
+    return `Could not update milestone: ${err.message}`;
+  }
+}
+
+async function handleRequestTranche(input) {
+  const amount = Number(input.amount);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return 'Could not request tranche: amount must be a positive number.';
+  }
+  try {
+    const venture = requestTranche(input.ventureId, { amount, description: input.description });
+    return `Requested a $${amount} tranche for "${venture.title}" (${input.description}). Tell the founder they can approve it from the Ventures panel to add it to the treasury allocation.`;
+  } catch (err) {
+    return `Could not request tranche: ${err.message}`;
+  }
+}
+
+async function handleKillVenture(input) {
+  try {
+    const venture = killVenture(input.ventureId, input.reason);
+    return `Killed "${venture.title}". Reason: ${venture.killReason}.`;
+  } catch (err) {
+    return `Could not kill venture: ${err.message}`;
+  }
+}
+
 app.get('/api/studio/org-chart', (_req, res) => {
   res.json({ rootAgentId: STUDIO_ROOT, agents: listAgents(STUDIO_AGENTS) });
 });
@@ -230,7 +324,9 @@ app.post('/api/studio/chat', async (req, res) => {
 
     history.push({ role: 'user', content: message });
     history.push({ role: 'assistant', content: text });
-    studioSessions.set(sessionId, history.slice(-MAX_TURNS));
+    const trimmed = history.slice(-MAX_TURNS);
+    studioSessions.set(sessionId, trimmed);
+    saveSession('studio', sessionId, trimmed);
 
     res.json({ reply: text, trace });
   } catch (err) {
@@ -241,7 +337,10 @@ app.post('/api/studio/chat', async (req, res) => {
 
 app.post('/api/studio/reset', (req, res) => {
   const { sessionId } = req.body || {};
-  if (sessionId) studioSessions.delete(sessionId);
+  if (sessionId) {
+    studioSessions.delete(sessionId);
+    deleteSession('studio', sessionId);
+  }
   res.json({ ok: true });
 });
 
@@ -251,6 +350,47 @@ app.get('/api/ventures', (_req, res) => {
 
 app.get('/api/ventures/ledger', (_req, res) => {
   res.json(getLedger());
+});
+
+function computeVentureFinancials(venture, transactions) {
+  const forVenture = transactions.filter((t) => t.ventureId === venture.id);
+  const sumType = (type) => forVenture.filter((t) => t.type === type).reduce((sum, t) => sum + t.amount, 0);
+  const allocated = sumType('investment');
+  const revenue = sumType('revenue');
+  const expense = sumType('expense');
+
+  return {
+    ...venture,
+    financials: { allocated, revenue, expense, net: revenue - expense },
+    milestoneSummary: {
+      total: venture.milestones.length,
+      done: venture.milestones.filter((m) => m.status === 'done').length,
+      missed: venture.milestones.filter((m) => m.status === 'missed').length,
+    },
+  };
+}
+
+// A portfolio-level view across every venture (proposed, active, and
+// killed), each enriched with its own slice of the ledger — since the
+// per-mode Ventures panel only ever shows one team's angle on "current"
+// ventures, this is the place to compare all of them side by side.
+app.get('/api/ventures/portfolio', (_req, res) => {
+  const { transactions, balance, startingCapital } = getLedger();
+  const ventures = listVentures().map((v) => computeVentureFinancials(v, transactions));
+  const totals = ventures.reduce(
+    (acc, v) => ({
+      allocated: acc.allocated + v.financials.allocated,
+      revenue: acc.revenue + v.financials.revenue,
+      expense: acc.expense + v.financials.expense,
+    }),
+    { allocated: 0, revenue: 0, expense: 0 }
+  );
+
+  res.json({
+    ventures,
+    totals: { ...totals, net: totals.revenue - totals.expense },
+    treasury: { balance, startingCapital },
+  });
 });
 
 app.post('/api/ventures/:id/greenlight', async (req, res) => {
@@ -290,7 +430,7 @@ Problem: ${activated.problem}
 Target customer: ${activated.targetCustomer}
 Business model: ${activated.businessModel}
 Approved budget: $${activated.budgetRequested} out of the company's $${result.ledger.balance.toFixed(2)} remaining treasury
-Milestones: ${activated.milestones.join('; ') || 'none specified'}
+Milestones: ${activated.milestones.map((m) => m.title).join('; ') || 'none specified'}
 
 Put together an execution plan and tell me which departments start on what first.`;
 
@@ -303,6 +443,76 @@ Put together an execution plan and tell me which departments start on what first
   }
 
   res.json(result);
+});
+
+app.post('/api/ventures/:id/tranche/approve', async (req, res) => {
+  const { id } = req.params;
+  const { sessionId } = req.body || {};
+
+  const venture = getVenture(id);
+  if (!venture) return res.status(404).json({ error: 'Venture not found' });
+  if (!venture.pendingTranche) {
+    return res.status(400).json({ error: 'No pending tranche request for this venture' });
+  }
+
+  const { balance } = getLedger();
+  if (venture.pendingTranche.amount > balance) {
+    return res.status(400).json({
+      error: `Not enough in the treasury: tranche asks for $${venture.pendingTranche.amount}, only $${balance.toFixed(2)} available.`,
+    });
+  }
+
+  const { venture: updated, tranche } = approveTranche(id);
+  addTransaction({
+    type: 'investment',
+    amount: tranche.amount,
+    description: `Tranche: ${tranche.description || updated.title}`,
+    ventureId: updated.id,
+  });
+
+  const result = { venture: updated, ledger: getLedger() };
+
+  if (sessionId && process.env.ANTHROPIC_API_KEY) {
+    const briefing = `The board approved a follow-on tranche of $${tranche.amount} for "${updated.title}": ${tranche.description}.
+
+Remaining treasury: $${result.ledger.balance.toFixed(2)}.
+
+Continue execution with this.`;
+
+    try {
+      const { reply, trace } = await runCompanyTurn(sessionId, briefing);
+      result.companyBriefing = { message: briefing, reply, trace };
+    } catch (err) {
+      console.error('Failed to push tranche briefing to company:', err);
+    }
+  }
+
+  res.json(result);
+});
+
+app.post('/api/ventures/:id/tranche/deny', (req, res) => {
+  const { id } = req.params;
+  try {
+    const venture = denyTranche(id);
+    res.json({ venture });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Killing doesn't move money, so — unlike greenlighting or a tranche — this
+// is safe for the founder to do directly from the UI without a company
+// briefing step; the CEO can also do it from a conversation via the
+// kill_venture action.
+app.post('/api/ventures/:id/kill', (req, res) => {
+  const { id } = req.params;
+  const { reason } = req.body || {};
+  try {
+    const venture = killVenture(id, reason);
+    res.json({ venture });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 const clientDist = path.join(__dirname, '..', 'client', 'dist');

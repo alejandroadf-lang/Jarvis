@@ -74,7 +74,27 @@ export async function fetchLedger() {
   return data;
 }
 
+export async function fetchPortfolio() {
+  const { data } = await axios.get('/api/ventures/portfolio');
+  return data; // { ventures, totals, treasury }
+}
+
 export async function greenlightVenture(ventureId, sessionId) {
   const { data } = await axios.post(`/api/ventures/${ventureId}/greenlight`, { sessionId });
   return data; // { venture, ledger, companyBriefing? }
+}
+
+export async function approveTranche(ventureId, sessionId) {
+  const { data } = await axios.post(`/api/ventures/${ventureId}/tranche/approve`, { sessionId });
+  return data; // { venture, ledger, companyBriefing? }
+}
+
+export async function denyTranche(ventureId) {
+  const { data } = await axios.post(`/api/ventures/${ventureId}/tranche/deny`);
+  return data; // { venture }
+}
+
+export async function killVenture(ventureId, reason) {
+  const { data } = await axios.post(`/api/ventures/${ventureId}/kill`, { reason });
+  return data; // { venture }
 }

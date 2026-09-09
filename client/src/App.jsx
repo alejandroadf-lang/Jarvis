@@ -3,6 +3,7 @@ import ChatWindow from './components/ChatWindow.jsx';
 import VoiceButton from './components/VoiceButton.jsx';
 import OrgChart from './components/OrgChart.jsx';
 import VenturesPanel from './components/VenturesPanel.jsx';
+import PortfolioView from './components/PortfolioView.jsx';
 import { useSpeechRecognition } from './hooks/useSpeechRecognition.js';
 import { useSpeechSynthesis } from './hooks/useSpeechSynthesis.js';
 import { useWakeWord } from './hooks/useWakeWord.js';
@@ -74,8 +75,9 @@ export default function App() {
   const [wakeWordEnabled, setWakeWordEnabled] = useState(false);
   const [venturesReloadKey, setVenturesReloadKey] = useState(0);
 
-  const messages = messagesByMode[mode];
-  const modeConfig = MODES[mode];
+  const isPortfolio = mode === 'portfolio';
+  const messages = messagesByMode[mode] || [];
+  const modeConfig = MODES[mode] || null;
 
   const { speak, enqueue, speaking, cancel, supported: ttsSupported } = useSpeechSynthesis();
 
@@ -149,6 +151,7 @@ export default function App() {
   });
 
   const handleReset = async () => {
+    if (!modeConfig) return;
     await modeConfig.reset(sessionId);
     setMessagesByMode((prev) => ({ ...prev, [mode]: [] }));
     cancel();
@@ -184,6 +187,14 @@ export default function App() {
                 {cfg.label}
               </button>
             ))}
+            <button
+              onClick={() => setMode('portfolio')}
+              className={`px-3 py-1 transition-colors ${
+                isPortfolio ? 'bg-cyan-600 text-white' : 'text-cyan-400/80 hover:text-cyan-300'
+              }`}
+            >
+              Portfolio
+            </button>
           </div>
         </div>
         <div className="flex items-center gap-3 text-xs">
@@ -207,15 +218,20 @@ export default function App() {
               speak replies
             </label>
           )}
-          <button
-            onClick={handleReset}
-            className="text-cyan-400/80 hover:text-cyan-300 border border-cyan-500/30 rounded px-2 py-1"
-          >
-            reset
-          </button>
+          {!isPortfolio && (
+            <button
+              onClick={handleReset}
+              className="text-cyan-400/80 hover:text-cyan-300 border border-cyan-500/30 rounded px-2 py-1"
+            >
+              reset
+            </button>
+          )}
         </div>
       </header>
 
+      {isPortfolio ? (
+        <PortfolioView reloadKey={venturesReloadKey} />
+      ) : (
       <div className="flex-1 flex min-h-0">
         {mode === 'company' && (
           <aside className="hidden md:flex md:flex-col w-72 shrink-0 border-r border-cyan-500/20 overflow-y-auto">
@@ -277,6 +293,7 @@ export default function App() {
           )}
         </div>
       </div>
+      )}
     </div>
   );
 }

@@ -10,10 +10,16 @@ agents that delegate to each other via tool use:
   COO, and their department leads) that answers requests by routing them to
   the right department.
 - **Venture Studio**: a brainstorming team (Venture Partner, Market
-  Researcher, Ideation Facilitator, Business Case Analyst, Validation
-  Critic) that helps find and pressure-test the next idea, then turns it
-  into a funded venture — tracked against a real $100 seed-capital ledger —
-  and hands it to the Executive Team to build.
+  Researcher, Ideation Facilitator, Business Case Analyst, Scale
+  Strategist, Validation Critic) that helps find and pressure-test the
+  next idea, then turns it into a funded venture — tracked against a real
+  $100 seed-capital ledger, funded in milestone-based tranches rather than
+  all at once — and hands it to the Executive Team to build.
+
+A **Portfolio** tab rounds it out: every venture ever created (proposed,
+active, or killed) with its own slice of the ledger and milestone
+progress, so you can compare the whole company at a glance instead of one
+venture at a time.
 
 See [ORG_STRUCTURE.md](./ORG_STRUCTURE.md) for the full architecture,
 roster, and how capital flows from idea to execution.
@@ -45,9 +51,10 @@ npm start       # starts the server, which serves the built client + API
 ```
 
 Voice input/output relies on the browser's Web Speech API (Chrome/Edge have
-the best support; Safari and Firefox support varies). Conversation history is
-kept in server memory per browser session — there's no database yet, so it's
-lost on server restart.
+the best support; Safari and Firefox support varies). Conversation history
+for all three chat modes is persisted to `server/data/sessions.json` (see
+`server/sessionStore.js`) — still no real database, but it survives a
+server restart instead of vanishing.
 
 ### Voice experience
 

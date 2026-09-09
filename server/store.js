@@ -1,15 +1,15 @@
-// Minimal JSON-file persistence for the venture studio's state (ledger,
-// ventures). The rest of the app keeps everything in memory — this is the
-// one part where losing state on restart (a company's cash balance) would
-// actually be annoying, so it's persisted to disk instead. No database, no
-// migrations: just a couple of small JSON files under server/data/.
+// Minimal JSON-file persistence, used for anything the app shouldn't lose
+// on restart: the venture treasury and ventures (server/finance/), and
+// conversation history (server/sessionStore.js). No database, no
+// migrations — just small JSON files under server/data/, not committed to
+// git (see .gitignore).
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DATA_DIR = path.join(__dirname, '..', 'data');
+const DATA_DIR = path.join(__dirname, 'data');
 
 function ensureDataDir() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
