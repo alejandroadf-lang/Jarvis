@@ -10,17 +10,18 @@ import { AGENTS as COMPANY_AGENTS, ROOT_AGENT_ID as COMPANY_ROOT } from './agent
 import { AGENTS as STUDIO_AGENTS, ROOT_AGENT_ID as STUDIO_ROOT } from './agents/ideationTeam.js';
 import { loadSessions, saveSession, deleteSession } from './sessionStore.js';
 import { getLedger, addTransaction } from './finance/ledger.js';
+import { listVentures, getVenture, activateVenture, approveTranche, denyTranche, killVenture } from './finance/ventures.js';
+import { buildTreasuryContext } from './finance/context.js';
 import {
-  listVentures,
-  getVenture,
-  createVenture,
-  activateVenture,
-  setMilestoneStatus,
-  requestTranche,
-  approveTranche,
-  denyTranche,
-  killVenture,
-} from './finance/ventures.js';
+  handleProposeVenture,
+  handleLogRevenue,
+  handleLogExpense,
+  handleReportMilestoneProgress,
+  handleRequestTranche,
+  handleKillVenture,
+} from './actionHandlers.js';
+import { listDailyReports, getDailyReport, getLatestDailyReport } from './dailyReports.js';
+import { startDailyMeetingScheduler, runDailyMeetingNow, isDailyMeetingRunning } from './scheduler.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3001;
@@ -166,135 +167,6 @@ app.post('/api/company/reset', (req, res) => {
   }
   res.json({ ok: true });
 });
-
-function describeMilestones(venture) {
-  if (!venture.milestones.length) return 'none listed';
-  return venture.milestones.map((m, i) => `[${i}] ${m.title} (${m.status})`).join('; ');
-}
-
-function describeActiveVenture(venture) {
-  const pending = venture.pendingTranche
-    ? ` — PENDING TRANCHE REQUEST: $${venture.pendingTranche.amount} for "${venture.pendingTranche.description}" (awaiting founder approval; don't request another for this venture until it's resolved)`
-    : '';
-  return `"${venture.title}" [id: ${venture.id}] — milestones: ${describeMilestones(venture)}${pending}`;
-}
-
-function buildTreasuryContext() {
-  const { balance, startingCapital } = getLedger();
-  const ventures = listVentures();
-  const active = ventures.filter((v) => v.status === 'active');
-  const proposed = ventures.filter((v) => v.status === 'proposed');
-
-  const activeList = active.length ? active.map(describeActiveVenture).join('\n') : 'none yet';
-  const proposedList = proposed.length
-    ? proposed.map((v) => `"${v.title}" [id: ${v.id}] (asking $${v.budgetRequested})`).join('; ')
-    : 'none yet';
-
-  return `Company treasury: $${balance.toFixed(2)} available out of a $${startingCapital} starting seed.
-
-Active (funded) ventures:
-${activeList}
-
-Proposed (not yet funded) ventures: ${proposedList}
-
-This treasury funds cheap first experiments, not the ceiling on how big any
-venture is allowed to become — keep the budget *ask* realistic against
-what's actually left, but keep the *ambition* aimed at a real venture-scale
-outcome. Funding here is staged: when the founder reports a real outcome
-for a specific milestone on an active venture, use its id and milestone
-index above to call report_milestone_progress. Once a venture's current
-milestone is marked done and there's a concrete next step, request_tranche
-can ask the founder to fund it — never while a tranche is already pending
-for that venture.`;
-}
-
-async function handleProposeVenture(input) {
-  const venture = createVenture(input);
-  return `Logged venture proposal ${venture.id} ("${venture.title}"), asking $${venture.budgetRequested}. Status: proposed. Tell the founder they can greenlight it from the Ventures panel to allocate budget and hand it to the executive team.`;
-}
-
-// Shared validation for log_revenue/log_expense: a positive amount and,
-// when given, a ventureId that actually exists. Returns either
-// { amount, ventureId, description } or { error }.
-function resolveTransactionInput(input, defaultDescription) {
-  const amount = Number(input.amount);
-  if (!Number.isFinite(amount) || amount <= 0) {
-    return { error: 'amount must be a positive number.' };
-  }
-
-  let ventureId = null;
-  if (input.ventureId) {
-    const venture = getVenture(input.ventureId);
-    if (!venture) {
-      return { error: `no venture found with id "${input.ventureId}". Log it without a ventureId, or double-check the id.` };
-    }
-    ventureId = venture.id;
-  }
-
-  const description =
-    typeof input.description === 'string' && input.description.trim() ? input.description.trim() : defaultDescription;
-
-  return { amount, ventureId, description };
-}
-
-async function handleLogRevenue(input) {
-  const resolved = resolveTransactionInput(input, 'Revenue');
-  if (resolved.error) return `Could not log revenue: ${resolved.error}`;
-
-  const { amount, ventureId, description } = resolved;
-  addTransaction({ type: 'revenue', amount, description, ventureId });
-  const { balance } = getLedger();
-  return `Logged $${amount} in revenue${ventureId ? ` for venture ${ventureId}` : ''} ("${description}"). Treasury balance is now $${balance.toFixed(2)}.`;
-}
-
-async function handleLogExpense(input) {
-  const resolved = resolveTransactionInput(input, 'Expense');
-  if (resolved.error) return `Could not log expense: ${resolved.error}`;
-
-  const { amount, ventureId, description } = resolved;
-  addTransaction({ type: 'expense', amount, description, ventureId });
-  const { balance } = getLedger();
-  return `Logged $${amount} in expenses${ventureId ? ` for venture ${ventureId}` : ''} ("${description}"). Treasury balance is now $${balance.toFixed(2)}.`;
-}
-
-async function handleReportMilestoneProgress(input) {
-  const index = Number(input.milestoneIndex);
-  if (!Number.isInteger(index) || index < 0) {
-    return 'Could not update milestone: milestoneIndex must be a non-negative integer.';
-  }
-  if (!['done', 'missed'].includes(input.status)) {
-    return 'Could not update milestone: status must be "done" or "missed".';
-  }
-  try {
-    const venture = setMilestoneStatus(input.ventureId, index, input.status, input.note);
-    const milestone = venture.milestones[index];
-    return `Marked milestone [${index}] "${milestone.title}" as ${input.status} for "${venture.title}".`;
-  } catch (err) {
-    return `Could not update milestone: ${err.message}`;
-  }
-}
-
-async function handleRequestTranche(input) {
-  const amount = Number(input.amount);
-  if (!Number.isFinite(amount) || amount <= 0) {
-    return 'Could not request tranche: amount must be a positive number.';
-  }
-  try {
-    const venture = requestTranche(input.ventureId, { amount, description: input.description });
-    return `Requested a $${amount} tranche for "${venture.title}" (${input.description}). Tell the founder they can approve it from the Ventures panel to add it to the treasury allocation.`;
-  } catch (err) {
-    return `Could not request tranche: ${err.message}`;
-  }
-}
-
-async function handleKillVenture(input) {
-  try {
-    const venture = killVenture(input.ventureId, input.reason);
-    return `Killed "${venture.title}". Reason: ${venture.killReason}.`;
-  } catch (err) {
-    return `Could not kill venture: ${err.message}`;
-  }
-}
 
 app.get('/api/studio/org-chart', (_req, res) => {
   res.json({ rootAgentId: STUDIO_ROOT, agents: listAgents(STUDIO_AGENTS) });
@@ -515,6 +387,43 @@ app.post('/api/ventures/:id/kill', (req, res) => {
   }
 });
 
+// The autonomous daily meeting cycle (see dailyMeeting.js + scheduler.js):
+// the Executive Team runs a leadership sync and the Venture Studio takes a
+// pass at anything worth proposing from it, without anyone having to start
+// the conversation. These endpoints just read the results and let the
+// founder trigger a run on demand — the cycle itself is a runAgent call
+// like any other, not a new kind of action, so it can't move money or kill
+// a venture on its own.
+app.get('/api/reports/daily', (_req, res) => {
+  res.json({ reports: listDailyReports() });
+});
+
+app.get('/api/reports/daily/latest', (_req, res) => {
+  res.json({ report: getLatestDailyReport() });
+});
+
+app.get('/api/reports/daily/:date', (req, res) => {
+  const report = getDailyReport(req.params.date);
+  if (!report) return res.status(404).json({ error: 'No report for that date' });
+  res.json({ report });
+});
+
+app.post('/api/reports/daily/run', async (_req, res) => {
+  if (!process.env.ANTHROPIC_API_KEY) {
+    return res.status(500).json({ error: 'Server is missing ANTHROPIC_API_KEY' });
+  }
+  if (isDailyMeetingRunning()) {
+    return res.status(409).json({ error: 'A daily meeting is already in progress — try again shortly.' });
+  }
+  try {
+    const report = await runDailyMeetingNow({ anthropic });
+    res.json({ report });
+  } catch (err) {
+    console.error('Daily meeting run failed:', err);
+    res.status(502).json({ error: 'Failed to run the daily meeting' });
+  }
+});
+
 const clientDist = path.join(__dirname, '..', 'client', 'dist');
 app.use(express.static(clientDist));
 app.get('*', (_req, res) => {
@@ -523,4 +432,5 @@ app.get('*', (_req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Jarvis server listening on port ${PORT}`);
+  startDailyMeetingScheduler({ anthropic });
 });

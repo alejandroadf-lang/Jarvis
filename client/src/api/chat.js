@@ -98,3 +98,18 @@ export async function killVenture(ventureId, reason) {
   const { data } = await axios.post(`/api/ventures/${ventureId}/kill`, { reason });
   return data; // { venture }
 }
+
+export async function fetchDailyReports() {
+  const { data } = await axios.get('/api/reports/daily');
+  return data.reports; // newest first
+}
+
+export async function fetchLatestDailyReport() {
+  const { data } = await axios.get('/api/reports/daily/latest');
+  return data.report; // null if none yet
+}
+
+export async function runDailyMeetingNow() {
+  const { data } = await axios.post('/api/reports/daily/run');
+  return data.report;
+}
