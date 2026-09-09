@@ -448,3 +448,50 @@ All of this still depends on the server actually being up at 8 AM ICT —
 see README.md's "Deploy to Railway" section for running it on always-on
 infrastructure (with a persistent volume for `JARVIS_DATA_DIR`, so state
 survives a redeploy) instead of a machine that's only sometimes on.
+
+## Ideation remembers what's already been killed
+
+Every ideation session used to start cold: a venture killed months ago
+carried no weight on today's brainstorm, so the Studio could re-pitch the
+same idea (or a thin reskin of it) indefinitely. `buildPastLessonsContext()`
+(`server/finance/context.js`) lists every killed venture's title, one-liner,
+and `killReason`, scoped to what's actually on record rather than invented
+"lessons learned." `buildStudioContext()` joins that with the existing
+treasury context into what `venture_partner` and its whole team (including
+`validation_critic`) see — used everywhere the Studio runs: the interactive
+`/api/studio/chat` route and the daily meeting's opportunity-review phase.
+Both prompts are updated to actually use it: the Venture Partner is told to
+check every direction against the list before running with it, and the
+Validation Critic is told to name which past venture a new pitch resembles
+when the same failure reason would apply again — a sharper objection than a
+generic one, since it's already been proven true once.
+
+This is deliberately scoped to what the data model actually captures (a
+title and a reason), not a general-purpose memory system. A real reflection
+loop — comparing a week's flagged opportunities against what actually
+happened, and writing that verdict back into the same context — is a
+bigger, still-open version of this same gap.
+
+## Resilience: one retry, and no more silent full-day gaps
+
+Two related gaps in how the system survives a bad moment, both closed
+without changing what any agent is allowed to do:
+
+- **`server/agents/agentRunner.js`** now wraps every `messages.create` call
+  in one extra retry (`createMessage()`) for a transient failure — a rate
+  limit, a 5xx, or a dropped connection (`isRetryableError()` checks the
+  SDK's `err.status`; `undefined`, `429`, or `>= 500` all qualify). The
+  Anthropic SDK already retries a single request internally, but a daily
+  cycle burning through 10-20 calls in a row can outlast that on its own;
+  this adds one more attempt on top. It only wraps the raw API call, never
+  a whole delegated `consult_*` conversation, so a retry can never re-run
+  an action tool (`log_revenue`, `propose_venture`, ...) that already fired
+  in an earlier round — the thing that would make a naive "just retry the
+  whole sub-agent" approach unsafe.
+- **`server/dailyMeeting.js`**'s two phases are now isolated symmetrically.
+  Previously only the Venture Studio phase was wrapped in a try/catch; a
+  persistent failure in the leadership sync threw before the Studio phase
+  ever ran, so a bad day produced no report and no email at all. Now a
+  failure in either phase still produces a report — the failed half says so
+  plainly, the other half (if it ran) is unaffected — instead of the whole
+  day going dark.

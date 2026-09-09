@@ -11,7 +11,7 @@ import { AGENTS as STUDIO_AGENTS, ROOT_AGENT_ID as STUDIO_ROOT } from './agents/
 import { loadSessions, saveSession, deleteSession } from './sessionStore.js';
 import { getLedger, addTransaction } from './finance/ledger.js';
 import { listVentures, getVenture, activateVenture, approveTranche, denyTranche, killVenture } from './finance/ventures.js';
-import { buildTreasuryContext } from './finance/context.js';
+import { buildTreasuryContext, buildStudioContext } from './finance/context.js';
 import {
   handleProposeVenture,
   handleLogRevenue,
@@ -191,7 +191,7 @@ app.post('/api/studio/chat', async (req, res) => {
       agentId: STUDIO_ROOT,
       messages: workingMessages,
       actionHandlers: { propose_venture: handleProposeVenture },
-      extraContext: buildTreasuryContext(),
+      extraContext: buildStudioContext(),
     });
 
     history.push({ role: 'user', content: message });

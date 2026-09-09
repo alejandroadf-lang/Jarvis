@@ -46,3 +46,31 @@ milestone is marked done and there's a concrete next step, request_tranche
 can ask the founder to fund it — never while a tranche is already pending
 for that venture.`;
 }
+
+// Without this, every ideation session starts cold and can re-pitch an idea
+// that was already tried and killed. Scoped to what's actually on record —
+// a killed venture's title, one-liner, and the reason it was ended — not
+// invented "lessons learned," since nothing richer than that is captured
+// anywhere in the data model today.
+export function buildPastLessonsContext() {
+  const killed = listVentures().filter((v) => v.status === 'killed');
+  if (killed.length === 0) {
+    return 'No ventures have been killed yet — no past lessons on record.';
+  }
+
+  const lines = killed.map(
+    (v) => `- "${v.title}" (${v.oneLiner || 'no one-liner on record'}) — killed: ${v.killReason || 'no reason recorded'}`
+  );
+
+  return `Ventures already tried and killed — don't re-pitch one of these or a thin
+variant of one without a genuinely new angle that addresses why it failed:
+${lines.join('\n')}`;
+}
+
+// What the Venture Studio's agents see: treasury/venture status plus the
+// record of what's already been tried and killed, so ideation compounds
+// instead of resetting every session. Not used by the Executive Team —
+// avoiding re-pitches is an ideation concern, not an execution one.
+export function buildStudioContext() {
+  return `${buildTreasuryContext()}\n\n${buildPastLessonsContext()}`;
+}

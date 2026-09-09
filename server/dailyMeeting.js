@@ -18,7 +18,7 @@
 import { runAgent } from './agents/agentRunner.js';
 import { AGENTS as COMPANY_AGENTS, ROOT_AGENT_ID as COMPANY_ROOT } from './agents/orgChart.js';
 import { AGENTS as STUDIO_AGENTS, ROOT_AGENT_ID as STUDIO_ROOT } from './agents/ideationTeam.js';
-import { buildTreasuryContext } from './finance/context.js';
+import { buildTreasuryContext, buildStudioContext } from './finance/context.js';
 import { getLedger } from './finance/ledger.js';
 import { listVentures } from './finance/ventures.js';
 import { handleProposeVenture } from './actionHandlers.js';
@@ -85,27 +85,42 @@ export async function runDailyMeeting({ anthropic }) {
   const treasuryContext = buildTreasuryContext();
   const beforeIds = new Set(listVentures().map((v) => v.id));
 
-  const leadership = await runAgent({
-    anthropic,
-    agents: COMPANY_AGENTS,
-    agentId: COMPANY_ROOT,
-    messages: [{ role: 'user', content: leadershipKickoff(date) }],
-    actionHandlers: {}, // no side effects during the automated sync — see file header
-    extraContext: treasuryContext,
-  });
-
-  let studio = { text: '', trace: [] };
+  // Both phases are isolated the same way: a persistent failure in one
+  // still leaves a report worth saving (and emailing) for the day, instead
+  // of the whole cycle throwing and leaving nothing — silently going dark
+  // is worse than a report that plainly says one half didn't run.
+  let leadership;
+  let leadershipFailed = false;
   try {
-    studio = await runAgent({
+    leadership = await runAgent({
       anthropic,
-      agents: STUDIO_AGENTS,
-      agentId: STUDIO_ROOT,
-      messages: [{ role: 'user', content: studioKickoff(leadership.text) }],
-      actionHandlers: { propose_venture: handleProposeVenture },
+      agents: COMPANY_AGENTS,
+      agentId: COMPANY_ROOT,
+      messages: [{ role: 'user', content: leadershipKickoff(date) }],
+      actionHandlers: {}, // no side effects during the automated sync — see file header
       extraContext: treasuryContext,
     });
   } catch (err) {
-    studio = { text: `(Venture Studio ideation pass failed: ${err.message})`, trace: [] };
+    leadershipFailed = true;
+    leadership = { text: `(Leadership sync failed: ${err.message})`, trace: [] };
+  }
+
+  let studio;
+  if (leadershipFailed) {
+    studio = { text: "(Skipped: today's leadership sync failed, so there's nothing fresh to review.)", trace: [] };
+  } else {
+    try {
+      studio = await runAgent({
+        anthropic,
+        agents: STUDIO_AGENTS,
+        agentId: STUDIO_ROOT,
+        messages: [{ role: 'user', content: studioKickoff(leadership.text) }],
+        actionHandlers: { propose_venture: handleProposeVenture },
+        extraContext: buildStudioContext(),
+      });
+    } catch (err) {
+      studio = { text: `(Venture Studio ideation pass failed: ${err.message})`, trace: [] };
+    }
   }
 
   const afterIds = listVentures().map((v) => v.id);

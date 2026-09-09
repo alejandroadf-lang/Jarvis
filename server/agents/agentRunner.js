@@ -28,6 +28,39 @@ const MODEL = 'claude-sonnet-5';
 const MAX_TOKENS = 1024;
 const MAX_ROUNDS = 6; // safety cap on tool-calling rounds within one agent's turn
 
+// The Anthropic SDK already retries a single request on 429/5xx/connection
+// errors internally (see its own `maxRetries`, default 2). This adds one
+// more attempt on top of that, specifically for a daily cycle that can burn
+// through 10-20 calls in a row — a rate-limit spike that outlasts the SDK's
+// own retry window is exactly the case a single unattended run needs to
+// survive. It only wraps the raw API call, never a whole delegated
+// conversation, so a retry here can never re-run an action tool that
+// already fired in an earlier round.
+const EXTRA_RETRY_DELAY_MS = 1000;
+
+export function isRetryableError(err) {
+  // Anthropic SDK APIError subclasses expose `.status`; undefined means a
+  // connection-level failure (no response at all), just as transient as a
+  // 429 or 5xx. Anything else (400/401/403/404/422...) won't succeed on
+  // retry, so don't waste the attempt.
+  const status = err?.status;
+  return status === undefined || status === 429 || status >= 500;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function createMessage(anthropic, params) {
+  try {
+    return await anthropic.messages.create(params);
+  } catch (err) {
+    if (!isRetryableError(err)) throw err;
+    await sleep(EXTRA_RETRY_DELAY_MS + Math.random() * 250);
+    return anthropic.messages.create(params);
+  }
+}
+
 function buildTools(agents, agent) {
   const delegationTools = agent.reports.map((reportId) => {
     const report = getAgent(agents, reportId);
@@ -92,7 +125,7 @@ export async function runAgent({
   let finalText = '';
 
   for (let round = 0; round < MAX_ROUNDS; round++) {
-    const response = await anthropic.messages.create({
+    const response = await createMessage(anthropic, {
       model: MODEL,
       max_tokens: MAX_TOKENS,
       system,

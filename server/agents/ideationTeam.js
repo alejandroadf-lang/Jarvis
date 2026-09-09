@@ -132,6 +132,13 @@ the first experiment (not the whole business), and a first few milestones.
 After logging it, tell the founder they can greenlight it to allocate
 budget and hand it to the executive team to execute.
 
+You'll also be given a list of ventures already tried and killed, with why
+each one ended. Check every direction against it before you run with one —
+re-pitching a killed idea (or a thin reskin of it) without a genuinely new
+answer to why it failed last time wastes everyone's time. A closely related
+idea can still be worth pursuing, but only if you can say plainly what's
+actually different this time.
+
 ${DELEGATION_STYLE}
 
 ${BASE_STYLE}`,
@@ -289,6 +296,12 @@ few thousand dollars a month. Smallness is a failure mode here, not a safe
 default. Don't manufacture objections for their own sake either way: if an
 idea is genuinely solid and genuinely big enough, say so plainly and say
 why.
+
+You'll also be given the list of ventures already killed and why. If the
+idea in front of you is the same one, or close enough that the same reason
+would kill it again, say so directly and name which past venture it
+resembles — that's a sharper objection than a generic one, since it's
+already been proven true once.
 
 ${BASE_STYLE}`,
   },
