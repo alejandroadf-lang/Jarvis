@@ -122,3 +122,27 @@ export async function sendWeeklyReflectionEmail(reflection) {
   const { subject, text } = formatWeeklyReflectionEmail(reflection);
   return sendEmail(subject, text);
 }
+
+// Unlike the other alerts here, this one reports something that already
+// happened to a real, external system, not a pending decision — the
+// founder can't approve or deny it after the fact, only know about it.
+export function formatDeploymentEmail(venture, { path, commitUrl }) {
+  const subject = `Real deploy: "${venture.title}" — ${path}`;
+  const text = [
+    `The Engineering Lead deployed a real change to "${venture.title}"'s repo.`,
+    '',
+    `Repo: ${venture.repo.owner}/${venture.repo.name} (${venture.repo.branch})`,
+    `File: ${path}`,
+    commitUrl ? `Commit: ${commitUrl}` : null,
+    '',
+    'Review it from the Ventures panel if you want to see the full deployment log.',
+  ]
+    .filter((line) => line !== null)
+    .join('\n');
+  return { subject, text };
+}
+
+export async function sendDeploymentEmail(venture, details) {
+  const { subject, text } = formatDeploymentEmail(venture, details);
+  return sendEmail(subject, text);
+}

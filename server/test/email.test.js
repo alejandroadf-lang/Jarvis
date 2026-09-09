@@ -9,6 +9,8 @@ import {
   sendVentureProposedEmail,
   formatWeeklyReflectionEmail,
   sendWeeklyReflectionEmail,
+  formatDeploymentEmail,
+  sendDeploymentEmail,
 } from '../email.js';
 
 function makeReport(overrides = {}) {
@@ -130,6 +132,49 @@ test('sendWeeklyReflectionEmail is a no-op without SMTP configured', async () =>
 
   try {
     assert.equal(await sendWeeklyReflectionEmail(makeReflection()), false);
+  } finally {
+    if (savedHost !== undefined) process.env.SMTP_HOST = savedHost;
+    if (savedTo !== undefined) process.env.REPORT_EMAIL_TO = savedTo;
+  }
+});
+
+function makeDeployedVenture(overrides = {}) {
+  return {
+    id: 'v_1',
+    title: 'Widget Co',
+    repo: { owner: 'acme', name: 'widget-landing', branch: 'main' },
+    ...overrides,
+  };
+}
+
+test('formatDeploymentEmail names the venture, repo, file, and commit', () => {
+  const { subject, text } = formatDeploymentEmail(makeDeployedVenture(), {
+    path: 'content/home.md',
+    commitUrl: 'https://github.com/acme/widget-landing/commit/abc123',
+  });
+  assert.match(subject, /Widget Co/);
+  assert.match(subject, /content\/home\.md/);
+  assert.match(text, /acme\/widget-landing \(main\)/);
+  assert.match(text, /content\/home\.md/);
+  assert.match(text, /https:\/\/github\.com\/acme\/widget-landing\/commit\/abc123/);
+});
+
+test('formatDeploymentEmail omits the commit line when no commitUrl is given', () => {
+  const { text } = formatDeploymentEmail(makeDeployedVenture(), { path: 'content/home.md', commitUrl: '' });
+  assert.doesNotMatch(text, /Commit:/);
+});
+
+test('sendDeploymentEmail is a no-op without SMTP configured', async () => {
+  const savedHost = process.env.SMTP_HOST;
+  const savedTo = process.env.REPORT_EMAIL_TO;
+  delete process.env.SMTP_HOST;
+  delete process.env.REPORT_EMAIL_TO;
+
+  try {
+    assert.equal(
+      await sendDeploymentEmail(makeDeployedVenture(), { path: 'content/home.md', commitUrl: 'u' }),
+      false
+    );
   } finally {
     if (savedHost !== undefined) process.env.SMTP_HOST = savedHost;
     if (savedTo !== undefined) process.env.REPORT_EMAIL_TO = savedTo;

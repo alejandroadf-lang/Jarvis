@@ -99,6 +99,21 @@ export async function killVenture(ventureId, reason) {
   return data; // { venture }
 }
 
+export async function linkVentureRepo(ventureId, { owner, name, branch, allowedPaths, maxPerWeek }) {
+  const { data } = await axios.post(`/api/ventures/${ventureId}/repo`, { owner, name, branch, allowedPaths, maxPerWeek });
+  return data; // { venture }
+}
+
+export async function enableVentureDeployment(ventureId) {
+  const { data } = await axios.post(`/api/ventures/${ventureId}/deployment/enable`);
+  return data; // { venture }
+}
+
+export async function disableVentureDeployment(ventureId) {
+  const { data } = await axios.post(`/api/ventures/${ventureId}/deployment/disable`);
+  return data; // { venture }
+}
+
 export async function fetchDailyReports() {
   const { data } = await axios.get('/api/reports/daily');
   return data.reports; // newest first

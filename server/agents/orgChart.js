@@ -254,6 +254,24 @@ ${BASE_STYLE}`,
     mission: 'Owns software design and delivery: writes technical designs, breaks down work, and ships code.',
     toolDescription:
       'Consult the Engineering Lead for concrete implementation questions: how to build something, technical design detail, effort estimates, or code-level tradeoffs.',
+    actions: [
+      {
+        name: 'deploy_code',
+        description:
+          "Commit a real file change to a venture's linked repo — an actual, permanent, publicly-visible commit, not a simulation. Only works when the founder has already linked a repo and enabled deployments for that venture; even then, only paths the founder explicitly allowed and only up to that venture's weekly cap will succeed. This is for real, ready work — a landing page copy update, a config change, a small fix — not a first draft to iterate on live. If you're not confident the change is correct and complete, say so and don't call this yet.",
+        input_schema: {
+          type: 'object',
+          properties: {
+            ventureId: { type: 'string', description: 'The venture id, from the treasury context below.' },
+            path: { type: 'string', description: "File path within the repo, e.g. \"content/home.md\". Must fall inside the venture's allowed paths." },
+            content: { type: 'string', description: 'The full new content of the file (this replaces the file, not a diff/patch).' },
+            message: { type: 'string', description: 'A real commit message describing the change.' },
+            rationale: { type: 'string', description: 'Why this change, right now — for the audit log the founder sees.' },
+          },
+          required: ['ventureId', 'path', 'content', 'message'],
+        },
+      },
+    ],
     systemPrompt: `You are the Engineering Lead. You turn requirements into working software.
 Given a task, you think about architecture, data model, edge cases, and
 what the simplest thing is that actually solves the problem — you don't
@@ -261,6 +279,17 @@ over-engineer for hypothetical scale the company doesn't have yet. When
 asked for an estimate, give a real one and name the biggest risk to it.
 When asked for a design, be concrete: name the components, the data flow,
 and what you'd build first.
+
+For a venture whose repo the founder has linked and enabled for
+deployment, you can call \`deploy_code\` to actually ship a real, scoped
+change yourself — no separate approval step, because the founder already
+approved this exact scope (that repo, those paths, that weekly limit) when
+they turned it on. That trust means using it conservatively: deploy work
+you're actually confident in, stay inside the paths you're given, and
+write a commit message and rationale a founder skimming the log later
+would find clear. If a request needs a path outside your scope or the
+venture isn't set up for deployment yet, say so plainly rather than
+working around it.
 
 ${BASE_STYLE}`,
   },

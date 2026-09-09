@@ -121,3 +121,60 @@ test('getVenture returns null for an unknown id, findOrThrow paths error clearly
   assert.equal(ventures.getVenture('nope'), null);
   assert.throws(() => ventures.activateVenture('nope'), /Venture not found/);
 });
+
+test('authorizeDeployment refuses an inactive venture, an unlinked repo, and a disabled scope', () => {
+  const v = makeVenture();
+  assert.throws(() => ventures.authorizeDeployment(v.id, { path: 'content/home.md' }), /must be active/);
+
+  ventures.activateVenture(v.id);
+  assert.throws(() => ventures.authorizeDeployment(v.id, { path: 'content/home.md' }), /No repo linked/);
+
+  ventures.linkRepo(v.id, { owner: 'acme', name: 'landing', allowedPaths: ['content/'] });
+  assert.throws(() => ventures.authorizeDeployment(v.id, { path: 'content/home.md' }), /not enabled/);
+});
+
+test('authorizeDeployment enforces the path allowlist once enabled', () => {
+  const v = makeVenture();
+  ventures.activateVenture(v.id);
+  ventures.linkRepo(v.id, { owner: 'acme', name: 'landing', allowedPaths: ['content/', 'config.json'] });
+  ventures.setDeploymentEnabled(v.id, true);
+
+  assert.doesNotThrow(() => ventures.authorizeDeployment(v.id, { path: 'content/home.md' }));
+  assert.doesNotThrow(() => ventures.authorizeDeployment(v.id, { path: 'config.json' }));
+  assert.throws(() => ventures.authorizeDeployment(v.id, { path: 'server/index.js' }), /outside the allowed scope/);
+});
+
+test('authorizeDeployment enforces the weekly cap from recordDeployment history', () => {
+  const v = makeVenture();
+  ventures.activateVenture(v.id);
+  ventures.linkRepo(v.id, { owner: 'acme', name: 'landing', allowedPaths: ['content/'], maxPerWeek: 2 });
+  ventures.setDeploymentEnabled(v.id, true);
+
+  ventures.recordDeployment(v.id, { path: 'content/a.md', message: 'a', commitSha: 's1', commitUrl: 'u1' });
+  ventures.recordDeployment(v.id, { path: 'content/b.md', message: 'b', commitSha: 's2', commitUrl: 'u2' });
+
+  assert.throws(() => ventures.authorizeDeployment(v.id, { path: 'content/c.md' }), /Weekly deployment cap reached/);
+});
+
+test('setDeploymentEnabled requires a linked repo first', () => {
+  const v = makeVenture();
+  assert.throws(() => ventures.setDeploymentEnabled(v.id, true), /Link a repo before/);
+});
+
+test('recordDeployment appends to the deployment log with a timestamp', () => {
+  const v = makeVenture();
+  ventures.activateVenture(v.id);
+  ventures.linkRepo(v.id, { owner: 'acme', name: 'landing', allowedPaths: ['content/'] });
+
+  const { venture, entry } = ventures.recordDeployment(v.id, {
+    path: 'content/home.md',
+    message: 'update copy',
+    commitSha: 'abc123',
+    commitUrl: 'https://github.com/acme/landing/commit/abc123',
+    rationale: 'founder asked for new headline',
+  });
+  assert.equal(venture.deployments.length, 1);
+  assert.equal(entry.path, 'content/home.md');
+  assert.equal(entry.commitSha, 'abc123');
+  assert.ok(entry.deployedAt);
+});

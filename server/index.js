@@ -10,7 +10,16 @@ import { AGENTS as COMPANY_AGENTS, ROOT_AGENT_ID as COMPANY_ROOT } from './agent
 import { AGENTS as STUDIO_AGENTS, ROOT_AGENT_ID as STUDIO_ROOT } from './agents/ideationTeam.js';
 import { loadSessions, saveSession, deleteSession } from './sessionStore.js';
 import { getLedger, addTransaction } from './finance/ledger.js';
-import { listVentures, getVenture, activateVenture, approveTranche, denyTranche, killVenture } from './finance/ventures.js';
+import {
+  listVentures,
+  getVenture,
+  activateVenture,
+  approveTranche,
+  denyTranche,
+  killVenture,
+  linkRepo,
+  setDeploymentEnabled,
+} from './finance/ventures.js';
 import { buildTreasuryContext, buildStudioContext } from './finance/context.js';
 import {
   handleProposeVenture,
@@ -19,6 +28,7 @@ import {
   handleReportMilestoneProgress,
   handleRequestTranche,
   handleKillVenture,
+  handleDeployCode,
 } from './actionHandlers.js';
 import { listDailyReports, getDailyReport, getLatestDailyReport } from './dailyReports.js';
 import { startDailyMeetingScheduler, runDailyMeetingNow, isDailyMeetingRunning } from './scheduler.js';
@@ -130,6 +140,14 @@ async function runCompanyTurn(sessionId, message) {
       report_milestone_progress: handleReportMilestoneProgress,
       request_tranche: handleRequestTranche,
       kill_venture: handleKillVenture,
+      // deploy_code is only wired in here, the interactive Executive Team
+      // chat — never into the autonomous daily/weekly cycles, which are
+      // deliberately barred from any real-world action (see dailyMeeting.js
+      // and weeklyReflection.js). A founder-granted scope (see
+      // finance/ventures.js's authorizeDeployment) means no separate
+      // per-deploy approval is needed here, but it still only fires during a
+      // conversation the founder is actually having, not an unattended run.
+      deploy_code: handleDeployCode,
     },
     extraContext: buildTreasuryContext(),
   });
@@ -383,6 +401,41 @@ app.post('/api/ventures/:id/kill', (req, res) => {
   const { reason } = req.body || {};
   try {
     const venture = killVenture(id, reason);
+    res.json({ venture });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Real code deployment (see finance/ventures.js, deploy/github.js,
+// actionHandlers.js's handleDeployCode): the founder links a real repo and
+// explicitly turns deployments on for a venture, which is the one-time
+// scope grant that then lets deploy_code run without a per-action approval.
+// Nothing here performs a deploy itself — these just set the scope an
+// active conversation with the Engineering Lead can later act inside.
+app.post('/api/ventures/:id/repo', (req, res) => {
+  const { id } = req.params;
+  const { owner, name, branch, allowedPaths, maxPerWeek } = req.body || {};
+  try {
+    const venture = linkRepo(id, { owner, name, branch, allowedPaths, maxPerWeek });
+    res.json({ venture });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/ventures/:id/deployment/enable', (req, res) => {
+  try {
+    const venture = setDeploymentEnabled(req.params.id, true);
+    res.json({ venture });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/ventures/:id/deployment/disable', (req, res) => {
+  try {
+    const venture = setDeploymentEnabled(req.params.id, false);
     res.json({ venture });
   } catch (err) {
     res.status(400).json({ error: err.message });

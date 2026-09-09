@@ -7,8 +7,17 @@
 // actions; see dailyMeeting.js for why).
 
 import { getLedger, addTransaction } from './finance/ledger.js';
-import { getVenture, createVenture, setMilestoneStatus, requestTranche, killVenture } from './finance/ventures.js';
-import { sendVentureProposedEmail, sendTrancheRequestEmail } from './email.js';
+import {
+  getVenture,
+  createVenture,
+  setMilestoneStatus,
+  requestTranche,
+  killVenture,
+  authorizeDeployment,
+  recordDeployment,
+} from './finance/ventures.js';
+import { sendVentureProposedEmail, sendTrancheRequestEmail, sendDeploymentEmail } from './email.js';
+import { commitFile, isGithubConfigured } from './deploy/github.js';
 
 // A founder who greenlit a venture or approved a tranche and walked away
 // won't see the CFO's next move until they happen to check back — these
@@ -113,5 +122,40 @@ export async function handleKillVenture(input) {
     return `Killed "${venture.title}". Reason: ${venture.killReason}.`;
   } catch (err) {
     return `Could not kill venture: ${err.message}`;
+  }
+}
+
+// The one action tool that reaches a real, live system outside the
+// simulation (see finance/ventures.js's authorizeDeployment for the scope
+// the founder has to grant before this can succeed at all). Every step here
+// is fail-closed: no GITHUB_TOKEN, no repo link, deployments not enabled, an
+// out-of-scope path, or a spent weekly cap all return a plain refusal
+// instead of attempting a partial or best-effort commit.
+export async function handleDeployCode(input) {
+  const { ventureId, path, content, message, rationale } = input;
+  if (!isGithubConfigured()) {
+    return 'Could not deploy: this server has no GITHUB_TOKEN configured, so real deployments are unavailable.';
+  }
+  if (typeof path !== 'string' || !path.trim()) {
+    return 'Could not deploy: path is required.';
+  }
+  if (typeof content !== 'string' || !content.trim()) {
+    return 'Could not deploy: content is required.';
+  }
+  try {
+    const venture = authorizeDeployment(ventureId, { path });
+    const { commitSha, commitUrl } = await commitFile({
+      owner: venture.repo.owner,
+      repo: venture.repo.name,
+      branch: venture.repo.branch,
+      path,
+      content,
+      message: message?.trim() || `Update ${path} for ${venture.title}`,
+    });
+    recordDeployment(ventureId, { path, message, commitSha, commitUrl, rationale });
+    await notify(sendDeploymentEmail, venture, { path, commitUrl });
+    return `Deployed a real commit to "${venture.title}"'s repo (${venture.repo.owner}/${venture.repo.name}, branch ${venture.repo.branch}): ${path}. Commit: ${commitUrl || commitSha}.`;
+  } catch (err) {
+    return `Could not deploy: ${err.message}`;
   }
 }

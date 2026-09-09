@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
-import { fetchVentures, fetchLedger, greenlightVenture, approveTranche, denyTranche, killVenture } from '../api/chat.js';
+import {
+  fetchVentures,
+  fetchLedger,
+  greenlightVenture,
+  approveTranche,
+  denyTranche,
+  killVenture,
+  linkVentureRepo,
+  enableVentureDeployment,
+  disableVentureDeployment,
+} from '../api/chat.js';
 
 function StatusBadge({ status }) {
   const styles = {
@@ -36,7 +46,124 @@ function MilestoneList({ milestones }) {
   );
 }
 
-function VentureCard({ venture, action, onApproveTranche, onDenyTranche, onKill, busy }) {
+// Real code deployment is a scope the founder grants once (link a repo,
+// then enable it), not a per-deploy approval — see finance/ventures.js's
+// authorizeDeployment for why. This panel is that grant: linking a repo
+// that already exists, an allowlist of paths the Engineering Lead can
+// touch, and a weekly cap, plus a running log of every real commit made
+// inside that scope.
+function DeploymentScope({ venture, onLinkRepo, onEnable, onDisable, busy }) {
+  const [showForm, setShowForm] = useState(false);
+  const [owner, setOwner] = useState('');
+  const [name, setName] = useState('');
+  const [branch, setBranch] = useState('main');
+  const [allowedPaths, setAllowedPaths] = useState('');
+  const [maxPerWeek, setMaxPerWeek] = useState('3');
+
+  const repo = venture.repo;
+  const inputClass =
+    'w-full text-[11px] bg-black/30 border border-cyan-500/20 rounded px-1.5 py-0.5 text-cyan-100 placeholder:text-cyan-500/40';
+
+  const submit = (e) => {
+    e.preventDefault();
+    onLinkRepo(venture.id, {
+      owner: owner.trim(),
+      name: name.trim(),
+      branch: branch.trim() || 'main',
+      allowedPaths: allowedPaths
+        .split(',')
+        .map((p) => p.trim())
+        .filter(Boolean),
+      maxPerWeek: Number(maxPerWeek) || 3,
+    });
+    setShowForm(false);
+  };
+
+  return (
+    <div className="mt-2 border border-purple-500/20 rounded p-2">
+      <p className="text-[10px] uppercase tracking-wide text-purple-300/70">Real deployment scope</p>
+      {repo ? (
+        <>
+          <p className="text-[11px] text-cyan-500/60 mt-1">
+            {repo.owner}/{repo.name} ({repo.branch}) · paths: {repo.allowedPaths.join(', ') || 'none set'} · cap{' '}
+            {repo.maxPerWeek}/week
+          </p>
+          <div className="flex items-center gap-2 mt-1">
+            <span className={`text-[10px] ${repo.enabled ? 'text-emerald-400/80' : 'text-cyan-500/50'}`}>
+              {repo.enabled ? 'Enabled — Engineering Lead can deploy within scope' : 'Disabled'}
+            </span>
+            <button
+              onClick={() => (repo.enabled ? onDisable(venture.id) : onEnable(venture.id))}
+              disabled={busy}
+              className="text-[11px] border border-purple-500/30 text-purple-300/80 hover:text-purple-200 disabled:opacity-40 rounded-full px-2 py-0.5"
+            >
+              {repo.enabled ? 'Disable' : 'Enable'}
+            </button>
+          </div>
+          {venture.deployments?.length > 0 && (
+            <ul className="mt-2 space-y-0.5">
+              {[...venture.deployments]
+                .slice(-5)
+                .reverse()
+                .map((d, i) => (
+                  <li key={i} className="text-[10px] text-cyan-500/50">
+                    {new Date(d.deployedAt).toLocaleString()} · {d.path} —{' '}
+                    {d.commitUrl ? (
+                      <a href={d.commitUrl} target="_blank" rel="noreferrer" className="underline hover:text-cyan-400/70">
+                        {d.message || 'commit'}
+                      </a>
+                    ) : (
+                      d.message || 'commit'
+                    )}
+                  </li>
+                ))}
+            </ul>
+          )}
+        </>
+      ) : showForm ? (
+        <form onSubmit={submit} className="mt-1 space-y-1">
+          <div className="flex gap-1">
+            <input value={owner} onChange={(e) => setOwner(e.target.value)} placeholder="repo owner" className={inputClass} />
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="repo name" className={inputClass} />
+          </div>
+          <input value={branch} onChange={(e) => setBranch(e.target.value)} placeholder="branch (main)" className={inputClass} />
+          <input
+            value={allowedPaths}
+            onChange={(e) => setAllowedPaths(e.target.value)}
+            placeholder="allowed paths, comma separated"
+            className={inputClass}
+          />
+          <input
+            value={maxPerWeek}
+            onChange={(e) => setMaxPerWeek(e.target.value)}
+            type="number"
+            min="1"
+            placeholder="max deploys/week"
+            className={inputClass}
+          />
+          <div className="flex gap-2">
+            <button
+              type="submit"
+              disabled={busy || !owner.trim() || !name.trim()}
+              className="text-[11px] bg-purple-600 hover:bg-purple-500 disabled:opacity-40 text-white rounded-full px-3 py-1"
+            >
+              Link repo
+            </button>
+            <button type="button" onClick={() => setShowForm(false)} className="text-[11px] text-cyan-500/60">
+              Cancel
+            </button>
+          </div>
+        </form>
+      ) : (
+        <button onClick={() => setShowForm(true)} className="mt-1 text-[11px] text-purple-300/70 hover:text-purple-200">
+          Link a repo to enable real deployment
+        </button>
+      )}
+    </div>
+  );
+}
+
+function VentureCard({ venture, action, onApproveTranche, onDenyTranche, onKill, onLinkRepo, onEnableDeployment, onDisableDeployment, busy }) {
   return (
     <div className="border border-cyan-500/20 rounded-lg p-2">
       <div className="flex items-center justify-between gap-2">
@@ -80,6 +207,15 @@ function VentureCard({ venture, action, onApproveTranche, onDenyTranche, onKill,
             </button>
           </div>
         </div>
+      )}
+      {onLinkRepo && (
+        <DeploymentScope
+          venture={venture}
+          onLinkRepo={onLinkRepo}
+          onEnable={onEnableDeployment}
+          onDisable={onDisableDeployment}
+          busy={busy}
+        />
       )}
       {onKill && (
         <button
@@ -170,6 +306,45 @@ export default function VenturesPanel({ sessionId, reloadKey, onGreenlit }) {
     }
   };
 
+  const handleLinkRepo = async (id, repoConfig) => {
+    setBusyId(id);
+    setError(null);
+    try {
+      await linkVentureRepo(id, repoConfig);
+      load();
+    } catch (err) {
+      setError(err.response?.data?.error || err.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleEnableDeployment = async (id) => {
+    setBusyId(id);
+    setError(null);
+    try {
+      await enableVentureDeployment(id);
+      load();
+    } catch (err) {
+      setError(err.response?.data?.error || err.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleDisableDeployment = async (id) => {
+    setBusyId(id);
+    setError(null);
+    try {
+      await disableVentureDeployment(id);
+      load();
+    } catch (err) {
+      setError(err.response?.data?.error || err.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   if (error) {
     return <p className="text-xs text-red-400 p-4">{error}</p>;
   }
@@ -225,6 +400,9 @@ export default function VenturesPanel({ sessionId, reloadKey, onGreenlit }) {
               onApproveTranche={handleApproveTranche}
               onDenyTranche={handleDenyTranche}
               onKill={handleKill}
+              onLinkRepo={handleLinkRepo}
+              onEnableDeployment={handleEnableDeployment}
+              onDisableDeployment={handleDisableDeployment}
               busy={busyId === v.id}
             />
           ))}
