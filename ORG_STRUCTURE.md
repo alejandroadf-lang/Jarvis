@@ -324,3 +324,57 @@ actually happened so the app's numbers track reality.
 Both the Executive Team and Venture Studio sidebars show the Treasury
 panel, and it refreshes after every chat turn in either mode, so a logged
 transaction shows up immediately regardless of which tab you're in.
+
+## Killing a venture
+
+Not every venture earns its next tranche. The CEO owns the call to end one
+via a `kill_venture` action — sets status to `killed`, records `killedAt`
+and a `killReason`, and clears any pending tranche request. Unlike
+greenlighting or approving a tranche, killing doesn't move any money, so
+it's also exposed as a direct, human-in-the-loop route
+(`POST /api/ventures/:id/kill`) with a "Kill venture" button on active
+venture cards in the Ventures panel — no need to go through a conversation
+if you've already decided. The CEO is instructed not to use it to hedge or
+as a threat, and specifically not to let sunk cost talk it out of killing
+something that genuinely isn't working.
+
+## Portfolio view
+
+The per-mode Ventures panel is deliberately narrow — a sidebar showing
+"what's relevant to this conversation." The **Portfolio** tab
+(`GET /api/ventures/portfolio`, `client/src/components/PortfolioView.jsx`)
+is the company-wide view instead: every venture ever created — proposed,
+active, or killed — sorted active-first, each enriched with its own slice
+of the ledger (`allocated`, `revenue`, `expense`, `net`, computed by
+filtering the ledger's transactions by `ventureId`) and a milestone
+summary (`done`/`missed`/`total`). Stat tiles at the top roll all of that
+up across the whole portfolio, alongside the current treasury balance.
+This is the place to compare ventures side by side once there's more than
+one running, rather than reacting to them one at a time in chat.
+
+## Conversation history survives a restart
+
+Originally every chat mode kept its history purely in an in-memory `Map`,
+which is fine for a quick demo but not for something meant to run as an
+ongoing company — a server restart (a crash, a deploy, an accidental
+`Ctrl+C`) would silently wipe every conversation. `server/sessionStore.js`
+persists all three modes' histories to `server/data/sessions.json` (same
+`store.js` helper the treasury and ventures use, now relocated to
+`server/store.js` since it was never actually finance-specific): each Map
+is seeded from disk at startup, and every write (`.set`) or reset
+(`.delete`) is mirrored to disk in the same call. Nothing else about the
+chat flow changes — this is purely about not losing state you already
+had.
+
+## Wider web-search grounding
+
+The Studio's Market Researcher and Scale Strategist were the first to get
+Anthropic's hosted web search tool (see "Grounded in real research, not
+just recall" above); the Executive Team's **Solutions Architect** (checks
+a vendor's actual current API/pricing before committing to a technical
+design) and **SEO Specialist** (checks who's actually ranking for a target
+keyword right now, or whether a cited best practice is still current) now
+have it too, the same way — `serverTools: [{ type: 'web_search_20250305',
+name: 'web_search', max_uses: 4 }]` on the agent definition in
+`orgChart.js`, no dispatch-loop changes required since Anthropic executes
+these server-side.

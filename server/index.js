@@ -8,6 +8,7 @@ import { runAgent } from './agents/agentRunner.js';
 import { listAgents } from './agents/registry.js';
 import { AGENTS as COMPANY_AGENTS, ROOT_AGENT_ID as COMPANY_ROOT } from './agents/orgChart.js';
 import { AGENTS as STUDIO_AGENTS, ROOT_AGENT_ID as STUDIO_ROOT } from './agents/ideationTeam.js';
+import { loadSessions, saveSession, deleteSession } from './sessionStore.js';
 import { getLedger, addTransaction } from './finance/ledger.js';
 import {
   listVentures,
@@ -18,6 +19,7 @@ import {
   requestTranche,
   approveTranche,
   denyTranche,
+  killVenture,
 } from './finance/ventures.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -30,9 +32,11 @@ and quietly witty — never rambling. Address the user directly and skip unneces
 preamble. When you don't know something, say so plainly instead of guessing.`;
 
 const MAX_TURNS = 20; // messages kept per session (user+assistant combined)
-const sessions = new Map(); // sessionId -> [{ role, content }]
-const companySessions = new Map(); // sessionId -> [{ role, content }], CEO-level only
-const studioSessions = new Map(); // sessionId -> [{ role, content }], Venture Partner-level only
+// Each Map is seeded from disk at startup and kept in sync on every write
+// via sessionStore.js, so conversation history survives a server restart.
+const sessions = loadSessions('jarvis'); // sessionId -> [{ role, content }]
+const companySessions = loadSessions('company'); // sessionId -> [{ role, content }], CEO-level only
+const studioSessions = loadSessions('studio'); // sessionId -> [{ role, content }], Venture Partner-level only
 
 const app = express();
 app.use(cors());
@@ -80,7 +84,9 @@ app.post('/api/chat', async (req, res) => {
       .join('\n');
 
     history.push({ role: 'assistant', content: reply });
-    sessions.set(sessionId, history.slice(-MAX_TURNS));
+    const trimmed = history.slice(-MAX_TURNS);
+    sessions.set(sessionId, trimmed);
+    saveSession('jarvis', sessionId, trimmed);
 
     res.end();
   } catch (err) {
@@ -95,7 +101,10 @@ app.post('/api/chat', async (req, res) => {
 
 app.post('/api/reset', (req, res) => {
   const { sessionId } = req.body || {};
-  if (sessionId) sessions.delete(sessionId);
+  if (sessionId) {
+    sessions.delete(sessionId);
+    deleteSession('jarvis', sessionId);
+  }
   res.json({ ok: true });
 });
 
@@ -117,13 +126,16 @@ async function runCompanyTurn(sessionId, message) {
       log_expense: handleLogExpense,
       report_milestone_progress: handleReportMilestoneProgress,
       request_tranche: handleRequestTranche,
+      kill_venture: handleKillVenture,
     },
     extraContext: buildTreasuryContext(),
   });
 
   history.push({ role: 'user', content: message });
   history.push({ role: 'assistant', content: text });
-  companySessions.set(sessionId, history.slice(-MAX_TURNS));
+  const trimmed = history.slice(-MAX_TURNS);
+  companySessions.set(sessionId, trimmed);
+  saveSession('company', sessionId, trimmed);
 
   return { reply: text, trace };
 }
@@ -148,7 +160,10 @@ app.post('/api/company/chat', async (req, res) => {
 
 app.post('/api/company/reset', (req, res) => {
   const { sessionId } = req.body || {};
-  if (sessionId) companySessions.delete(sessionId);
+  if (sessionId) {
+    companySessions.delete(sessionId);
+    deleteSession('company', sessionId);
+  }
   res.json({ ok: true });
 });
 
@@ -272,6 +287,15 @@ async function handleRequestTranche(input) {
   }
 }
 
+async function handleKillVenture(input) {
+  try {
+    const venture = killVenture(input.ventureId, input.reason);
+    return `Killed "${venture.title}". Reason: ${venture.killReason}.`;
+  } catch (err) {
+    return `Could not kill venture: ${err.message}`;
+  }
+}
+
 app.get('/api/studio/org-chart', (_req, res) => {
   res.json({ rootAgentId: STUDIO_ROOT, agents: listAgents(STUDIO_AGENTS) });
 });
@@ -300,7 +324,9 @@ app.post('/api/studio/chat', async (req, res) => {
 
     history.push({ role: 'user', content: message });
     history.push({ role: 'assistant', content: text });
-    studioSessions.set(sessionId, history.slice(-MAX_TURNS));
+    const trimmed = history.slice(-MAX_TURNS);
+    studioSessions.set(sessionId, trimmed);
+    saveSession('studio', sessionId, trimmed);
 
     res.json({ reply: text, trace });
   } catch (err) {
@@ -311,7 +337,10 @@ app.post('/api/studio/chat', async (req, res) => {
 
 app.post('/api/studio/reset', (req, res) => {
   const { sessionId } = req.body || {};
-  if (sessionId) studioSessions.delete(sessionId);
+  if (sessionId) {
+    studioSessions.delete(sessionId);
+    deleteSession('studio', sessionId);
+  }
   res.json({ ok: true });
 });
 
@@ -321,6 +350,47 @@ app.get('/api/ventures', (_req, res) => {
 
 app.get('/api/ventures/ledger', (_req, res) => {
   res.json(getLedger());
+});
+
+function computeVentureFinancials(venture, transactions) {
+  const forVenture = transactions.filter((t) => t.ventureId === venture.id);
+  const sumType = (type) => forVenture.filter((t) => t.type === type).reduce((sum, t) => sum + t.amount, 0);
+  const allocated = sumType('investment');
+  const revenue = sumType('revenue');
+  const expense = sumType('expense');
+
+  return {
+    ...venture,
+    financials: { allocated, revenue, expense, net: revenue - expense },
+    milestoneSummary: {
+      total: venture.milestones.length,
+      done: venture.milestones.filter((m) => m.status === 'done').length,
+      missed: venture.milestones.filter((m) => m.status === 'missed').length,
+    },
+  };
+}
+
+// A portfolio-level view across every venture (proposed, active, and
+// killed), each enriched with its own slice of the ledger — since the
+// per-mode Ventures panel only ever shows one team's angle on "current"
+// ventures, this is the place to compare all of them side by side.
+app.get('/api/ventures/portfolio', (_req, res) => {
+  const { transactions, balance, startingCapital } = getLedger();
+  const ventures = listVentures().map((v) => computeVentureFinancials(v, transactions));
+  const totals = ventures.reduce(
+    (acc, v) => ({
+      allocated: acc.allocated + v.financials.allocated,
+      revenue: acc.revenue + v.financials.revenue,
+      expense: acc.expense + v.financials.expense,
+    }),
+    { allocated: 0, revenue: 0, expense: 0 }
+  );
+
+  res.json({
+    ventures,
+    totals: { ...totals, net: totals.revenue - totals.expense },
+    treasury: { balance, startingCapital },
+  });
 });
 
 app.post('/api/ventures/:id/greenlight', async (req, res) => {
@@ -424,6 +494,21 @@ app.post('/api/ventures/:id/tranche/deny', (req, res) => {
   const { id } = req.params;
   try {
     const venture = denyTranche(id);
+    res.json({ venture });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Killing doesn't move money, so — unlike greenlighting or a tranche — this
+// is safe for the founder to do directly from the UI without a company
+// briefing step; the CEO can also do it from a conversation via the
+// kill_venture action.
+app.post('/api/ventures/:id/kill', (req, res) => {
+  const { id } = req.params;
+  const { reason } = req.body || {};
+  try {
+    const venture = killVenture(id, reason);
     res.json({ venture });
   } catch (err) {
     res.status(400).json({ error: err.message });

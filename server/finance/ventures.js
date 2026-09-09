@@ -12,7 +12,7 @@
 // /api/ventures/:id/tranche/* routes) before it hits the treasury — nothing
 // here moves budget on its own.
 
-import { readJson, writeJson } from './store.js';
+import { readJson, writeJson } from '../store.js';
 
 const FILE = 'ventures.json';
 
@@ -144,6 +144,18 @@ export function denyTranche(id) {
   const data = load();
   const venture = findOrThrow(data, id);
   if (!venture.pendingTranche) throw new Error('No pending tranche request for this venture');
+  venture.pendingTranche = null;
+  save(data);
+  return venture;
+}
+
+export function killVenture(id, reason) {
+  const data = load();
+  const venture = findOrThrow(data, id);
+  if (venture.status === 'killed') throw new Error('Venture is already killed');
+  venture.status = 'killed';
+  venture.killedAt = new Date().toISOString();
+  venture.killReason = String(reason || '');
   venture.pendingTranche = null;
   save(data);
   return venture;

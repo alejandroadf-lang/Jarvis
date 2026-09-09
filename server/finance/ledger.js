@@ -3,7 +3,7 @@
 // flat transaction log rather than a mutable balance field, so the balance
 // is always just a fold over history and every change is auditable.
 
-import { readJson, writeJson } from './store.js';
+import { readJson, writeJson } from '../store.js';
 
 const FILE = 'ledger.json';
 export const STARTING_CAPITAL = 100;

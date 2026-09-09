@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
-import { fetchVentures, fetchLedger, greenlightVenture, approveTranche, denyTranche } from '../api/chat.js';
+import { fetchVentures, fetchLedger, greenlightVenture, approveTranche, denyTranche, killVenture } from '../api/chat.js';
 
 function StatusBadge({ status }) {
   const styles = {
     proposed: 'text-amber-400/80 border-amber-500/30',
     active: 'text-emerald-400/80 border-emerald-500/30',
+    killed: 'text-red-400/70 border-red-500/30',
   };
   return (
     <span
@@ -35,7 +36,7 @@ function MilestoneList({ milestones }) {
   );
 }
 
-function VentureCard({ venture, action, onApproveTranche, onDenyTranche, busy }) {
+function VentureCard({ venture, action, onApproveTranche, onDenyTranche, onKill, busy }) {
   return (
     <div className="border border-cyan-500/20 rounded-lg p-2">
       <div className="flex items-center justify-between gap-2">
@@ -79,6 +80,15 @@ function VentureCard({ venture, action, onApproveTranche, onDenyTranche, busy })
             </button>
           </div>
         </div>
+      )}
+      {onKill && (
+        <button
+          onClick={() => onKill(venture.id)}
+          disabled={busy}
+          className="mt-2 text-[11px] text-red-400/60 hover:text-red-400 disabled:opacity-40"
+        >
+          Kill venture
+        </button>
       )}
       {action}
     </div>
@@ -145,6 +155,21 @@ export default function VenturesPanel({ sessionId, reloadKey, onGreenlit }) {
     }
   };
 
+  const handleKill = async (id) => {
+    const reason = window.prompt('Why is this venture being killed?');
+    if (reason === null) return; // cancelled
+    setBusyId(id);
+    setError(null);
+    try {
+      await killVenture(id, reason);
+      load();
+    } catch (err) {
+      setError(err.response?.data?.error || err.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   if (error) {
     return <p className="text-xs text-red-400 p-4">{error}</p>;
   }
@@ -199,6 +224,7 @@ export default function VenturesPanel({ sessionId, reloadKey, onGreenlit }) {
               venture={v}
               onApproveTranche={handleApproveTranche}
               onDenyTranche={handleDenyTranche}
+              onKill={handleKill}
               busy={busyId === v.id}
             />
           ))}
