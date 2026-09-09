@@ -24,6 +24,9 @@ import { listVentures } from './finance/ventures.js';
 import { handleProposeVenture } from './actionHandlers.js';
 import { todayKey, saveDailyReport } from './dailyReports.js';
 import { sendDailyReportEmail } from './email.js';
+import { estimateCostUsd, sumUsage } from './usage.js';
+
+const ZERO_USAGE = { inputTokens: 0, outputTokens: 0 };
 
 function leadershipKickoff(date) {
   return `It's ${date}. Time for today's daily leadership sync.
@@ -82,6 +85,7 @@ quick daily check-in, not a full brainstorming session.`;
  */
 export async function runDailyMeeting({ anthropic }) {
   const date = todayKey();
+  const startedAt = Date.now();
   const treasuryContext = buildTreasuryContext();
   const beforeIds = new Set(listVentures().map((v) => v.id));
 
@@ -102,12 +106,16 @@ export async function runDailyMeeting({ anthropic }) {
     });
   } catch (err) {
     leadershipFailed = true;
-    leadership = { text: `(Leadership sync failed: ${err.message})`, trace: [] };
+    leadership = { text: `(Leadership sync failed: ${err.message})`, trace: [], usage: { ...ZERO_USAGE } };
   }
 
   let studio;
   if (leadershipFailed) {
-    studio = { text: "(Skipped: today's leadership sync failed, so there's nothing fresh to review.)", trace: [] };
+    studio = {
+      text: "(Skipped: today's leadership sync failed, so there's nothing fresh to review.)",
+      trace: [],
+      usage: { ...ZERO_USAGE },
+    };
   } else {
     try {
       studio = await runAgent({
@@ -119,13 +127,14 @@ export async function runDailyMeeting({ anthropic }) {
         extraContext: buildStudioContext(),
       });
     } catch (err) {
-      studio = { text: `(Venture Studio ideation pass failed: ${err.message})`, trace: [] };
+      studio = { text: `(Venture Studio ideation pass failed: ${err.message})`, trace: [], usage: { ...ZERO_USAGE } };
     }
   }
 
   const afterIds = listVentures().map((v) => v.id);
   const proposedVentureIds = afterIds.filter((id) => !beforeIds.has(id));
   const { balance, startingCapital } = getLedger();
+  const usage = sumUsage(leadership.usage, studio.usage);
 
   const report = {
     date,
@@ -134,6 +143,9 @@ export async function runDailyMeeting({ anthropic }) {
     studio: { reply: studio.text, trace: studio.trace },
     proposedVentureIds,
     treasury: { balance, startingCapital },
+    usage,
+    costUsd: estimateCostUsd(usage),
+    durationMs: Date.now() - startedAt,
   };
 
   saveDailyReport(report);

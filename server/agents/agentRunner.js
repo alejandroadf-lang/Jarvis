@@ -105,7 +105,8 @@ function buildTools(agents, agent) {
  * @param {number} [opts.depth]
  * @param {Record<string, (input: object) => Promise<string>>} [opts.actionHandlers]
  * @param {string} [opts.extraContext] - extra text appended to every agent's system prompt for this run
- * @returns {Promise<{text: string, trace: object[]}>}
+ * @param {{inputTokens: number, outputTokens: number}} [opts.usage] - shared accumulator, mutated across the whole run (including every delegated sub-agent)
+ * @returns {Promise<{text: string, trace: object[], usage: {inputTokens: number, outputTokens: number}}>}
  */
 export async function runAgent({
   anthropic,
@@ -116,6 +117,7 @@ export async function runAgent({
   depth = 0,
   actionHandlers = {},
   extraContext = '',
+  usage = { inputTokens: 0, outputTokens: 0 },
 }) {
   const agent = getAgent(agents, agentId);
   const tools = buildTools(agents, agent);
@@ -132,6 +134,11 @@ export async function runAgent({
       messages: working,
       ...(tools.length ? { tools } : {}),
     });
+
+    if (response.usage) {
+      usage.inputTokens += response.usage.input_tokens || 0;
+      usage.outputTokens += response.usage.output_tokens || 0;
+    }
 
     const toolUses = response.content.filter((block) => block.type === 'tool_use');
 
@@ -163,6 +170,7 @@ export async function runAgent({
             depth: depth + 1,
             actionHandlers,
             extraContext,
+            usage,
           });
           resultText = sub.text;
           trace.push({ id: report.id, title: report.title, department: report.department, depth: depth + 1 });
@@ -187,5 +195,5 @@ export async function runAgent({
     finalText = "I wasn't able to land on a final answer — could you narrow the ask?";
   }
 
-  return { text: finalText, trace };
+  return { text: finalText, trace, usage };
 }

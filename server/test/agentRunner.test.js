@@ -6,8 +6,16 @@ function apiError(status, message) {
   return Object.assign(new Error(message || `status ${status}`), { status });
 }
 
-function textResponse(text) {
-  return { stop_reason: 'end_turn', content: [{ type: 'text', text }] };
+function textResponse(text, usage) {
+  return { stop_reason: 'end_turn', content: [{ type: 'text', text }], usage };
+}
+
+function toolUseResponse(toolName, input) {
+  return {
+    stop_reason: 'tool_use',
+    content: [{ type: 'tool_use', id: `tu_${toolName}`, name: toolName, input }],
+    usage: { input_tokens: 40, output_tokens: 10 },
+  };
 }
 
 // A minimal single-agent team with no reports/actions, so buildTools()
@@ -21,6 +29,26 @@ const AGENTS = {
     reportsTo: null,
     reports: [],
     systemPrompt: 'You are a test agent.',
+  },
+};
+
+const DELEGATING_AGENTS = {
+  manager: {
+    id: 'manager',
+    title: 'Manager',
+    department: 'Test',
+    reportsTo: null,
+    reports: ['report_agent'],
+    systemPrompt: 'You are a manager.',
+  },
+  report_agent: {
+    id: 'report_agent',
+    title: 'Report Agent',
+    department: 'Test',
+    reportsTo: 'manager',
+    reports: [],
+    toolDescription: 'Consult the report agent.',
+    systemPrompt: 'You are a report agent.',
   },
 };
 
@@ -97,4 +125,35 @@ test('runAgent still fails after the retry is exhausted', async () => {
     /still overloaded/
   );
   assert.equal(anthropic.callCount, 2);
+});
+
+test('runAgent reports token usage for a single-round turn', async () => {
+  const anthropic = makeClient([textResponse('hello', { input_tokens: 12, output_tokens: 6 })]);
+
+  const { usage } = await runAgent({
+    anthropic,
+    agents: AGENTS,
+    agentId: 'test_agent',
+    messages: [{ role: 'user', content: 'hi' }],
+  });
+
+  assert.deepEqual(usage, { inputTokens: 12, outputTokens: 6 });
+});
+
+test('runAgent accumulates token usage across a delegated sub-agent call', async () => {
+  const anthropic = makeClient([
+    toolUseResponse('consult_report_agent', { task: 'do a thing' }), // manager round 1: 40 in / 10 out
+    textResponse('sub answer', { input_tokens: 15, output_tokens: 5 }), // report_agent's only round
+    textResponse('final answer', { input_tokens: 20, output_tokens: 8 }), // manager round 2
+  ]);
+
+  const { text, usage } = await runAgent({
+    anthropic,
+    agents: DELEGATING_AGENTS,
+    agentId: 'manager',
+    messages: [{ role: 'user', content: 'hi' }],
+  });
+
+  assert.equal(text, 'final answer');
+  assert.deepEqual(usage, { inputTokens: 75, outputTokens: 23 });
 });

@@ -1,6 +1,13 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { formatReportEmail, sendDailyReportEmail } from '../email.js';
+import {
+  formatReportEmail,
+  sendDailyReportEmail,
+  formatTrancheRequestEmail,
+  sendTrancheRequestEmail,
+  formatVentureProposedEmail,
+  sendVentureProposedEmail,
+} from '../email.js';
 
 function makeReport(overrides = {}) {
   return {
@@ -45,6 +52,47 @@ test('sendDailyReportEmail is a no-op (returns false, does not throw) without SM
   try {
     const sent = await sendDailyReportEmail(makeReport());
     assert.equal(sent, false);
+  } finally {
+    if (savedHost !== undefined) process.env.SMTP_HOST = savedHost;
+    if (savedTo !== undefined) process.env.REPORT_EMAIL_TO = savedTo;
+  }
+});
+
+function makeVenture(overrides = {}) {
+  return {
+    id: 'v_1',
+    title: 'Widget Co',
+    oneLiner: 'Widgets for people who need widgets',
+    budgetRequested: 25,
+    pendingTranche: { amount: 15, description: 'next milestone' },
+    ...overrides,
+  };
+}
+
+test('formatTrancheRequestEmail names the venture, amount, and purpose', () => {
+  const { subject, text } = formatTrancheRequestEmail(makeVenture());
+  assert.match(subject, /Widget Co/);
+  assert.match(subject, /Action needed/);
+  assert.match(text, /\$15/);
+  assert.match(text, /next milestone/);
+});
+
+test('formatVentureProposedEmail names the venture and asking amount', () => {
+  const { subject, text } = formatVentureProposedEmail(makeVenture());
+  assert.match(subject, /Widget Co/);
+  assert.match(text, /Widgets for people who need widgets/);
+  assert.match(text, /\$25/);
+});
+
+test('sendTrancheRequestEmail and sendVentureProposedEmail are no-ops without SMTP configured', async () => {
+  const savedHost = process.env.SMTP_HOST;
+  const savedTo = process.env.REPORT_EMAIL_TO;
+  delete process.env.SMTP_HOST;
+  delete process.env.REPORT_EMAIL_TO;
+
+  try {
+    assert.equal(await sendTrancheRequestEmail(makeVenture()), false);
+    assert.equal(await sendVentureProposedEmail(makeVenture()), false);
   } finally {
     if (savedHost !== undefined) process.env.SMTP_HOST = savedHost;
     if (savedTo !== undefined) process.env.REPORT_EMAIL_TO = savedTo;

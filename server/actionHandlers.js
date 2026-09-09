@@ -8,9 +8,27 @@
 
 import { getLedger, addTransaction } from './finance/ledger.js';
 import { getVenture, createVenture, setMilestoneStatus, requestTranche, killVenture } from './finance/ventures.js';
+import { sendVentureProposedEmail, sendTrancheRequestEmail } from './email.js';
+
+// A founder who greenlit a venture or approved a tranche and walked away
+// won't see the CFO's next move until they happen to check back — these
+// two are the actual decision points worth interrupting for (money about
+// to be asked for, or a new idea worth a look), so they email immediately
+// rather than waiting for the next daily digest. Never lets an email
+// failure break the action itself: the venture is already logged either
+// way, so a bad SMTP config should show up as a log line, not a broken
+// conversation.
+async function notify(sendFn, ...args) {
+  try {
+    await sendFn(...args);
+  } catch (err) {
+    console.error(`Failed to send ${sendFn.name}:`, err);
+  }
+}
 
 export async function handleProposeVenture(input) {
   const venture = createVenture(input);
+  await notify(sendVentureProposedEmail, venture);
   return `Logged venture proposal ${venture.id} ("${venture.title}"), asking $${venture.budgetRequested}. Status: proposed. Tell the founder they can greenlight it from the Ventures panel to allocate budget and hand it to the executive team.`;
 }
 
@@ -82,6 +100,7 @@ export async function handleRequestTranche(input) {
   }
   try {
     const venture = requestTranche(input.ventureId, { amount, description: input.description });
+    await notify(sendTrancheRequestEmail, venture);
     return `Requested a $${amount} tranche for "${venture.title}" (${input.description}). Tell the founder they can approve it from the Ventures panel to add it to the treasury allocation.`;
   } catch (err) {
     return `Could not request tranche: ${err.message}`;

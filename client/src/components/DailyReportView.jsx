@@ -33,6 +33,10 @@ function fmtDate(dateKey) {
   return d.toLocaleDateString(undefined, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' });
 }
 
+function fmtUsd(amount) {
+  return amount > 0 && amount < 0.01 ? `$${amount.toFixed(4)}` : `$${amount.toFixed(2)}`;
+}
+
 export default function DailyReportView() {
   const [reports, setReports] = useState(null);
   const [selectedDate, setSelectedDate] = useState(null);
@@ -116,6 +120,14 @@ export default function DailyReportView() {
             <p className="text-xs text-cyan-500/60">
               {fmtDate(selected.date)} · generated {new Date(selected.generatedAt).toLocaleTimeString()} · treasury $
               {selected.treasury.balance.toFixed(2)} / ${selected.treasury.startingCapital}
+              {selected.usage && typeof selected.costUsd === 'number' && (
+                <>
+                  {' '}
+                  · {(selected.durationMs / 1000).toFixed(1)}s · {fmtUsd(selected.costUsd)} ·{' '}
+                  {selected.usage.inputTokens.toLocaleString()} in / {selected.usage.outputTokens.toLocaleString()} out
+                  tokens
+                </>
+              )}
             </p>
 
             <ReportSection
