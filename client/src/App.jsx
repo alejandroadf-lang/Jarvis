@@ -125,7 +125,7 @@ export default function App() {
           // the CFO logs revenue), so refresh the panel after any turn.
           setVenturesReloadKey((k) => k + 1);
         }
-      } catch (err) {
+      } catch {
         const errorText = 'Sorry, I ran into a problem reaching the server.';
         // Jarvis mode already appended an (empty, streaming) placeholder bubble
         // before the request started — fill that in rather than adding a new one.

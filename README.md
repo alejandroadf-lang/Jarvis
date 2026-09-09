@@ -43,6 +43,20 @@ npm run dev:client    # localhost:5173, proxies /api to :3001
 
 Copy `server/.env.example` to `server/.env` and set `ANTHROPIC_API_KEY`.
 
+## Tests
+
+```bash
+npm test    # runs the server's unit tests (server/test/, Node's built-in test runner)
+npm run lint  # lints the client
+```
+
+The server tests cover the pure data-layer logic — the ledger, ventures
+(including milestones, tranches, and kill), and session persistence — by
+pointing `server/store.js` at a throwaway temp directory (`JARVIS_DATA_DIR`)
+instead of the real `server/data/`. They don't touch the Claude API. A
+GitHub Actions workflow (`.github/workflows/ci.yml`) runs both on every push
+and pull request against `main`.
+
 ## Production
 
 ```bash
