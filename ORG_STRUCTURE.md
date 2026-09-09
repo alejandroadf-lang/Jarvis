@@ -443,3 +443,8 @@ picks up the next day it's running instead of going silently dark. It's
 skipped entirely without `ANTHROPIC_API_KEY` configured, and can be
 disabled outright with `DAILY_MEETING_DISABLED=true` if you'd rather
 trigger it manually every time.
+
+All of this still depends on the server actually being up at 8 AM ICT —
+see README.md's "Deploy to Railway" section for running it on always-on
+infrastructure (with a persistent volume for `JARVIS_DATA_DIR`, so state
+survives a redeploy) instead of a machine that's only sometimes on.
