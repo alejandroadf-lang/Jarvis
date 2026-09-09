@@ -1,12 +1,13 @@
-export default function VoiceButton({ listening, supported, onClick }) {
+export default function VoiceButton({ listening, supported, onClick, disabled }) {
   if (!supported) return null;
 
   return (
     <button
       type="button"
       onClick={onClick}
-      title={listening ? 'Stop listening' : 'Speak to Jarvis'}
-      className={`shrink-0 flex items-center justify-center w-11 h-11 rounded-full border transition ${
+      disabled={disabled}
+      title={disabled ? 'Wake word is listening — turn it off to use push-to-talk' : listening ? 'Stop listening' : 'Speak to Jarvis'}
+      className={`shrink-0 flex items-center justify-center w-11 h-11 rounded-full border transition disabled:opacity-30 disabled:cursor-not-allowed ${
         listening
           ? 'bg-red-500/20 border-red-400 text-red-300 animate-pulse'
           : 'bg-white/5 border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/10'

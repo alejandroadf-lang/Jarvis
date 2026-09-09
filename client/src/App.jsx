@@ -5,6 +5,7 @@ import OrgChart from './components/OrgChart.jsx';
 import VenturesPanel from './components/VenturesPanel.jsx';
 import { useSpeechRecognition } from './hooks/useSpeechRecognition.js';
 import { useSpeechSynthesis } from './hooks/useSpeechSynthesis.js';
+import { useWakeWord } from './hooks/useWakeWord.js';
 import {
   sendMessage,
   resetConversation,
@@ -21,6 +22,21 @@ function getSessionId() {
     localStorage.setItem('jarvis-session-id', id);
   }
   return id;
+}
+
+// Pulls complete sentences off the front of a streaming text buffer, leaving
+// any trailing partial sentence for the next chunk. Lets Jarvis start
+// speaking a sentence while the rest of the reply is still generating.
+function extractSentences(buffer) {
+  const sentences = [];
+  let rest = buffer;
+  let match;
+  while ((match = rest.match(/[^.!?\n]*[.!?\n]+/))) {
+    const sentence = match[0].trim();
+    if (sentence) sentences.push(sentence);
+    rest = rest.slice(match[0].length);
+  }
+  return { sentences, rest };
 }
 
 const MODES = {
@@ -55,12 +71,13 @@ export default function App() {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [speakReplies, setSpeakReplies] = useState(true);
+  const [wakeWordEnabled, setWakeWordEnabled] = useState(false);
   const [venturesReloadKey, setVenturesReloadKey] = useState(0);
 
   const messages = messagesByMode[mode];
   const modeConfig = MODES[mode];
 
-  const { speak, speaking, cancel, supported: ttsSupported } = useSpeechSynthesis();
+  const { speak, enqueue, speaking, cancel, supported: ttsSupported } = useSpeechSynthesis();
 
   const appendMessage = useCallback(
     (m, targetMode = mode) => {
@@ -68,6 +85,14 @@ export default function App() {
     },
     [mode]
   );
+
+  const updateLastMessage = useCallback((content, targetMode = mode) => {
+    setMessagesByMode((prev) => {
+      const list = prev[targetMode];
+      const updated = list.slice(0, -1).concat({ ...list[list.length - 1], content });
+      return { ...prev, [targetMode]: updated };
+    });
+  }, [mode]);
 
   const submit = useCallback(
     async (text) => {
@@ -79,9 +104,17 @@ export default function App() {
       setSending(true);
       try {
         if (mode === 'jarvis') {
-          const reply = await modeConfig.send(sessionId, trimmed);
-          appendMessage({ role: 'assistant', content: reply });
-          if (speakReplies) speak(reply);
+          appendMessage({ role: 'assistant', content: '' });
+          let sentenceBuffer = '';
+          await sendMessage(sessionId, trimmed, (delta, full) => {
+            updateLastMessage(full);
+            if (!speakReplies) return;
+            sentenceBuffer += delta;
+            const { sentences, rest } = extractSentences(sentenceBuffer);
+            sentenceBuffer = rest;
+            sentences.forEach(enqueue);
+          });
+          if (speakReplies && sentenceBuffer.trim()) enqueue(sentenceBuffer);
         } else {
           const { reply, trace } = await modeConfig.send(sessionId, trimmed);
           appendMessage({ role: 'assistant', content: reply, trace });
@@ -91,19 +124,28 @@ export default function App() {
           setVenturesReloadKey((k) => k + 1);
         }
       } catch (err) {
-        appendMessage({
-          role: 'assistant',
-          content: 'Sorry, I ran into a problem reaching the server.',
-        });
+        const errorText = 'Sorry, I ran into a problem reaching the server.';
+        // Jarvis mode already appended an (empty, streaming) placeholder bubble
+        // before the request started — fill that in rather than adding a new one.
+        if (mode === 'jarvis') {
+          updateLastMessage(errorText);
+        } else {
+          appendMessage({ role: 'assistant', content: errorText });
+        }
       } finally {
         setSending(false);
       }
     },
-    [sending, sessionId, speak, speakReplies, mode, modeConfig, appendMessage]
+    [sending, sessionId, speak, enqueue, speakReplies, mode, modeConfig, appendMessage, updateLastMessage]
   );
 
   const { listening, start, stop, supported: sttSupported } = useSpeechRecognition({
     onResult: submit,
+  });
+
+  const { armed: wakeArmed, supported: wakeWordSupported } = useWakeWord({
+    enabled: wakeWordEnabled && mode === 'jarvis',
+    onCommand: submit,
   });
 
   const handleReset = async () => {
@@ -145,6 +187,16 @@ export default function App() {
           </div>
         </div>
         <div className="flex items-center gap-3 text-xs">
+          {mode === 'jarvis' && wakeWordSupported && (
+            <label className="flex items-center gap-1 cursor-pointer select-none text-cyan-400/80">
+              <input
+                type="checkbox"
+                checked={wakeWordEnabled}
+                onChange={(e) => setWakeWordEnabled(e.target.checked)}
+              />
+              "Hey Jarvis"
+            </label>
+          )}
           {ttsSupported && (
             <label className="flex items-center gap-1 cursor-pointer select-none text-cyan-400/80">
               <input
@@ -190,12 +242,21 @@ export default function App() {
             <VoiceButton
               listening={listening}
               supported={sttSupported}
+              disabled={wakeWordEnabled && mode === 'jarvis'}
               onClick={() => (listening ? stop() : start())}
             />
             <input
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder={listening ? 'Listening…' : modeConfig.placeholder}
+              placeholder={
+                listening
+                  ? 'Listening…'
+                  : wakeWordEnabled && mode === 'jarvis'
+                    ? wakeArmed
+                      ? "Go ahead, I'm listening…"
+                      : 'Say "Hey Jarvis" to talk…'
+                    : modeConfig.placeholder
+              }
               className="flex-1 bg-white/5 border border-cyan-500/20 rounded-full px-4 py-2 text-sm outline-none focus:border-cyan-400/60"
             />
             <button
@@ -208,6 +269,11 @@ export default function App() {
           </form>
           {speaking && (
             <p className="text-center text-xs text-cyan-500/50 pb-2">Jarvis is speaking…</p>
+          )}
+          {!speaking && wakeWordEnabled && mode === 'jarvis' && (
+            <p className="text-center text-xs text-cyan-500/50 pb-2">
+              {wakeArmed ? 'Listening for your command…' : 'Listening for "Hey Jarvis"…'}
+            </p>
           )}
         </div>
       </div>

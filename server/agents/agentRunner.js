@@ -15,6 +15,12 @@
 // which logs a venture proposal). The caller supplies `actionHandlers`, a
 // map from tool name to an async function that performs the effect and
 // returns the text to feed back to the agent as the tool_result.
+//
+// A third kind, `serverTools`, is for Anthropic-hosted tools (e.g. web
+// search): the tool spec is passed straight through to the API, and
+// Anthropic executes it server-side and returns the result already folded
+// into the same response — no tool_result round trip needed from us, so
+// the dispatch loop below doesn't need to know these tools exist.
 
 import { getAgent } from './registry.js';
 
@@ -48,7 +54,9 @@ function buildTools(agents, agent) {
     input_schema: action.input_schema,
   }));
 
-  return [...delegationTools, ...actionTools];
+  const serverTools = agent.serverTools || [];
+
+  return [...delegationTools, ...actionTools, ...serverTools];
 }
 
 /**

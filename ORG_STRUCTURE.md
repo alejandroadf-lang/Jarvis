@@ -174,10 +174,11 @@ venture proposal sized against the company's actual cash.
 
 ```
 Venture Partner
-├── Market Researcher       — market sizing, trends, competitors
-├── Ideation Facilitator    — wide, divergent raw idea generation
-├── Business Case Analyst   — costs, pricing, path to revenue, milestones
-└── Validation Critic       — deliberate skeptic, stress-tests assumptions
+├── Market Researcher       — market sizing, megatrends, competitors
+├── Ideation Facilitator    — wide, divergent, ambitious raw idea generation
+├── Business Case Analyst   — costs, pricing, path to $1M+ revenue, milestones
+├── Scale Strategist        — TAM/ceiling sizing, expansion mechanism
+└── Validation Critic       — deliberate skeptic (including "is this big enough")
 ```
 
 It's the same orchestrator-workers engine as the Executive Team (see
@@ -185,6 +186,41 @@ It's the same orchestrator-workers engine as the Executive Team (see
 execution: the Venture Partner runs the session, pulls in whichever
 specialist a step of the conversation actually needs, and converges on one
 strong idea rather than assuming the first idea is the right one.
+
+### Calibrated for ambition, not just cash-on-hand
+
+Early versions of this team converged on trivially small ideas (a resume
+app, a to-do list) because every prompt kept reminding agents how little
+money was in the treasury — a classic failure mode where "budget is small"
+quietly becomes "so pick something small." That's fixed at the prompt
+level: every agent is told the treasury funds the *first cheap experiment*,
+never the ceiling on the business itself, and the ambition bar is explicit
+— a believable path to **$1M+ in annual revenue within a few years**, in a
+market big enough to support that. The Ideation Facilitator has a standing
+list of oversaturated, low-ambition categories (generic resume/CV builders,
+to-do apps, habit trackers, note-taking apps) to skip by default unless
+there's a real differentiated wedge, and the Validation Critic is
+instructed to flag "too small to matter" with the same force it flags
+infeasibility. `propose_venture` enforces this structurally too: `marketSize`
+and `pathToMillions` are *required* fields, so the Venture Partner literally
+cannot log a proposal without naming the market and the mechanism to real
+scale.
+
+### Grounded in real research, not just recall
+
+The Market Researcher and Scale Strategist both have Anthropic's hosted
+`web_search_20250305` tool enabled (`serverTools` on the agent definition
+in `ideationTeam.js`, passed straight through to the API by
+`agentRunner.js` — Anthropic executes the search server-side and folds the
+results into the same response, so no extra round trip is needed in our
+dispatch loop). This is what lets those two agents cite a real TAM figure,
+recent funding activity, or actual competitor pricing instead of reciting
+a number from training data that might be stale or simply invented-sounding.
+Each is capped at `max_uses: 4` per invocation to bound cost and latency;
+both are instructed to say when a claim came from a search versus their
+own estimate. Web search is billed per search by Anthropic, separately
+from token usage — a Studio conversation that leans on these two agents
+will cost a bit more than one that doesn't.
 
 ### The treasury
 
@@ -210,10 +246,11 @@ history; the Studio sidebar shows the balance live.
    existing ventures injected into context, so the Business Case Analyst
    sizes its numbers against what's actually left, not a hypothetical
    budget.
-2. Once you've converged on something real, the Venture Partner calls its
-   `propose_venture` action — a tool that isn't delegation but a genuine
-   side effect: it logs a venture (title, problem, target customer,
-   business model, a budget ask, and milestones) via
+2. Once you've converged on something real — and it clears the ambition
+   bar — the Venture Partner calls its `propose_venture` action — a tool
+   that isn't delegation but a genuine side effect: it logs a venture
+   (title, problem, target customer, business model, market size, the path
+   to $1M+ revenue, a budget ask, and milestones) via
    `server/finance/ventures.js`, with status `proposed`. This shows up
    immediately in the **Ventures** panel in the sidebar.
 3. You **greenlight** a proposed venture from that panel
@@ -229,19 +266,33 @@ history; the Studio sidebar shows the balance live.
    Executive Team conversation, and the UI switches you to that tab so you
    can see the company start planning execution right away.
 
-### Revenue flowing back in
+### Money flowing in and out
 
 There's no real payment integration in a personal project like this, so
-revenue isn't detected automatically — but it is trackable through the
-Executive Team. The Finance & Accounting Manager (reports to the CFO) has
-a `log_revenue` action tool, the same mechanism as `propose_venture`: tell
-the CFO or Finance Manager that real money came in (e.g. "we got $200 from
-the newsletter's first paying subscribers"), and it records a `revenue`
-transaction against the treasury, attributed to a venture id when there is
-one. Both the Executive Team and Venture Studio sidebars show the Treasury
-panel, and it refreshes after every chat turn in either mode, so a logged
-payment shows up immediately regardless of which tab you're in.
+neither revenue nor spending is detected automatically — but both are
+trackable through the Executive Team. The Finance & Accounting Manager
+(reports to the CFO) has two action tools, the same mechanism as
+`propose_venture`:
 
-The agent is instructed to only log money that's actually landed, not a
-forecast or a verbal promise — so the treasury stays an honest running
-total rather than a wish list.
+- `log_revenue` — tell the CFO or Finance Manager that real money came in
+  (e.g. "we got $200 from the newsletter's first paying subscribers"), and
+  it records a `revenue` transaction against the treasury.
+- `log_expense` — tell them about real money you actually spent (e.g. "I
+  just paid $12 for the domain"), and it records an `expense` transaction.
+
+Both accept an optional venture id to attribute the transaction to a
+specific venture, and both are instructed to only log money that's
+actually moved — not a forecast, a verbal promise, or a planned purchase —
+so the treasury stays an honest running total rather than a wish list.
+
+This is deliberately a **manual, human-in-the-loop** ledger, not an
+autonomous one: nothing in this codebase can move real money on its own.
+The intended workflow is to fund a venture with real capital yourself
+(e.g. a $100-capped virtual card, so nothing can ever go over budget no
+matter what happens on the software side), have the agents recommend what
+to spend it on, make each purchase yourself, and then tell Finance what
+actually happened so the app's numbers track reality.
+
+Both the Executive Team and Venture Studio sidebars show the Treasury
+panel, and it refreshes after every chat turn in either mode, so a logged
+transaction shows up immediately regardless of which tab you're in.

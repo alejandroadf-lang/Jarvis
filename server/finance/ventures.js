@@ -26,6 +26,8 @@ export function createVenture({
   problem,
   targetCustomer,
   businessModel,
+  marketSize,
+  pathToMillions,
   budgetRequested,
   milestones,
 }) {
@@ -37,6 +39,8 @@ export function createVenture({
     problem: String(problem || ''),
     targetCustomer: String(targetCustomer || ''),
     businessModel: String(businessModel || ''),
+    marketSize: String(marketSize || ''),
+    pathToMillions: String(pathToMillions || ''),
     budgetRequested: Math.max(0, Number(budgetRequested) || 0),
     milestones: Array.isArray(milestones)
       ? milestones.map(String)

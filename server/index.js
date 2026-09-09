@@ -33,6 +33,9 @@ app.get('/api/health', (_req, res) => {
   res.json({ ok: true, configured: Boolean(process.env.ANTHROPIC_API_KEY) });
 });
 
+// Streams the reply back as plain text chunks (chunked transfer, no SSE
+// framing needed) so the client can start speaking a sentence before the
+// rest of the reply has even finished generating.
 app.post('/api/chat', async (req, res) => {
   const { sessionId, message } = req.body || {};
   if (!sessionId || typeof message !== 'string' || !message.trim()) {
@@ -46,14 +49,23 @@ app.post('/api/chat', async (req, res) => {
   history.push({ role: 'user', content: message });
 
   try {
-    const response = await anthropic.messages.create({
+    const stream = anthropic.messages.stream({
       model: 'claude-sonnet-5',
       max_tokens: 1024,
       system: SYSTEM_PROMPT,
       messages: history,
     });
 
-    const reply = response.content
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    stream.on('text', (delta) => res.write(delta));
+    // Without a listener, the SDK also fires an independent unhandled promise
+    // rejection on stream errors (on top of the one finalMessage() below
+    // surfaces) — that can crash the process on newer Node versions. The
+    // catch block already handles the real error via finalMessage() rejecting.
+    stream.on('error', () => {});
+
+    const finalMessage = await stream.finalMessage();
+    const reply = finalMessage.content
       .filter((block) => block.type === 'text')
       .map((block) => block.text)
       .join('\n');
@@ -61,10 +73,14 @@ app.post('/api/chat', async (req, res) => {
     history.push({ role: 'assistant', content: reply });
     sessions.set(sessionId, history.slice(-MAX_TURNS));
 
-    res.json({ reply });
+    res.end();
   } catch (err) {
     console.error('Anthropic API error:', err);
-    res.status(502).json({ error: 'Failed to reach the assistant' });
+    if (res.headersSent) {
+      res.end();
+    } else {
+      res.status(502).json({ error: 'Failed to reach the assistant' });
+    }
   }
 });
 
@@ -87,7 +103,7 @@ async function runCompanyTurn(sessionId, message) {
     agents: COMPANY_AGENTS,
     agentId: COMPANY_ROOT,
     messages: workingMessages,
-    actionHandlers: { log_revenue: handleLogRevenue },
+    actionHandlers: { log_revenue: handleLogRevenue, log_expense: handleLogExpense },
     extraContext: buildTreasuryContext(),
   });
 
@@ -131,7 +147,10 @@ function buildTreasuryContext() {
   return `Company treasury: $${balance.toFixed(2)} available out of a $${startingCapital} starting seed.
 Active (funded) ventures: ${summarize(ventures.filter((v) => v.status === 'active'))}
 Proposed (not yet funded) ventures: ${summarize(ventures.filter((v) => v.status === 'proposed'))}
-Keep any budget ask realistic against what is actually left in the treasury.`;
+This treasury funds cheap first experiments, not the ceiling on how big any
+venture is allowed to become — keep the budget *ask* realistic against
+what's actually left, but keep the *ambition* aimed at a real venture-scale
+outcome.`;
 }
 
 async function handleProposeVenture(input) {
@@ -139,27 +158,48 @@ async function handleProposeVenture(input) {
   return `Logged venture proposal ${venture.id} ("${venture.title}"), asking $${venture.budgetRequested}. Status: proposed. Tell the founder they can greenlight it from the Ventures panel to allocate budget and hand it to the executive team.`;
 }
 
-async function handleLogRevenue(input) {
+// Shared validation for log_revenue/log_expense: a positive amount and,
+// when given, a ventureId that actually exists. Returns either
+// { amount, ventureId, description } or { error }.
+function resolveTransactionInput(input, defaultDescription) {
   const amount = Number(input.amount);
   if (!Number.isFinite(amount) || amount <= 0) {
-    return 'Could not log revenue: amount must be a positive number.';
+    return { error: 'amount must be a positive number.' };
   }
 
   let ventureId = null;
   if (input.ventureId) {
     const venture = getVenture(input.ventureId);
     if (!venture) {
-      return `Could not log revenue: no venture found with id "${input.ventureId}". Log it without a ventureId, or double-check the id.`;
+      return { error: `no venture found with id "${input.ventureId}". Log it without a ventureId, or double-check the id.` };
     }
     ventureId = venture.id;
   }
 
   const description =
-    typeof input.description === 'string' && input.description.trim() ? input.description.trim() : 'Revenue';
+    typeof input.description === 'string' && input.description.trim() ? input.description.trim() : defaultDescription;
 
+  return { amount, ventureId, description };
+}
+
+async function handleLogRevenue(input) {
+  const resolved = resolveTransactionInput(input, 'Revenue');
+  if (resolved.error) return `Could not log revenue: ${resolved.error}`;
+
+  const { amount, ventureId, description } = resolved;
   addTransaction({ type: 'revenue', amount, description, ventureId });
   const { balance } = getLedger();
   return `Logged $${amount} in revenue${ventureId ? ` for venture ${ventureId}` : ''} ("${description}"). Treasury balance is now $${balance.toFixed(2)}.`;
+}
+
+async function handleLogExpense(input) {
+  const resolved = resolveTransactionInput(input, 'Expense');
+  if (resolved.error) return `Could not log expense: ${resolved.error}`;
+
+  const { amount, ventureId, description } = resolved;
+  addTransaction({ type: 'expense', amount, description, ventureId });
+  const { balance } = getLedger();
+  return `Logged $${amount} in expenses${ventureId ? ` for venture ${ventureId}` : ''} ("${description}"). Treasury balance is now $${balance.toFixed(2)}.`;
 }
 
 app.get('/api/studio/org-chart', (_req, res) => {

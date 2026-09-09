@@ -1,8 +1,39 @@
 import axios from 'axios';
 
-export async function sendMessage(sessionId, message) {
-  const { data } = await axios.post('/api/chat', { sessionId, message });
-  return data.reply;
+// Streams the reply as it's generated. `onChunk(delta, fullTextSoFar)` fires
+// for each piece of text received; the returned promise resolves with the
+// complete reply once the stream ends.
+export async function sendMessage(sessionId, message, onChunk) {
+  const res = await fetch('/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId, message }),
+  });
+
+  if (!res.ok) {
+    let errorMessage = 'Failed to reach the assistant';
+    try {
+      const data = await res.json();
+      errorMessage = data.error || errorMessage;
+    } catch {
+      // response wasn't JSON (e.g. a stream already started) — keep the default
+    }
+    throw new Error(errorMessage);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let full = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    const delta = decoder.decode(value, { stream: true });
+    full += delta;
+    onChunk?.(delta, full);
+  }
+
+  return full;
 }
 
 export async function resetConversation(sessionId) {

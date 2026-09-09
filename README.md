@@ -46,4 +46,21 @@ npm start       # starts the server, which serves the built client + API
 
 Voice input/output relies on the browser's Web Speech API (Chrome/Edge have
 the best support; Safari and Firefox support varies). Conversation history is
-kept in server memory per browser session — there's no database yet.
+kept in server memory per browser session — there's no database yet, so it's
+lost on server restart.
+
+### Voice experience
+
+Jarvis mode streams Claude's reply as it's generated and speaks it
+sentence-by-sentence as each one completes, instead of waiting for the full
+response — noticeably lower latency than speaking the whole reply at once.
+`useSpeechSynthesis` also picks the best available system voice (preferring
+calm English voices like Daniel/Google UK English Male/Microsoft Guy over
+whatever the browser defaults to) and tunes pitch/rate slightly for a more
+assistant-like delivery.
+
+There's also a **"Hey Jarvis" wake word** (toggle in the header, Jarvis mode
+only): say "Hey Jarvis" followed by your request — in one breath or as two
+separate turns — and it's submitted automatically, no click required. It
+runs a separate continuous `SpeechRecognition` session from the manual
+push-to-talk button, so the two are mutually exclusive while wake word is on.

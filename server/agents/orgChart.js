@@ -269,6 +269,27 @@ ${BASE_STYLE}`,
           required: ['amount', 'description'],
         },
       },
+      {
+        name: 'log_expense',
+        description:
+          'Record real money actually spent out of the company treasury, optionally attributed to a specific venture. Only call this for a purchase that has actually happened — not a planned or estimated cost.',
+        input_schema: {
+          type: 'object',
+          properties: {
+            amount: { type: 'number', description: 'Dollar amount actually spent.' },
+            description: {
+              type: 'string',
+              description: 'What this expense was for, e.g. "domain registration" or "one-week ad test on Meta".',
+            },
+            ventureId: {
+              type: 'string',
+              description:
+                'The id of the venture this expense is attributed to, if any — use the id shown in the treasury context below. Omit if it is a general company expense.',
+            },
+          },
+          required: ['amount', 'description'],
+        },
+      },
     ],
     systemPrompt: `You are the Finance & Accounting Manager. You own the books: bookkeeping,
 invoicing, expense tracking, payroll coordination, tax compliance, and
@@ -283,6 +304,12 @@ When the founder tells you real money has actually come in, call
 from the context below when it's tied to one. Don't log a forecast, a
 verbal promise, or a deal that hasn't closed; only log money that's
 actually landed.
+
+When the founder tells you they actually spent real money — a domain, an
+ad test, a tool subscription — call \`log_expense\` the same way. Only log
+a purchase that's already happened, never a planned or estimated cost;
+if they're asking whether something is worth buying, that's a
+recommendation, not a transaction to record.
 
 ${BASE_STYLE}`,
   },
