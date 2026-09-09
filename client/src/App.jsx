@@ -4,6 +4,7 @@ import VoiceButton from './components/VoiceButton.jsx';
 import OrgChart from './components/OrgChart.jsx';
 import VenturesPanel from './components/VenturesPanel.jsx';
 import PortfolioView from './components/PortfolioView.jsx';
+import DailyReportView from './components/DailyReportView.jsx';
 import { useSpeechRecognition } from './hooks/useSpeechRecognition.js';
 import { useSpeechSynthesis } from './hooks/useSpeechSynthesis.js';
 import { useWakeWord } from './hooks/useWakeWord.js';
@@ -76,6 +77,8 @@ export default function App() {
   const [venturesReloadKey, setVenturesReloadKey] = useState(0);
 
   const isPortfolio = mode === 'portfolio';
+  const isDailyReport = mode === 'dailyReport';
+  const isFullWidthTab = isPortfolio || isDailyReport;
   const messages = messagesByMode[mode] || [];
   const modeConfig = MODES[mode] || null;
 
@@ -125,7 +128,7 @@ export default function App() {
           // the CFO logs revenue), so refresh the panel after any turn.
           setVenturesReloadKey((k) => k + 1);
         }
-      } catch (err) {
+      } catch {
         const errorText = 'Sorry, I ran into a problem reaching the server.';
         // Jarvis mode already appended an (empty, streaming) placeholder bubble
         // before the request started — fill that in rather than adding a new one.
@@ -195,6 +198,14 @@ export default function App() {
             >
               Portfolio
             </button>
+            <button
+              onClick={() => setMode('dailyReport')}
+              className={`px-3 py-1 transition-colors ${
+                isDailyReport ? 'bg-cyan-600 text-white' : 'text-cyan-400/80 hover:text-cyan-300'
+              }`}
+            >
+              Daily Report
+            </button>
           </div>
         </div>
         <div className="flex items-center gap-3 text-xs">
@@ -218,7 +229,7 @@ export default function App() {
               speak replies
             </label>
           )}
-          {!isPortfolio && (
+          {!isFullWidthTab && (
             <button
               onClick={handleReset}
               className="text-cyan-400/80 hover:text-cyan-300 border border-cyan-500/30 rounded px-2 py-1"
@@ -231,6 +242,8 @@ export default function App() {
 
       {isPortfolio ? (
         <PortfolioView reloadKey={venturesReloadKey} />
+      ) : isDailyReport ? (
+        <DailyReportView />
       ) : (
       <div className="flex-1 flex min-h-0">
         {mode === 'company' && (

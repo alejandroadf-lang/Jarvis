@@ -9,7 +9,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DATA_DIR = path.join(__dirname, 'data');
+// Overridable so tests can point at an isolated temp directory instead of
+// the real server/data/ (see server/test/).
+const DATA_DIR = process.env.JARVIS_DATA_DIR
+  ? path.resolve(process.env.JARVIS_DATA_DIR)
+  : path.join(__dirname, 'data');
 
 function ensureDataDir() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });

@@ -378,3 +378,68 @@ have it too, the same way — `serverTools: [{ type: 'web_search_20250305',
 name: 'web_search', max_uses: 4 }]` on the agent definition in
 `orgChart.js`, no dispatch-loop changes required since Anthropic executes
 these server-side.
+
+## Autonomous daily meetings and reports
+
+Every mode above still needs someone to start the conversation. The
+**daily meeting cycle** (`server/dailyMeeting.js`, `server/scheduler.js`)
+runs on its own, once a day, with nobody prompting it:
+
+1. **Leadership sync.** The CEO is given a standing meeting brief:
+   consult each direct report (CTO, CFO, CMO, COO), have them check in
+   with their own team first if it would surface something real, and
+   report back status, a blocker, and one concrete opportunity. The CEO
+   synthesizes all of it into one Daily Company Report (department
+   status, opportunities, risks, recommended actions) — the same
+   `runAgent` orchestrator-workers recursion every other mode uses, just
+   kicked off by a scheduler instead of a person typing a message. Real
+   meetings can therefore go two or three levels deep (CEO → CTO →
+   Engineering Lead, say) exactly like an interactive conversation could,
+   entirely at each manager's own judgment about whether it's worth
+   checking with their team.
+2. **Opportunity review.** The Venture Studio then gets the leadership
+   report as context and runs a quick pass: does anything in it (or
+   anything the team notices on its own) clear the venture-scale ambition
+   bar? If so, it logs a proposal with the same `propose_venture` action
+   used in an interactive brainstorm; if not, it says so plainly rather
+   than forcing one.
+3. **The report is saved, then emailed.** Both replies, their full
+   delegation traces, any new venture ids, and a treasury snapshot are
+   written to `server/dailyReports.json` (via `server/dailyReports.js`),
+   keyed by date. A **Daily Report** tab
+   (`client/src/components/DailyReportView.jsx`) lists every past report
+   and shows the selected one; a "Run today's meeting now" button
+   (`POST /api/reports/daily/run`) triggers a cycle on demand instead of
+   waiting for the schedule. Right after saving, `server/email.js` sends
+   the same report by email if `SMTP_HOST`/`REPORT_EMAIL_TO` are
+   configured (see `server/.env.example`) — opt-in and best-effort: a
+   failed send is logged but never fails the cycle, since the report is
+   already saved and viewable either way.
+
+**This cycle cannot move money or kill a venture on its own.** The
+leadership sync isn't given the treasury/venture action handlers at
+all — it's explicitly told this is an internal status meeting, not a
+real founder-reported event, and even a stray tool call would resolve as
+an unknown tool rather than a silent no-op. The only side effect the
+whole cycle can cause is the Studio logging a new *proposal*, which
+spends nothing and still needs the founder's greenlight
+(`POST /api/ventures/:id/greenlight`) before any budget is allocated —
+the same human-in-the-loop guarantee every other capital-moving action in
+this app already has. Autonomy here means the *information gathering and
+recommending* runs itself; spending real (simulated) money never does.
+
+`server/scheduler.js` targets a specific wall-clock time — **8:00 AM
+Bangkok time**, which is always 01:00 UTC (`Asia/Bangkok` is a fixed
+UTC+7 with no DST, so no timezone library is needed: `TARGET_UTC_HOUR =
+1`). Rather than a real cron, it's a self-rescheduling `setTimeout` loop:
+`nextTargetUTC()` computes today's 01:00 UTC if it hasn't passed yet, or
+tomorrow's otherwise, and the cycle reschedules itself against that fresh
+computation every time it runs — no drift from chaining `setInterval`.
+That's enough for an app with no guaranteed uptime: a server that's
+running at 8 AM ICT gets its report right on time; one that starts up
+later the same day with nothing generated yet catches up soon rather
+than waiting until tomorrow's slot; one that's down for a whole day just
+picks up the next day it's running instead of going silently dark. It's
+skipped entirely without `ANTHROPIC_API_KEY` configured, and can be
+disabled outright with `DAILY_MEETING_DISABLED=true` if you'd rather
+trigger it manually every time.
