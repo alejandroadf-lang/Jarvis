@@ -628,3 +628,77 @@ above the daily sections, with its own "run now" button hitting
 `POST /api/reports/weekly/run`) — so the founder sees the pattern, not
 just this week's individual entries, without having to read seven days
 of reports back to back to notice it themselves.
+
+## Real code deployment: the first action that leaves the simulation
+
+Everything above — revenue, expenses, tranches, kills, even the weekly
+reflection — happens entirely inside this app's own data files. Nothing
+touched a real, external system, so the worst-case blast radius of any
+mistake was always "the numbers in `server/data/` are wrong." Real code
+deployment is the first capability that doesn't have that property: the
+Engineering Lead can now make an actual, permanent, publicly-visible commit
+to a real GitHub repo. Getting that guardrail right mattered more than
+getting it done fast.
+
+The model isn't a per-deploy approval gate like a tranche request — that
+would just be a slower version of what already exists, not a new
+capability. Instead, the founder grants a bounded **scope** once per
+venture, and every deploy inside that scope runs without asking again:
+
+- **`linkRepo(id, { owner, name, branch, allowedPaths, maxPerWeek })`**
+  (`server/finance/ventures.js`) points a venture at a real repo the
+  founder already created — this app never creates a repo on its own — and
+  sets an allowlist of paths the agent may touch (e.g. `content/`, a single
+  config file) plus a weekly commit cap.
+- **`setDeploymentEnabled(id, true)`** is the actual grant: a repo can be
+  linked but left disabled indefinitely, e.g. while the founder reviews the
+  scope before switching it on.
+- **`authorizeDeployment(id, { path })`** is the enforcement point every
+  real deploy passes through: venture must be active, a repo must be
+  linked and enabled, the path must fall inside `allowedPaths`, and the
+  venture must be under its `maxPerWeek` cap (computed from its own
+  `deployments` log, not a separate counter that could drift). Any
+  violation throws a specific, readable reason rather than silently
+  narrowing the request.
+
+`server/deploy/github.js` is the actual mechanism: a thin wrapper around
+GitHub's Contents API that commits one file at a time (`commitFile()`),
+guarded entirely by whether `GITHUB_TOKEN` is configured
+(`isGithubConfigured()`). It's deliberately minimal — one file, one commit,
+no repo creation, no shell/build execution — the scope this app grants is
+"edit specific files in a specific, already-existing repo," not "run
+arbitrary code on real infrastructure." If the target repo already has
+CI/CD wired to that branch (Vercel or Railway auto-deploying on push, say),
+this commit *is* the deploy; if not, it's still a real, permanent change to
+a real repo, which is exactly the escalation this feature is about.
+
+The Engineering Lead (`server/agents/orgChart.js`) is the one agent with
+the `deploy_code` action tool — the natural owner, since "ships code" is
+already their mission. `handleDeployCode`
+(`server/actionHandlers.js`) validates input, calls `authorizeDeployment`,
+commits via `deploy/github.js`, records the result with
+`recordDeployment()`, and emails the founder immediately
+(`sendDeploymentEmail` in `server/email.js`) — this is the one alert in the
+app reporting something that already happened to a real system rather than
+a pending decision, since there's nothing left to approve or deny after
+the fact.
+
+`deploy_code` is wired into exactly one place: the interactive Executive
+Team chat (`runCompanyTurn` in `server/index.js`). It is deliberately
+**not** wired into the autonomous daily leadership sync or the weekly
+reflection — both are already barred from every other real-world action
+for the same reason (see "Resilience" above and `dailyMeeting.js`'s file
+header), and a live commit to a real repo is exactly the kind of action
+that principle exists to prevent from happening inside an unattended
+overnight run. The founder's scope grant means no separate click is needed
+per deploy, but it still only fires during a conversation the founder is
+actually having — the last line of defense isn't a click, but a human
+paying enough attention to notice if something looks wrong, which an
+unattended cron job can't do.
+
+The Ventures panel (`client/src/components/VenturesPanel.jsx`) is where
+the scope is actually granted: a form to link a repo (owner, name, branch,
+allowed paths, weekly cap), an enable/disable toggle, and a running log of
+every real deployment — timestamp, path, commit message, and a link to the
+actual commit — so the founder can audit exactly what an agent has shipped
+without leaving the app.

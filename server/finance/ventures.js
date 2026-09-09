@@ -160,3 +160,96 @@ export function killVenture(id, reason) {
   save(data);
   return venture;
 }
+
+// Real code deployment (see server/deploy/github.js and actionHandlers.js's
+// handleDeployCode) is the one action in this app that reaches outside the
+// simulation into a real, live system — an actual commit to an actual repo,
+// visible to anyone with access to it, not something a founder can silently
+// undo the way killing a venture or denying a tranche can. Rather than a
+// per-action approval gate (which would make it no more autonomous than a
+// tranche request), the founder grants a bounded scope once via linkRepo()
+// and setDeploymentEnabled(), and every deploy inside that scope is
+// authorized without asking again — but only inside it: a specific repo the
+// founder already created, a path allowlist so an agent can't touch
+// arbitrary files, and a weekly cap so a bug in the agent's judgment can't
+// spam commits. authorizeDeployment() below is the enforcement point.
+
+const DEPLOY_LOG_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+export function linkRepo(id, { owner, name, branch, allowedPaths, maxPerWeek }) {
+  if (!owner || !name) throw new Error('owner and name are required to link a repo');
+  const data = load();
+  const venture = findOrThrow(data, id);
+  venture.repo = {
+    owner: String(owner),
+    name: String(name),
+    branch: branch ? String(branch) : 'main',
+    allowedPaths: Array.isArray(allowedPaths) ? allowedPaths.filter(Boolean).map(String) : [],
+    enabled: false,
+    maxPerWeek: Math.max(1, Number(maxPerWeek) || 3),
+  };
+  venture.deployments = venture.deployments || [];
+  save(data);
+  return venture;
+}
+
+export function setDeploymentEnabled(id, enabled) {
+  const data = load();
+  const venture = findOrThrow(data, id);
+  if (!venture.repo) throw new Error('Link a repo before enabling deployments for this venture');
+  venture.repo.enabled = Boolean(enabled);
+  save(data);
+  return venture;
+}
+
+function isPathAllowed(repo, targetPath) {
+  return repo.allowedPaths.some(
+    (allowed) => targetPath === allowed || targetPath.startsWith(allowed.replace(/\/?$/, '/'))
+  );
+}
+
+function deploysInLastWeek(venture) {
+  const cutoff = Date.now() - DEPLOY_LOG_WINDOW_MS;
+  return (venture.deployments || []).filter((d) => new Date(d.deployedAt).getTime() >= cutoff).length;
+}
+
+// Throws with a specific, human-readable reason on any scope violation
+// rather than silently narrowing the request — the founder set this scope
+// deliberately, so a violation should be visible (surfaced back to the
+// agent as a failed tool call, and from there to whoever's watching the
+// conversation), not quietly no-opped.
+export function authorizeDeployment(id, { path }) {
+  const venture = getVenture(id);
+  if (!venture) throw new Error('Venture not found');
+  if (venture.status !== 'active') throw new Error(`Venture must be active to deploy (is ${venture.status})`);
+  if (!venture.repo) throw new Error('No repo linked to this venture yet — the founder needs to link one first.');
+  if (!venture.repo.enabled) {
+    throw new Error('Deployments are not enabled for this venture yet — the founder needs to turn them on.');
+  }
+  if (!isPathAllowed(venture.repo, path)) {
+    throw new Error(
+      `"${path}" is outside the allowed scope (${venture.repo.allowedPaths.join(', ') || 'no paths allowed'}).`
+    );
+  }
+  if (deploysInLastWeek(venture) >= venture.repo.maxPerWeek) {
+    throw new Error(`Weekly deployment cap reached (${venture.repo.maxPerWeek}/week) for this venture.`);
+  }
+  return venture;
+}
+
+export function recordDeployment(id, { path, message, commitSha, commitUrl, rationale }) {
+  const data = load();
+  const venture = findOrThrow(data, id);
+  venture.deployments = venture.deployments || [];
+  const entry = {
+    path: String(path),
+    message: String(message || ''),
+    commitSha: String(commitSha || ''),
+    commitUrl: String(commitUrl || ''),
+    rationale: String(rationale || ''),
+    deployedAt: new Date().toISOString(),
+  };
+  venture.deployments.push(entry);
+  save(data);
+  return { venture, entry };
+}
