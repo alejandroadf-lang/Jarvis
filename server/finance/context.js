@@ -5,6 +5,7 @@
 
 import { getLedger } from './ledger.js';
 import { listVentures } from './ventures.js';
+import { getLatestWeeklyReflection } from '../weeklyReflections.js';
 
 function describeMilestones(venture) {
   if (!venture.milestones.length) return 'none listed';
@@ -67,10 +68,25 @@ variant of one without a genuinely new angle that addresses why it failed:
 ${lines.join('\n')}`;
 }
 
-// What the Venture Studio's agents see: treasury/venture status plus the
-// record of what's already been tried and killed, so ideation compounds
-// instead of resetting every session. Not used by the Executive Team —
-// avoiding re-pitches is an ideation concern, not an execution one.
+// The weekly reflection cycle (see weeklyReflection.js) checks last week's
+// flagged opportunities against what actually happened; without this,
+// that judgment lives only in a report nobody re-reads. Only the single
+// latest reflection — this isn't meant to become a growing history the
+// context balloons with, just this week's live calibration.
+function buildWeeklyReflectionContext() {
+  const latest = getLatestWeeklyReflection();
+  if (!latest) {
+    return 'No weekly reflection has run yet — nothing to calibrate against.';
+  }
+  return `Last weekly reflection (week ending ${latest.weekEnding}):
+${latest.reflection}`;
+}
+
+// What the Venture Studio's agents see: treasury/venture status, the
+// record of what's already been tried and killed, and the latest weekly
+// reflection, so ideation compounds instead of resetting every session.
+// Not used by the Executive Team — avoiding re-pitches and recalibrating
+// on a weekly verdict are ideation concerns, not execution ones.
 export function buildStudioContext() {
-  return `${buildTreasuryContext()}\n\n${buildPastLessonsContext()}`;
+  return `${buildTreasuryContext()}\n\n${buildPastLessonsContext()}\n\n${buildWeeklyReflectionContext()}`;
 }

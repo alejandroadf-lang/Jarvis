@@ -7,12 +7,14 @@ import path from 'node:path';
 let tmpDir;
 let context;
 let ventures;
+let weeklyReflections;
 
 before(async () => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jarvis-context-test-'));
   process.env.JARVIS_DATA_DIR = tmpDir;
   context = await import('../finance/context.js');
   ventures = await import('../finance/ventures.js');
+  weeklyReflections = await import('../weeklyReflections.js');
 });
 
 after(() => {
@@ -64,8 +66,31 @@ test('buildPastLessonsContext ignores proposed and active ventures, only killed 
   assert.doesNotMatch(text, /Still Proposed Co/);
 });
 
-test('buildStudioContext includes both the treasury context and the past-lessons context', () => {
+test('buildStudioContext includes the treasury context and the past-lessons context', () => {
   const text = context.buildStudioContext();
   assert.match(text, /Company treasury:/);
   assert.match(text, /Yet Another Resume Builder|No ventures have been killed yet/);
+});
+
+test('buildStudioContext says no weekly reflection has run yet when none exists', () => {
+  const text = context.buildStudioContext();
+  assert.match(text, /No weekly reflection has run yet/);
+});
+
+test('buildStudioContext includes the latest weekly reflection once one exists', () => {
+  weeklyReflections.saveWeeklyReflection({
+    weekEnding: '2026-01-04',
+    generatedAt: '2026-01-04T01:30:00.000Z',
+    reportsConsidered: 7,
+    reflection: 'The competitor-gap opportunity was the only one anyone actually followed up on.',
+    trace: [],
+    usage: { inputTokens: 100, outputTokens: 50 },
+    costUsd: 0.001,
+    durationMs: 5000,
+  });
+
+  const text = context.buildStudioContext();
+  assert.match(text, /week ending 2026-01-04/);
+  assert.match(text, /competitor-gap opportunity was the only one/);
+  assert.doesNotMatch(text, /No weekly reflection has run yet/);
 });

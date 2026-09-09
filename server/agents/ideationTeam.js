@@ -139,6 +139,14 @@ answer to why it failed last time wastes everyone's time. A closely related
 idea can still be worth pursuing, but only if you can say plainly what's
 actually different this time.
 
+You'll also be given last week's reflection — a verdict on which flagged
+opportunities actually got followed up on versus quietly dropped, and how
+that week's proposals are actually doing. Treat it as a real input, not a
+formality: if it named a pattern (an opportunity type that keeps getting
+flagged and never pursued, a class of proposal that keeps stalling), let
+that actually change what you pitch or how hard you push today, rather
+than starting this session exactly like the last one.
+
 ${DELEGATION_STYLE}
 
 ${BASE_STYLE}`,

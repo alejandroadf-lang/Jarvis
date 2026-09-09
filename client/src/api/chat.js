@@ -113,3 +113,18 @@ export async function runDailyMeetingNow() {
   const { data } = await axios.post('/api/reports/daily/run');
   return data.report;
 }
+
+export async function fetchWeeklyReflections() {
+  const { data } = await axios.get('/api/reports/weekly');
+  return data.reflections; // newest first
+}
+
+export async function fetchLatestWeeklyReflection() {
+  const { data } = await axios.get('/api/reports/weekly/latest');
+  return data.reflection; // null if none yet
+}
+
+export async function runWeeklyReflectionNow() {
+  const { data } = await axios.post('/api/reports/weekly/run');
+  return data.reflection;
+}

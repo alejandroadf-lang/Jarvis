@@ -572,3 +572,59 @@ never picks it up — an eval run makes real, billed API calls, which a CI
 run without a key should never trigger by accident. See
 `server/eval/README.md` for how to run it and how to extend it — it's a
 first 10 cases, not a finished eval.
+
+## A weekly reflection pass, so the same pattern doesn't repeat silently
+
+The daily cycle and `buildPastLessonsContext()` both give the Studio a
+memory of what's already been *killed*, but nothing looked back over a
+week of daily reports to ask a harder question: of everything flagged as
+worth pursuing, what actually got followed up on, and what quietly never
+went anywhere? Without that, a real pattern — an opportunity type that
+keeps getting flagged and dropped, a class of proposal that keeps
+stalling at the same stage — never surfaces; each day's cycle only ever
+sees itself.
+
+`server/weeklyReflection.js` runs once a week, reading the last seven
+days of saved daily reports (`reportsInWeek()`, a Monday-through-Sunday
+window ending on the current `weekKey()`) plus the real, current
+venture/ledger state, and asks the same root agent (`COMPANY_ROOT`) to
+render a verdict: which flagged opportunities got real follow-up this
+week versus which were mentioned once and dropped, and how the proposals
+that did get made are actually doing. It's read-only by construction —
+`actionHandlers: {}` — the same guarantee the daily cycle's own studio
+phase relies on: a weekly reflection can look at everything and say
+anything, but it can't move money, greenlight a venture, or touch the
+ledger. `server/weeklyReflections.js` stores the result the same way
+`dailyReports.js` stores daily ones, keyed by `weekEnding` so re-running
+mid-week overwrites rather than duplicates.
+
+The reflection then feeds back into the same context every ideation
+session already reads: `buildWeeklyReflectionContext()` in
+`server/finance/context.js` surfaces the latest reflection (or says
+plainly that none has run yet), and `buildStudioContext()` now joins it
+alongside the treasury and past-lessons context. The `venture_partner`
+prompt in `server/agents/ideationTeam.js` is updated to actually treat it
+as an input rather than a formality — told explicitly to let a named
+pattern change what it pitches today rather than starting cold every
+session, the same way it's already told to check `pastLessons` before
+running with an idea.
+
+`server/weeklyScheduler.js` mirrors `scheduler.js`'s self-rescheduling
+`setTimeout` approach, targeting **Sunday 01:30 UTC** — 30 minutes after
+the daily cycle's own 01:00 UTC slot, so a week's final daily report has
+already landed before the reflection reads it. The catch-up logic uses
+the same date-keyed check `hasReflectionForThisWeek()` relies on
+(`weekKey(now)`) rather than a separate day-of-week test, so a server
+that restarts mid-week after missing Sunday entirely still catches up
+correctly instead of waiting for the following Sunday. Like the daily
+cycle, it's skipped without `ANTHROPIC_API_KEY` and can be disabled with
+`WEEKLY_REFLECTION_DISABLED=true`.
+
+It shows up the same two ways the daily report does: an email
+(`sendWeeklyReflectionEmail`, gated by the same `SMTP_HOST` +
+`REPORT_EMAIL_TO` opt-in, with its own cost/duration line) and a section
+in the Daily Report tab (`client/src/components/DailyReportView.jsx`,
+above the daily sections, with its own "run now" button hitting
+`POST /api/reports/weekly/run`) — so the founder sees the pattern, not
+just this week's individual entries, without having to read seven days
+of reports back to back to notice it themselves.

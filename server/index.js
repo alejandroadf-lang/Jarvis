@@ -22,6 +22,8 @@ import {
 } from './actionHandlers.js';
 import { listDailyReports, getDailyReport, getLatestDailyReport } from './dailyReports.js';
 import { startDailyMeetingScheduler, runDailyMeetingNow, isDailyMeetingRunning } from './scheduler.js';
+import { listWeeklyReflections, getWeeklyReflection, getLatestWeeklyReflection } from './weeklyReflections.js';
+import { startWeeklyReflectionScheduler, runWeeklyReflectionNow, isWeeklyReflectionRunning } from './weeklyScheduler.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3001;
@@ -424,6 +426,42 @@ app.post('/api/reports/daily/run', async (_req, res) => {
   }
 });
 
+// The autonomous weekly reflection cycle (see weeklyReflection.js +
+// weeklyScheduler.js): checks last week's flagged opportunities against
+// what actually happened, and feeds the verdict into the Venture Studio's
+// context (see finance/context.js) so ideation compounds week over week.
+// Read-only, same as the daily cycle — it can't move money or kill a
+// venture on its own.
+app.get('/api/reports/weekly', (_req, res) => {
+  res.json({ reflections: listWeeklyReflections() });
+});
+
+app.get('/api/reports/weekly/latest', (_req, res) => {
+  res.json({ reflection: getLatestWeeklyReflection() });
+});
+
+app.get('/api/reports/weekly/:weekEnding', (req, res) => {
+  const reflection = getWeeklyReflection(req.params.weekEnding);
+  if (!reflection) return res.status(404).json({ error: 'No reflection for that week' });
+  res.json({ reflection });
+});
+
+app.post('/api/reports/weekly/run', async (_req, res) => {
+  if (!process.env.ANTHROPIC_API_KEY) {
+    return res.status(500).json({ error: 'Server is missing ANTHROPIC_API_KEY' });
+  }
+  if (isWeeklyReflectionRunning()) {
+    return res.status(409).json({ error: 'A weekly reflection is already in progress — try again shortly.' });
+  }
+  try {
+    const reflection = await runWeeklyReflectionNow({ anthropic });
+    res.json({ reflection });
+  } catch (err) {
+    console.error('Weekly reflection run failed:', err);
+    res.status(502).json({ error: 'Failed to run the weekly reflection' });
+  }
+});
+
 const clientDist = path.join(__dirname, '..', 'client', 'dist');
 app.use(express.static(clientDist));
 app.get('*', (_req, res) => {
@@ -433,4 +471,5 @@ app.get('*', (_req, res) => {
 app.listen(PORT, () => {
   console.log(`Jarvis server listening on port ${PORT}`);
   startDailyMeetingScheduler({ anthropic });
+  startWeeklyReflectionScheduler({ anthropic });
 });

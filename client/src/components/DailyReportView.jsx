@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
-import { fetchDailyReports, runDailyMeetingNow } from '../api/chat.js';
+import {
+  fetchDailyReports,
+  runDailyMeetingNow,
+  fetchLatestWeeklyReflection,
+  runWeeklyReflectionNow,
+} from '../api/chat.js';
 
 function TraceBadges({ trace }) {
   if (!trace || trace.length === 0) return null;
@@ -44,6 +49,10 @@ export default function DailyReportView() {
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState(null);
 
+  const [weeklyReflection, setWeeklyReflection] = useState(null);
+  const [weeklyRunning, setWeeklyRunning] = useState(false);
+  const [weeklyRunError, setWeeklyRunError] = useState(null);
+
   const load = useCallback((selectLatest = false) => {
     fetchDailyReports()
       .then((list) => {
@@ -54,9 +63,16 @@ export default function DailyReportView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const loadWeekly = useCallback(() => {
+    fetchLatestWeeklyReflection()
+      .then(setWeeklyReflection)
+      .catch(() => {}); // non-critical — the daily report is the primary view
+  }, []);
+
   useEffect(() => {
     load(true);
-  }, [load]);
+    loadWeekly();
+  }, [load, loadWeekly]);
 
   const handleRunNow = async () => {
     setRunning(true);
@@ -68,6 +84,19 @@ export default function DailyReportView() {
       setRunError(err.response?.data?.error || err.message);
     } finally {
       setRunning(false);
+    }
+  };
+
+  const handleRunWeeklyNow = async () => {
+    setWeeklyRunning(true);
+    setWeeklyRunError(null);
+    try {
+      await runWeeklyReflectionNow();
+      loadWeekly();
+    } catch (err) {
+      setWeeklyRunError(err.response?.data?.error || err.message);
+    } finally {
+      setWeeklyRunning(false);
     }
   };
 
@@ -91,6 +120,16 @@ export default function DailyReportView() {
           {running ? 'Running…' : "Run today's meeting now"}
         </button>
         {runError && <p className="text-[11px] text-red-400 mb-3">{runError}</p>}
+
+        <button
+          onClick={handleRunWeeklyNow}
+          disabled={weeklyRunning}
+          className="w-full text-xs border border-cyan-500/30 hover:border-cyan-400/60 text-cyan-300 disabled:opacity-40 rounded-full px-3 py-2 mb-3"
+        >
+          {weeklyRunning ? 'Running…' : "Run this week's reflection now"}
+        </button>
+        {weeklyRunError && <p className="text-[11px] text-red-400 mb-3">{weeklyRunError}</p>}
+
         {reports.length === 0 && <p className="text-[11px] text-cyan-500/50">No reports yet.</p>}
         <div className="space-y-1">
           {reports.map((r) => (
@@ -109,6 +148,21 @@ export default function DailyReportView() {
 
       <div className="flex-1 overflow-y-auto p-6">
         <h1 className="text-sm font-semibold uppercase tracking-wide text-cyan-300 mb-1">Daily Report</h1>
+
+        {weeklyReflection && (
+          <div className="border border-cyan-500/20 rounded-lg p-4 mt-4 mb-4 bg-white/[0.02]">
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-cyan-300 mb-1">
+              Weekly Reflection — week ending {fmtDate(weeklyReflection.weekEnding)}
+            </h2>
+            <p className="text-[11px] text-cyan-500/60 mb-3">
+              Based on {weeklyReflection.reportsConsidered} daily report{weeklyReflection.reportsConsidered === 1 ? '' : 's'}
+              {typeof weeklyReflection.costUsd === 'number' && (
+                <> · {(weeklyReflection.durationMs / 1000).toFixed(1)}s · {fmtUsd(weeklyReflection.costUsd)}</>
+              )}
+            </p>
+            <div className="text-sm leading-relaxed whitespace-pre-wrap text-cyan-50/90">{weeklyReflection.reflection}</div>
+          </div>
+        )}
 
         {!selected ? (
           <p className="text-xs text-cyan-500/50 mt-4">
