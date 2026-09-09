@@ -545,3 +545,30 @@ tab (`client/src/components/DailyReportView.jsx`) both show it — "47.3s ·
 $0.08 · 18,342 in / 4,021 out tokens" next to the treasury line — and both
 guard for older reports saved before this existed, so a report from before
 this feature just omits the line instead of printing `undefined`.
+
+## A behavioral eval, not just data-layer tests
+
+`server/test/` checks the data layer (ledger math, venture state
+transitions) — none of it checks whether an agent's actual *judgment* is
+any good, so a prompt change could quietly make the CFO worse at refusing
+a bad tranche ask and nothing would catch it. `server/eval/` is a starter
+behavioral eval: 10 scenarios (`scenarios.js`) run against the real org
+chart and real action handlers via `server/eval/runner.mjs`, each
+targeting one judgment call — does the CFO request a tranche when a
+milestone is actually done, and correctly refuse when it isn't; does the
+Validation Critic flag a lifestyle idea as too small without also
+flagging a genuinely large one; does the Venture Partner notice a pitch
+resembles something already killed (exercising the `pastLessons` context
+from earlier in this doc); does the CEO kill a venture on a clear reason
+but not on vague doubt alone.
+
+Most grades read real end state (did `pendingTranche` actually get set,
+did the ledger balance actually move) rather than parsing the reply text,
+following the same principle as the Daily Cycle's own action handlers:
+trust what actually happened over what was said. It reuses the
+`JARVIS_DATA_DIR` isolation the unit tests already use, so it never
+touches real `server/data/`, and it's deliberately named so `node --test`
+never picks it up — an eval run makes real, billed API calls, which a CI
+run without a key should never trigger by accident. See
+`server/eval/README.md` for how to run it and how to extend it — it's a
+first 10 cases, not a finished eval.
