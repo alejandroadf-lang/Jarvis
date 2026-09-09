@@ -495,3 +495,53 @@ without changing what any agent is allowed to do:
   failure in either phase still produces a report — the failed half says so
   plainly, the other half (if it ran) is unaffected — instead of the whole
   day going dark.
+
+## Proactive alerting, not just a once-a-day digest
+
+The daily report was the only email this app sent — useful for a summary,
+useless the moment a real decision shows up mid-day and sits unseen in the
+UI until the founder happens to check. `server/email.js` now sends two more,
+narrower emails the instant the thing they're about actually happens:
+
+- **A new venture proposal** (`sendVentureProposedEmail`) — fires from
+  `handleProposeVenture` in `server/actionHandlers.js`, so it fires the same
+  way whether the proposal came from an interactive Venture Studio
+  conversation or the autonomous daily cycle's opportunity-review phase.
+- **A tranche request** (`sendTrancheRequestEmail`) — fires from
+  `handleRequestTranche`, which matters most exactly when nobody's
+  watching: greenlighting a venture or approving a tranche triggers a
+  company briefing conversation (see the `/api/ventures/:id/greenlight` and
+  `/api/ventures/:id/tranche/approve` routes in `index.js`), and the CFO
+  can ask for the *next* tranche as part of that same briefing, seconds
+  after the founder clicked approve and moved on.
+
+Both share the same opt-in gate as the daily report (`SMTP_HOST` +
+`REPORT_EMAIL_TO`) and the same failure isolation: a `notify()` wrapper in
+`actionHandlers.js` logs a failed send but never lets it break the action
+itself — the venture or tranche request is already real either way, so a
+bad SMTP config should show up as a log line, not a broken conversation.
+
+## Cost and latency, not just "it ran"
+
+A daily cycle fanning out through 10-20 model calls has a real dollar cost
+and a real duration, and until now neither was visible anywhere — just
+"the report exists" or it doesn't. `server/agents/agentRunner.js` threads a
+shared `usage` accumulator through every recursive `runAgent()` call
+(mutated in place, the same pattern `trace` already uses), summing
+`response.usage.input_tokens`/`output_tokens` from every round of every
+agent consulted — the root call and every delegated sub-agent, all folded
+into one total. `server/usage.js` turns that into a dollar estimate
+(`estimateCostUsd()`, pinned to `claude-sonnet-5`'s published per-token
+price — $2.00/MTok in, $10.00/MTok out as of the pricing check run when
+this was built; update the constants there if the model or its price
+changes) and formats it for display (`formatUsd()`, more decimal places
+under a cent since `$0.00` would otherwise hide a real cost).
+
+`server/dailyMeeting.js` sums usage across both phases (`sumUsage()`),
+times the whole cycle wall-clock (`Date.now()` at start and end), and
+stores `usage`/`costUsd`/`durationMs` on the saved report alongside
+everything else. The daily email (`server/email.js`) and the Daily Report
+tab (`client/src/components/DailyReportView.jsx`) both show it — "47.3s ·
+$0.08 · 18,342 in / 4,021 out tokens" next to the treasury line — and both
+guard for older reports saved before this existed, so a report from before
+this feature just omits the line instead of printing `undefined`.
