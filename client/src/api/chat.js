@@ -114,6 +114,21 @@ export async function disableVentureDeployment(ventureId) {
   return data; // { venture }
 }
 
+export async function linkVentureOutreach(ventureId, { allowedRecipients, maxPerWeek }) {
+  const { data } = await axios.post(`/api/ventures/${ventureId}/outreach`, { allowedRecipients, maxPerWeek });
+  return data; // { venture }
+}
+
+export async function enableVentureOutreach(ventureId) {
+  const { data } = await axios.post(`/api/ventures/${ventureId}/outreach/enable`);
+  return data; // { venture }
+}
+
+export async function disableVentureOutreach(ventureId) {
+  const { data } = await axios.post(`/api/ventures/${ventureId}/outreach/disable`);
+  return data; // { venture }
+}
+
 export async function fetchDailyReports() {
   const { data } = await axios.get('/api/reports/daily');
   return data.reports; // newest first

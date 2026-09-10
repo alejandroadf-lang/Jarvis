@@ -15,8 +15,17 @@ import {
   killVenture,
   authorizeDeployment,
   recordDeployment,
+  authorizeOutreach,
+  recordOutreach,
 } from './finance/ventures.js';
-import { sendVentureProposedEmail, sendTrancheRequestEmail, sendDeploymentEmail } from './email.js';
+import {
+  sendVentureProposedEmail,
+  sendTrancheRequestEmail,
+  sendDeploymentEmail,
+  sendCustomerEmail,
+  sendOutreachAlertEmail,
+  isEmailConfigured,
+} from './email.js';
 import { commitFile, isGithubConfigured } from './deploy/github.js';
 
 // A founder who greenlit a venture or approved a tranche and walked away
@@ -157,5 +166,35 @@ export async function handleDeployCode(input) {
     return `Deployed a real commit to "${venture.title}"'s repo (${venture.repo.owner}/${venture.repo.name}, branch ${venture.repo.branch}): ${path}. Commit: ${commitUrl || commitSha}.`;
   } catch (err) {
     return `Could not deploy: ${err.message}`;
+  }
+}
+
+// The second action reaching a real, live system outside the simulation —
+// same shape as handleDeployCode: fail-closed on every check (SMTP not
+// configured, missing input, an out-of-scope recipient, a spent weekly
+// cap) before ever attempting a real send.
+export async function handleSendCustomerEmail(input) {
+  const { ventureId, to, subject, body } = input;
+  if (!isEmailConfigured()) {
+    return 'Could not send: this server has no email delivery configured, so real outreach is unavailable.';
+  }
+  if (typeof to !== 'string' || !to.trim()) {
+    return 'Could not send: to is required.';
+  }
+  if (typeof subject !== 'string' || !subject.trim()) {
+    return 'Could not send: subject is required.';
+  }
+  if (typeof body !== 'string' || !body.trim()) {
+    return 'Could not send: body is required.';
+  }
+  try {
+    const venture = authorizeOutreach(ventureId, { to });
+    const sent = await sendCustomerEmail(to, subject, body);
+    if (!sent) return 'Could not send: the email server rejected the send.';
+    recordOutreach(ventureId, { to, subject, body });
+    await notify(sendOutreachAlertEmail, venture, { to, subject });
+    return `Sent a real email to ${to} on behalf of "${venture.title}": "${subject}".`;
+  } catch (err) {
+    return `Could not send: ${err.message}`;
   }
 }

@@ -174,7 +174,10 @@ export function killVenture(id, reason) {
 // arbitrary files, and a weekly cap so a bug in the agent's judgment can't
 // spam commits. authorizeDeployment() below is the enforcement point.
 
-const DEPLOY_LOG_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+// Shared by both real-world action scopes below (deployment, outreach) —
+// each enforces its own weekly cap against its own log, but "a week" means
+// the same rolling window either way.
+const WEEKLY_CAP_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 export function linkRepo(id, { owner, name, branch, allowedPaths, maxPerWeek }) {
   if (!owner || !name) throw new Error('owner and name are required to link a repo');
@@ -209,7 +212,7 @@ function isPathAllowed(repo, targetPath) {
 }
 
 function deploysInLastWeek(venture) {
-  const cutoff = Date.now() - DEPLOY_LOG_WINDOW_MS;
+  const cutoff = Date.now() - WEEKLY_CAP_WINDOW_MS;
   return (venture.deployments || []).filter((d) => new Date(d.deployedAt).getTime() >= cutoff).length;
 }
 
@@ -250,6 +253,88 @@ export function recordDeployment(id, { path, message, commitSha, commitUrl, rati
     deployedAt: new Date().toISOString(),
   };
   venture.deployments.push(entry);
+  save(data);
+  return { venture, entry };
+}
+
+// Real customer email (see actionHandlers.js's handleSendCustomerEmail) is
+// the second action that reaches outside the simulation — same scope-grant
+// model as deployment, applied to an actual outbound message instead of a
+// commit. The founder sets an allowlist of recipients once (an exact
+// address, or a whole domain via a leading "@") and a weekly cap;
+// authorizeOutreach() below is the enforcement point every send passes
+// through, the same shape as authorizeDeployment().
+
+export function linkOutreachScope(id, { allowedRecipients, maxPerWeek }) {
+  const data = load();
+  const venture = findOrThrow(data, id);
+  venture.outreach = {
+    allowedRecipients: Array.isArray(allowedRecipients) ? allowedRecipients.filter(Boolean).map(String) : [],
+    enabled: false,
+    maxPerWeek: Math.max(1, Number(maxPerWeek) || 5),
+  };
+  venture.sentEmails = venture.sentEmails || [];
+  save(data);
+  return venture;
+}
+
+export function setOutreachEnabled(id, enabled) {
+  const data = load();
+  const venture = findOrThrow(data, id);
+  if (!venture.outreach) throw new Error('Set up an outreach scope before enabling it for this venture');
+  venture.outreach.enabled = Boolean(enabled);
+  save(data);
+  return venture;
+}
+
+// An allowed entry starting with "@" matches any address on that domain
+// (e.g. "@acme.com" allows "anyone@acme.com"); anything else must match
+// exactly — a single named contact, not a whole domain.
+function isRecipientAllowed(outreach, to) {
+  const address = String(to).toLowerCase();
+  return outreach.allowedRecipients.some((allowed) => {
+    const normalized = allowed.toLowerCase();
+    return normalized.startsWith('@') ? address.endsWith(normalized) : address === normalized;
+  });
+}
+
+function outreachInLastWeek(venture) {
+  const cutoff = Date.now() - WEEKLY_CAP_WINDOW_MS;
+  return (venture.sentEmails || []).filter((e) => new Date(e.sentAt).getTime() >= cutoff).length;
+}
+
+export function authorizeOutreach(id, { to }) {
+  const venture = getVenture(id);
+  if (!venture) throw new Error('Venture not found');
+  if (venture.status !== 'active') throw new Error(`Venture must be active to send outreach (is ${venture.status})`);
+  if (!venture.outreach) {
+    throw new Error('No outreach scope set up for this venture yet — the founder needs to set allowed recipients first.');
+  }
+  if (!venture.outreach.enabled) {
+    throw new Error('Outreach is not enabled for this venture yet — the founder needs to turn it on.');
+  }
+  if (!isRecipientAllowed(venture.outreach, to)) {
+    throw new Error(
+      `"${to}" is outside the allowed recipients (${venture.outreach.allowedRecipients.join(', ') || 'none allowed'}).`
+    );
+  }
+  if (outreachInLastWeek(venture) >= venture.outreach.maxPerWeek) {
+    throw new Error(`Weekly outreach cap reached (${venture.outreach.maxPerWeek}/week) for this venture.`);
+  }
+  return venture;
+}
+
+export function recordOutreach(id, { to, subject, body }) {
+  const data = load();
+  const venture = findOrThrow(data, id);
+  venture.sentEmails = venture.sentEmails || [];
+  const entry = {
+    to: String(to),
+    subject: String(subject || ''),
+    body: String(body || ''),
+    sentAt: new Date().toISOString(),
+  };
+  venture.sentEmails.push(entry);
   save(data);
   return { venture, entry };
 }

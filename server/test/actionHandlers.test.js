@@ -1,8 +1,9 @@
-import { test, before, after } from 'node:test';
+import { test, before, after, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import nodemailer from 'nodemailer';
 
 let tmpDir;
 let actionHandlers;
@@ -163,3 +164,102 @@ test('handleDeployCode commits within scope and records the deployment', async (
     global.fetch = originalFetch;
   }
 });
+
+function withSmtpConfigured(fn) {
+  return async () => {
+    const savedHost = process.env.SMTP_HOST;
+    const savedTo = process.env.REPORT_EMAIL_TO;
+    process.env.SMTP_HOST = 'smtp.example.com';
+    process.env.REPORT_EMAIL_TO = 'founder@example.com';
+    try {
+      await fn();
+    } finally {
+      if (savedHost !== undefined) process.env.SMTP_HOST = savedHost;
+      else delete process.env.SMTP_HOST;
+      if (savedTo !== undefined) process.env.REPORT_EMAIL_TO = savedTo;
+      else delete process.env.REPORT_EMAIL_TO;
+    }
+  };
+}
+
+test('handleSendCustomerEmail refuses when email delivery is not configured', async () => {
+  // No SMTP configured — the top-level before() already cleared it.
+  const v = makeActiveVenture();
+  const result = await actionHandlers.handleSendCustomerEmail({
+    ventureId: v.id,
+    to: 'jane@acme.com',
+    subject: 'Hi',
+    body: 'Body',
+  });
+  assert.match(result, /no email delivery configured/);
+});
+
+test(
+  'handleSendCustomerEmail validates to, subject, and body are present',
+  withSmtpConfigured(async () => {
+    const v = makeActiveVenture();
+    assert.match(
+      await actionHandlers.handleSendCustomerEmail({ ventureId: v.id, subject: 's', body: 'b' }),
+      /to is required/
+    );
+    assert.match(
+      await actionHandlers.handleSendCustomerEmail({ ventureId: v.id, to: 'a@b.com', body: 'b' }),
+      /subject is required/
+    );
+    assert.match(
+      await actionHandlers.handleSendCustomerEmail({ ventureId: v.id, to: 'a@b.com', subject: 's' }),
+      /body is required/
+    );
+  })
+);
+
+test(
+  'handleSendCustomerEmail surfaces the scope violation when no outreach scope is set up',
+  withSmtpConfigured(async () => {
+    const v = makeActiveVenture();
+    const result = await actionHandlers.handleSendCustomerEmail({
+      ventureId: v.id,
+      to: 'jane@acme.com',
+      subject: 'Hi',
+      body: 'Body',
+    });
+    assert.match(result, /No outreach scope/);
+  })
+);
+
+test(
+  'handleSendCustomerEmail sends within scope and records the outreach',
+  withSmtpConfigured(async () => {
+    const sentMail = [];
+    const mockedTransport = mock.method(nodemailer, 'createTransport', () => ({
+      sendMail: async (opts) => {
+        sentMail.push(opts);
+      },
+    }));
+
+    try {
+      const v = makeActiveVenture();
+      ventures.linkOutreachScope(v.id, { allowedRecipients: ['@acme.com'] });
+      ventures.setOutreachEnabled(v.id, true);
+
+      const result = await actionHandlers.handleSendCustomerEmail({
+        ventureId: v.id,
+        to: 'jane@acme.com',
+        subject: 'Proposal follow-up',
+        body: 'Here is the proposal we discussed.',
+      });
+
+      assert.match(result, /Sent a real email to jane@acme\.com/);
+      // One send to the real customer, one audit alert back to the founder.
+      assert.equal(sentMail.length, 2);
+      assert.equal(sentMail[0].to, 'jane@acme.com');
+      assert.equal(sentMail[1].to, 'founder@example.com');
+
+      const updated = ventures.getVenture(v.id);
+      assert.equal(updated.sentEmails.length, 1);
+      assert.equal(updated.sentEmails[0].to, 'jane@acme.com');
+    } finally {
+      mockedTransport.mock.restore();
+    }
+  })
+);

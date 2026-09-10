@@ -11,6 +11,10 @@ import {
   sendWeeklyReflectionEmail,
   formatDeploymentEmail,
   sendDeploymentEmail,
+  isEmailConfigured,
+  sendCustomerEmail,
+  formatOutreachAlertEmail,
+  sendOutreachAlertEmail,
 } from '../email.js';
 
 function makeReport(overrides = {}) {
@@ -173,6 +177,71 @@ test('sendDeploymentEmail is a no-op without SMTP configured', async () => {
   try {
     assert.equal(
       await sendDeploymentEmail(makeDeployedVenture(), { path: 'content/home.md', commitUrl: 'u' }),
+      false
+    );
+  } finally {
+    if (savedHost !== undefined) process.env.SMTP_HOST = savedHost;
+    if (savedTo !== undefined) process.env.REPORT_EMAIL_TO = savedTo;
+  }
+});
+
+test('isEmailConfigured reflects whether SMTP_HOST and REPORT_EMAIL_TO are both set', () => {
+  const savedHost = process.env.SMTP_HOST;
+  const savedTo = process.env.REPORT_EMAIL_TO;
+
+  try {
+    delete process.env.SMTP_HOST;
+    delete process.env.REPORT_EMAIL_TO;
+    assert.equal(isEmailConfigured(), false);
+
+    process.env.SMTP_HOST = 'smtp.example.com';
+    assert.equal(isEmailConfigured(), false); // still missing REPORT_EMAIL_TO
+
+    process.env.REPORT_EMAIL_TO = 'founder@example.com';
+    assert.equal(isEmailConfigured(), true);
+  } finally {
+    if (savedHost !== undefined) process.env.SMTP_HOST = savedHost;
+    else delete process.env.SMTP_HOST;
+    if (savedTo !== undefined) process.env.REPORT_EMAIL_TO = savedTo;
+    else delete process.env.REPORT_EMAIL_TO;
+  }
+});
+
+test('sendCustomerEmail is a no-op without SMTP configured', async () => {
+  const savedHost = process.env.SMTP_HOST;
+  const savedTo = process.env.REPORT_EMAIL_TO;
+  delete process.env.SMTP_HOST;
+  delete process.env.REPORT_EMAIL_TO;
+
+  try {
+    assert.equal(await sendCustomerEmail('jane@acme.com', 'Hi', 'Body text'), false);
+  } finally {
+    if (savedHost !== undefined) process.env.SMTP_HOST = savedHost;
+    if (savedTo !== undefined) process.env.REPORT_EMAIL_TO = savedTo;
+  }
+});
+
+test('formatOutreachAlertEmail names the venture, recipient, and subject', () => {
+  const { subject, text } = formatOutreachAlertEmail(makeDeployedVenture(), {
+    to: 'jane@acme.com',
+    subject: 'Proposal follow-up',
+  });
+  assert.match(subject, /Widget Co/);
+  assert.match(subject, /jane@acme\.com/);
+  assert.match(text, /Sales & Commercial Manager/);
+  assert.match(text, /To: jane@acme\.com/);
+  assert.match(text, /Subject: Proposal follow-up/);
+});
+
+test('sendOutreachAlertEmail is a no-op without SMTP configured', async () => {
+  const savedHost = process.env.SMTP_HOST;
+  const savedTo = process.env.REPORT_EMAIL_TO;
+  delete process.env.SMTP_HOST;
+  delete process.env.REPORT_EMAIL_TO;
+
+  try {
+    assert.equal(
+      await sendOutreachAlertEmail(makeDeployedVenture(), { to: 'jane@acme.com', subject: 'Hi' }),
       false
     );
   } finally {

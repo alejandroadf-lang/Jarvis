@@ -9,6 +9,9 @@ import {
   linkVentureRepo,
   enableVentureDeployment,
   disableVentureDeployment,
+  linkVentureOutreach,
+  enableVentureOutreach,
+  disableVentureOutreach,
 } from '../api/chat.js';
 
 function StatusBadge({ status }) {
@@ -163,7 +166,116 @@ function DeploymentScope({ venture, onLinkRepo, onEnable, onDisable, busy }) {
   );
 }
 
-function VentureCard({ venture, action, onApproveTranche, onDenyTranche, onKill, onLinkRepo, onEnableDeployment, onDisableDeployment, busy }) {
+// Same scope-grant shape as DeploymentScope above, applied to real
+// outbound email instead of a commit — an allowlist of recipients/domains
+// and a weekly cap, set once and then enabled. See
+// finance/ventures.js's authorizeOutreach for the enforcement.
+function OutreachScope({ venture, onLinkOutreach, onEnable, onDisable, busy }) {
+  const [showForm, setShowForm] = useState(false);
+  const [allowedRecipients, setAllowedRecipients] = useState('');
+  const [maxPerWeek, setMaxPerWeek] = useState('5');
+
+  const outreach = venture.outreach;
+  const inputClass =
+    'w-full text-[11px] bg-black/30 border border-cyan-500/20 rounded px-1.5 py-0.5 text-cyan-100 placeholder:text-cyan-500/40';
+
+  const submit = (e) => {
+    e.preventDefault();
+    onLinkOutreach(venture.id, {
+      allowedRecipients: allowedRecipients
+        .split(',')
+        .map((r) => r.trim())
+        .filter(Boolean),
+      maxPerWeek: Number(maxPerWeek) || 5,
+    });
+    setShowForm(false);
+  };
+
+  return (
+    <div className="mt-2 border border-purple-500/20 rounded p-2">
+      <p className="text-[10px] uppercase tracking-wide text-purple-300/70">Real outreach scope</p>
+      {outreach ? (
+        <>
+          <p className="text-[11px] text-cyan-500/60 mt-1">
+            allowed: {outreach.allowedRecipients.join(', ') || 'none set'} · cap {outreach.maxPerWeek}/week
+          </p>
+          <div className="flex items-center gap-2 mt-1">
+            <span className={`text-[10px] ${outreach.enabled ? 'text-emerald-400/80' : 'text-cyan-500/50'}`}>
+              {outreach.enabled ? 'Enabled — Sales & Commercial can email within scope' : 'Disabled'}
+            </span>
+            <button
+              onClick={() => (outreach.enabled ? onDisable(venture.id) : onEnable(venture.id))}
+              disabled={busy}
+              className="text-[11px] border border-purple-500/30 text-purple-300/80 hover:text-purple-200 disabled:opacity-40 rounded-full px-2 py-0.5"
+            >
+              {outreach.enabled ? 'Disable' : 'Enable'}
+            </button>
+          </div>
+          {venture.sentEmails?.length > 0 && (
+            <ul className="mt-2 space-y-0.5">
+              {[...venture.sentEmails]
+                .slice(-5)
+                .reverse()
+                .map((e, i) => (
+                  <li key={i} className="text-[10px] text-cyan-500/50">
+                    {new Date(e.sentAt).toLocaleString()} · to {e.to} — {e.subject || 'no subject'}
+                  </li>
+                ))}
+            </ul>
+          )}
+        </>
+      ) : showForm ? (
+        <form onSubmit={submit} className="mt-1 space-y-1">
+          <input
+            value={allowedRecipients}
+            onChange={(e) => setAllowedRecipients(e.target.value)}
+            placeholder="allowed recipients, comma separated (e.g. someone@acme.com, @acme.com)"
+            className={inputClass}
+          />
+          <input
+            value={maxPerWeek}
+            onChange={(e) => setMaxPerWeek(e.target.value)}
+            type="number"
+            min="1"
+            placeholder="max emails/week"
+            className={inputClass}
+          />
+          <div className="flex gap-2">
+            <button
+              type="submit"
+              disabled={busy || !allowedRecipients.trim()}
+              className="text-[11px] bg-purple-600 hover:bg-purple-500 disabled:opacity-40 text-white rounded-full px-3 py-1"
+            >
+              Set outreach scope
+            </button>
+            <button type="button" onClick={() => setShowForm(false)} className="text-[11px] text-cyan-500/60">
+              Cancel
+            </button>
+          </div>
+        </form>
+      ) : (
+        <button onClick={() => setShowForm(true)} className="mt-1 text-[11px] text-purple-300/70 hover:text-purple-200">
+          Set an outreach scope to enable real customer email
+        </button>
+      )}
+    </div>
+  );
+}
+
+function VentureCard({
+  venture,
+  action,
+  onApproveTranche,
+  onDenyTranche,
+  onKill,
+  onLinkRepo,
+  onEnableDeployment,
+  onDisableDeployment,
+  onLinkOutreach,
+  onEnableOutreach,
+  onDisableOutreach,
+  busy,
+}) {
   return (
     <div className="border border-cyan-500/20 rounded-lg p-2">
       <div className="flex items-center justify-between gap-2">
@@ -214,6 +326,15 @@ function VentureCard({ venture, action, onApproveTranche, onDenyTranche, onKill,
           onLinkRepo={onLinkRepo}
           onEnable={onEnableDeployment}
           onDisable={onDisableDeployment}
+          busy={busy}
+        />
+      )}
+      {onLinkOutreach && (
+        <OutreachScope
+          venture={venture}
+          onLinkOutreach={onLinkOutreach}
+          onEnable={onEnableOutreach}
+          onDisable={onDisableOutreach}
           busy={busy}
         />
       )}
@@ -345,6 +466,45 @@ export default function VenturesPanel({ sessionId, reloadKey, onGreenlit }) {
     }
   };
 
+  const handleLinkOutreach = async (id, outreachConfig) => {
+    setBusyId(id);
+    setError(null);
+    try {
+      await linkVentureOutreach(id, outreachConfig);
+      load();
+    } catch (err) {
+      setError(err.response?.data?.error || err.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleEnableOutreach = async (id) => {
+    setBusyId(id);
+    setError(null);
+    try {
+      await enableVentureOutreach(id);
+      load();
+    } catch (err) {
+      setError(err.response?.data?.error || err.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleDisableOutreach = async (id) => {
+    setBusyId(id);
+    setError(null);
+    try {
+      await disableVentureOutreach(id);
+      load();
+    } catch (err) {
+      setError(err.response?.data?.error || err.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   if (error) {
     return <p className="text-xs text-red-400 p-4">{error}</p>;
   }
@@ -403,6 +563,9 @@ export default function VenturesPanel({ sessionId, reloadKey, onGreenlit }) {
               onLinkRepo={handleLinkRepo}
               onEnableDeployment={handleEnableDeployment}
               onDisableDeployment={handleDisableDeployment}
+              onLinkOutreach={handleLinkOutreach}
+              onEnableOutreach={handleEnableOutreach}
+              onDisableOutreach={handleDisableOutreach}
               busy={busyId === v.id}
             />
           ))}

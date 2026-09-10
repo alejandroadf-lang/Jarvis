@@ -20,7 +20,18 @@ function buildTransport() {
   });
 }
 
-async function sendEmail(subject, text) {
+// Same gate that decides whether any email in this app can send at all —
+// exposed so an action handler (see handleSendCustomerEmail) can fail fast
+// with a clear reason before even checking a venture's outreach scope.
+export function isEmailConfigured() {
+  return Boolean(process.env.SMTP_HOST && process.env.REPORT_EMAIL_TO);
+}
+
+// `to` defaults to the founder's own address (REPORT_EMAIL_TO) — every
+// existing call site (daily report, tranche/proposal alerts) keeps working
+// unchanged. Real customer outreach (sendCustomerEmail, below) is the only
+// caller that passes a different address.
+async function sendEmail(subject, text, to = process.env.REPORT_EMAIL_TO) {
   const transport = buildTransport();
   if (!transport) {
     console.log(`Email skipped ("${subject}"): set SMTP_HOST and REPORT_EMAIL_TO to enable it.`);
@@ -29,7 +40,7 @@ async function sendEmail(subject, text) {
 
   await transport.sendMail({
     from: process.env.REPORT_EMAIL_FROM || process.env.SMTP_USER,
-    to: process.env.REPORT_EMAIL_TO,
+    to,
     subject,
     text,
   });
@@ -145,4 +156,33 @@ export function formatDeploymentEmail(venture, { path, commitUrl }) {
 export async function sendDeploymentEmail(venture, details) {
   const { subject, text } = formatDeploymentEmail(venture, details);
   return sendEmail(subject, text);
+}
+
+// The actual outbound message to a real prospect/customer — the only place
+// in this app that sends email to anyone other than the founder. Uses the
+// exact same SMTP transport and opt-in gate as everything else; there is no
+// separate "customer email" configuration to set up.
+export async function sendCustomerEmail(to, subject, body) {
+  return sendEmail(subject, body, to);
+}
+
+// Reports something that already happened to a real person outside the
+// simulation, same as formatDeploymentEmail — nothing left to approve or
+// deny after the fact, just an audit trail landing in the founder's inbox.
+export function formatOutreachAlertEmail(venture, { to, subject }) {
+  const alertSubject = `Real email sent: "${venture.title}" -> ${to}`;
+  const text = [
+    `The Sales & Commercial Manager sent a real email on behalf of "${venture.title}".`,
+    '',
+    `To: ${to}`,
+    `Subject: ${subject}`,
+    '',
+    'Review it from the Ventures panel if you want to see the full outreach log.',
+  ].join('\n');
+  return { subject: alertSubject, text };
+}
+
+export async function sendOutreachAlertEmail(venture, details) {
+  const { subject, text } = formatOutreachAlertEmail(venture, details);
+  return sendEmail(subject, text); // to the founder — no override, unlike sendCustomerEmail
 }

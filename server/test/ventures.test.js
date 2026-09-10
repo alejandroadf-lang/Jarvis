@@ -178,3 +178,59 @@ test('recordDeployment appends to the deployment log with a timestamp', () => {
   assert.equal(entry.commitSha, 'abc123');
   assert.ok(entry.deployedAt);
 });
+
+test('authorizeOutreach refuses an inactive venture, an unset scope, and a disabled scope', () => {
+  const v = makeVenture();
+  assert.throws(() => ventures.authorizeOutreach(v.id, { to: 'x@acme.com' }), /must be active/);
+
+  ventures.activateVenture(v.id);
+  assert.throws(() => ventures.authorizeOutreach(v.id, { to: 'x@acme.com' }), /No outreach scope/);
+
+  ventures.linkOutreachScope(v.id, { allowedRecipients: ['@acme.com'] });
+  assert.throws(() => ventures.authorizeOutreach(v.id, { to: 'x@acme.com' }), /not enabled/);
+});
+
+test('authorizeOutreach enforces the recipient allowlist, matching exact addresses and whole domains', () => {
+  const v = makeVenture();
+  ventures.activateVenture(v.id);
+  ventures.linkOutreachScope(v.id, { allowedRecipients: ['jane@acme.com', '@partner.com'] });
+  ventures.setOutreachEnabled(v.id, true);
+
+  assert.doesNotThrow(() => ventures.authorizeOutreach(v.id, { to: 'jane@acme.com' }));
+  assert.doesNotThrow(() => ventures.authorizeOutreach(v.id, { to: 'anyone@partner.com' }));
+  assert.throws(() => ventures.authorizeOutreach(v.id, { to: 'someoneelse@acme.com' }), /outside the allowed recipients/);
+  assert.throws(() => ventures.authorizeOutreach(v.id, { to: 'random@nowhere.com' }), /outside the allowed recipients/);
+});
+
+test('authorizeOutreach enforces the weekly cap from recordOutreach history', () => {
+  const v = makeVenture();
+  ventures.activateVenture(v.id);
+  ventures.linkOutreachScope(v.id, { allowedRecipients: ['@acme.com'], maxPerWeek: 2 });
+  ventures.setOutreachEnabled(v.id, true);
+
+  ventures.recordOutreach(v.id, { to: 'a@acme.com', subject: 'a', body: 'x' });
+  ventures.recordOutreach(v.id, { to: 'b@acme.com', subject: 'b', body: 'x' });
+
+  assert.throws(() => ventures.authorizeOutreach(v.id, { to: 'c@acme.com' }), /Weekly outreach cap reached/);
+});
+
+test('setOutreachEnabled requires a scope to already be set up', () => {
+  const v = makeVenture();
+  assert.throws(() => ventures.setOutreachEnabled(v.id, true), /Set up an outreach scope before/);
+});
+
+test('recordOutreach appends to the sent-email log with a timestamp', () => {
+  const v = makeVenture();
+  ventures.activateVenture(v.id);
+  ventures.linkOutreachScope(v.id, { allowedRecipients: ['@acme.com'] });
+
+  const { venture, entry } = ventures.recordOutreach(v.id, {
+    to: 'jane@acme.com',
+    subject: 'Following up',
+    body: 'Here is the proposal we discussed.',
+  });
+  assert.equal(venture.sentEmails.length, 1);
+  assert.equal(entry.to, 'jane@acme.com');
+  assert.equal(entry.subject, 'Following up');
+  assert.ok(entry.sentAt);
+});
