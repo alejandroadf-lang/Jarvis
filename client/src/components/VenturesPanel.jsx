@@ -245,6 +245,11 @@ function OutreachScope({ venture, onLinkOutreach, onEnable, onDisable, busy }) {
   const [maxPerDay, setMaxPerDay] = useState('1');
 
   const outreach = venture.outreach;
+  // The latest note per contact — the panel is a glance at what Sales is
+  // carrying into the next email, not the full note history.
+  const contactNotes = Object.entries(venture.contactNotes || {}).flatMap(([email, notes]) =>
+    notes.slice(-1).map((note) => ({ email, note }))
+  );
   const inputClass =
     'w-full text-[11px] bg-black/30 border border-cyan-500/20 rounded px-1.5 py-0.5 text-cyan-100 placeholder:text-cyan-500/40';
 
@@ -298,6 +303,18 @@ function OutreachScope({ venture, onLinkOutreach, onEnable, onDisable, busy }) {
                   </li>
                 ))}
             </ul>
+          )}
+          {contactNotes.length > 0 && (
+            <div className="mt-2 pt-2 border-t border-purple-500/20">
+              <p className="text-[10px] uppercase tracking-wide text-purple-300/50">What Sales knows</p>
+              <ul className="mt-1 space-y-0.5">
+                {contactNotes.map(({ email, note }, i) => (
+                  <li key={i} className="text-[10px] text-cyan-500/50">
+                    <span className="text-cyan-500/70">{email}</span>: {note.note}
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
         </>
       ) : showForm ? (

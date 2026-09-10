@@ -307,6 +307,77 @@ test('recordOutreach appends to the sent-email log with a timestamp', () => {
   assert.equal(entry.triggeredBy, 'interactive'); // default when not specified
 });
 
+test('listContacts derives history from the sent log, newest contact first', () => {
+  const v = makeVenture();
+  ventures.activateVenture(v.id);
+  ventures.linkOutreachScope(v.id, { allowedRecipients: ['@acme.com'] });
+
+  ventures.recordOutreach(v.id, { to: 'jane@acme.com', subject: 'Intro' });
+  ventures.recordOutreach(v.id, { to: 'jane@acme.com', subject: 'Following up' });
+  ventures.recordOutreach(v.id, { to: 'bob@acme.com', subject: 'Hello' });
+
+  const contacts = ventures.listContacts(v.id);
+  assert.equal(contacts.length, 2);
+
+  const jane = contacts.find((c) => c.email === 'jane@acme.com');
+  assert.equal(jane.emailCount, 2);
+  assert.equal(jane.lastSubject, 'Following up'); // the most recent one, not the first
+  assert.ok(jane.lastSentAt);
+});
+
+test('listContacts matches addresses case-insensitively rather than splitting one person in two', () => {
+  const v = makeVenture();
+  ventures.activateVenture(v.id);
+  ventures.recordOutreach(v.id, { to: 'Jane@Acme.com', subject: 'One' });
+  ventures.recordOutreach(v.id, { to: 'jane@acme.com', subject: 'Two' });
+
+  const contacts = ventures.listContacts(v.id);
+  assert.equal(contacts.length, 1);
+  assert.equal(contacts[0].emailCount, 2);
+});
+
+test('recordContactNote attaches a note to a contact and keeps it in listContacts', () => {
+  const v = makeVenture();
+  ventures.activateVenture(v.id);
+  ventures.recordOutreach(v.id, { to: 'jane@acme.com', subject: 'Intro' });
+  ventures.recordContactNote(v.id, { email: 'JANE@acme.com', note: 'Asked for pricing in Q3' });
+
+  const jane = ventures.listContacts(v.id).find((c) => c.email === 'jane@acme.com');
+  assert.equal(jane.notes.length, 1);
+  assert.equal(jane.notes[0].note, 'Asked for pricing in Q3');
+  assert.ok(jane.notes[0].at);
+});
+
+test('a contact can exist on a note alone, before anything has been sent to them', () => {
+  const v = makeVenture();
+  ventures.activateVenture(v.id);
+  ventures.recordContactNote(v.id, { email: 'newlead@acme.com', note: 'Met at a meetup' });
+
+  const contacts = ventures.listContacts(v.id);
+  assert.equal(contacts.length, 1);
+  assert.equal(contacts[0].emailCount, 0);
+  assert.equal(contacts[0].lastSentAt, null);
+});
+
+test('recordContactNote requires both an address and a note', () => {
+  const v = makeVenture();
+  assert.throws(() => ventures.recordContactNote(v.id, { email: '   ', note: 'x' }), /email is required/);
+  assert.throws(() => ventures.recordContactNote(v.id, { email: 'a@b.com', note: '  ' }), /note is required/);
+});
+
+test('contact notes are capped so working memory cannot grow without bound', () => {
+  const v = makeVenture();
+  ventures.activateVenture(v.id);
+  for (let i = 1; i <= 8; i++) {
+    ventures.recordContactNote(v.id, { email: 'jane@acme.com', note: `note ${i}` });
+  }
+
+  const jane = ventures.listContacts(v.id).find((c) => c.email === 'jane@acme.com');
+  assert.equal(jane.notes.length, 5);
+  assert.equal(jane.notes[0].note, 'note 4'); // oldest kept
+  assert.equal(jane.notes[4].note, 'note 8'); // newest
+});
+
 test('the global halt overrides a fully-granted scope for both real actions', async () => {
   const killSwitch = await import('../killSwitch.js');
 

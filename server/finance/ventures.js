@@ -374,6 +374,65 @@ export function authorizeOutreach(id, { to }) {
   return venture;
 }
 
+// The outreach log answers "what did we send"; this answers "who is this
+// person to us" — the question worth asking *before* drafting rather than
+// after. Anthropic's Project Vend landed on the same conclusion the hard
+// way: its agent only stopped repeating itself once it had a CRM to consult.
+//
+// History is derived from the sentEmails log rather than duplicated, so it
+// can't drift out of sync with what was actually sent. Notes are the part
+// that can't be derived: what the agent learned from a reply, which nothing
+// else in this app records. Kept to the most recent few per contact — this
+// is working memory for the next email, not an archive.
+const NOTES_KEPT_PER_CONTACT = 5;
+
+export function recordContactNote(id, { email, note }) {
+  const address = String(email || '').trim().toLowerCase();
+  if (!address) throw new Error('email is required to log a contact note');
+  const text = String(note || '').trim();
+  if (!text) throw new Error('note is required');
+
+  const data = load();
+  const venture = findOrThrow(data, id);
+  venture.contactNotes = venture.contactNotes || {};
+  const existing = venture.contactNotes[address] || [];
+  venture.contactNotes[address] = [...existing, { note: text, at: new Date().toISOString() }].slice(
+    -NOTES_KEPT_PER_CONTACT
+  );
+  save(data);
+  return { venture, note: { email: address, note: text } };
+}
+
+export function listContacts(id) {
+  const venture = getVenture(id);
+  if (!venture) return [];
+
+  const byAddress = new Map();
+  for (const sent of venture.sentEmails || []) {
+    const address = String(sent.to || '').toLowerCase();
+    if (!address) continue;
+    const entry = byAddress.get(address) || { email: address, emailCount: 0, lastSentAt: null, lastSubject: '' };
+    entry.emailCount += 1;
+    // `>=` rather than `>`: two sends can land in the same millisecond, and
+    // the log is append-ordered, so on a tie the later entry is the newer one.
+    if (!entry.lastSentAt || sent.sentAt >= entry.lastSentAt) {
+      entry.lastSentAt = sent.sentAt;
+      entry.lastSubject = sent.subject || '';
+    }
+    byAddress.set(address, entry);
+  }
+
+  // A contact can exist on notes alone — someone the founder or an agent
+  // learned something about before anything was ever sent to them.
+  for (const [address, notes] of Object.entries(venture.contactNotes || {})) {
+    const entry = byAddress.get(address) || { email: address, emailCount: 0, lastSentAt: null, lastSubject: '' };
+    entry.notes = notes;
+    byAddress.set(address, entry);
+  }
+
+  return [...byAddress.values()].sort((a, b) => (a.lastSentAt || '') < (b.lastSentAt || '') ? 1 : -1);
+}
+
 // Same `triggeredBy` distinction as recordDeployment — which of the two
 // paths that can now both send this exact kind of real email actually did.
 export function recordOutreach(id, { to, subject, body, triggeredBy }) {

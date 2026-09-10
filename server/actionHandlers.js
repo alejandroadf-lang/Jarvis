@@ -17,6 +17,7 @@ import {
   recordDeployment,
   authorizeOutreach,
   recordOutreach,
+  recordContactNote,
 } from './finance/ventures.js';
 import {
   sendVentureProposedEmail,
@@ -203,5 +204,18 @@ export async function handleSendCustomerEmail(input, triggeredBy = 'interactive'
     return `Sent a real email to ${to} on behalf of "${venture.title}": "${subject}".`;
   } catch (err) {
     return `Could not send: ${err.message}`;
+  }
+}
+
+// Purely internal memory — no scope grant, no kill switch, no cap, because
+// nothing leaves the building. It's the counterpart to send_customer_email:
+// what the agent learned, recorded where the next draft will actually see it
+// (see finance/context.js's buildOutreachContext).
+export async function handleLogContactNote(input) {
+  try {
+    const { note } = recordContactNote(input.ventureId, { email: input.email, note: input.note });
+    return `Noted against ${note.email}: "${note.note}". It'll be in the contact history before the next email to them is drafted.`;
+  } catch (err) {
+    return `Could not log the contact note: ${err.message}`;
   }
 }

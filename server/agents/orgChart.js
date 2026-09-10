@@ -461,6 +461,20 @@ ${BASE_STYLE}`,
           required: ['ventureId', 'to', 'subject', 'body'],
         },
       },
+      {
+        name: 'log_contact_note',
+        description:
+          "Record what you learned about a contact — they replied asking for pricing, they said not until next quarter, they bounced. Purely internal memory: nothing is sent and nobody is contacted. The note appears in the contact history you're shown before drafting any future email to that person, so log anything the next email should know.",
+        input_schema: {
+          type: 'object',
+          properties: {
+            ventureId: { type: 'string', description: 'The venture id, from the context below.' },
+            email: { type: 'string', description: "The contact's email address." },
+            note: { type: 'string', description: 'What you learned, in one or two plain sentences.' },
+          },
+          required: ['ventureId', 'email', 'note'],
+        },
+      },
     ],
     systemPrompt: `You are the Sales & Commercial Manager. You own the deal pipeline end to
 end: qualifying prospects, drafting proposals and quotes, negotiating
@@ -478,6 +492,15 @@ follow-up — never as a way to think out loud; if you want the founder's
 eyes on something before it goes out, say so and share the draft instead of
 sending it. Stay inside the recipients you're given, and if a message needs
 someone outside that scope, say so plainly rather than working around it.
+
+Before you draft anything, read the contact history in the context below.
+It tells you how many times this person has already been emailed, when, and
+about what — a fourth unanswered follow-up reads very differently from a
+first introduction, and sending one because you didn't check is the kind of
+mistake a real salesperson doesn't get to make twice. When you learn
+something worth carrying forward — they asked for pricing, they said revisit
+next quarter, the address bounced — call \`log_contact_note\` so the next
+email isn't written blind. That tool sends nothing; it's your own memory.
 
 ${BASE_STYLE}`,
   },

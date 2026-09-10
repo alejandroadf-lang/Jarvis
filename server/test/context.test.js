@@ -72,6 +72,45 @@ test('buildStudioContext includes the treasury context and the past-lessons cont
   assert.match(text, /Yet Another Resume Builder|No ventures have been killed yet/);
 });
 
+test('buildOutreachContext says there is nothing to check when no venture has an outreach scope', () => {
+  assert.match(context.buildOutreachContext(), /No venture has an outreach scope/);
+});
+
+test('buildOutreachContext puts prior emails and notes in front of the agent before it drafts', () => {
+  const v = ventures.createVenture({
+    title: 'Outreach Co',
+    oneLiner: 'x',
+    problem: 'p',
+    targetCustomer: 'c',
+    businessModel: 'm',
+    marketSize: 's',
+    pathToMillions: 'path',
+    budgetRequested: 10,
+    milestones: [],
+  });
+  ventures.activateVenture(v.id);
+  ventures.linkOutreachScope(v.id, { allowedRecipients: ['@acme.com'] });
+  ventures.recordOutreach(v.id, { to: 'jane@acme.com', subject: 'Following up on the proposal' });
+  ventures.recordContactNote(v.id, { email: 'jane@acme.com', note: 'Said revisit next quarter' });
+
+  const text = context.buildOutreachContext();
+  assert.match(text, /Outreach Co/);
+  assert.match(text, /jane@acme\.com/);
+  assert.match(text, /1 email\(s\) sent/);
+  assert.match(text, /Following up on the proposal/);
+  assert.match(text, /Said revisit next quarter/);
+});
+
+test('buildCompanyContext carries both the treasury picture and the contact history', () => {
+  const text = context.buildCompanyContext();
+  assert.match(text, /Company treasury:/);
+  assert.match(text, /jane@acme\.com/);
+});
+
+test('buildStudioContext leaves contact history out — ideation does not send email', () => {
+  assert.doesNotMatch(context.buildStudioContext(), /jane@acme\.com/);
+});
+
 test('buildStudioContext says no weekly reflection has run yet when none exists', () => {
   const text = context.buildStudioContext();
   assert.match(text, /No weekly reflection has run yet/);

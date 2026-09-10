@@ -26,10 +26,15 @@
 import { runAgent } from './agents/agentRunner.js';
 import { AGENTS as COMPANY_AGENTS, ROOT_AGENT_ID as COMPANY_ROOT } from './agents/orgChart.js';
 import { AGENTS as STUDIO_AGENTS, ROOT_AGENT_ID as STUDIO_ROOT } from './agents/ideationTeam.js';
-import { buildTreasuryContext, buildStudioContext } from './finance/context.js';
+import { buildCompanyContext, buildStudioContext } from './finance/context.js';
 import { getLedger } from './finance/ledger.js';
 import { listVentures } from './finance/ventures.js';
-import { handleProposeVenture, handleDeployCode, handleSendCustomerEmail } from './actionHandlers.js';
+import {
+  handleProposeVenture,
+  handleDeployCode,
+  handleSendCustomerEmail,
+  handleLogContactNote,
+} from './actionHandlers.js';
 import { todayKey, saveDailyReport } from './dailyReports.js';
 import { sendDailyReportEmail } from './email.js';
 import { estimateCostUsd, sumUsage } from './usage.js';
@@ -102,7 +107,7 @@ quick daily check-in, not a full brainstorming session.`;
 export async function runDailyMeeting({ anthropic }) {
   const date = todayKey();
   const startedAt = Date.now();
-  const treasuryContext = buildTreasuryContext();
+  const companyContext = buildCompanyContext();
   const beforeIds = new Set(listVentures().map((v) => v.id));
 
   // Both phases are isolated the same way: a persistent failure in one
@@ -127,8 +132,12 @@ export async function runDailyMeeting({ anthropic }) {
         // 'interactive' counterpart.
         deploy_code: (input) => handleDeployCode(input, 'daily_cycle'),
         send_customer_email: (input) => handleSendCustomerEmail(input, 'daily_cycle'),
+        // Safe unattended for the opposite reason to the two above: it has
+        // no real-world effect at all, it only writes what the agent learned
+        // into memory the next draft will read.
+        log_contact_note: handleLogContactNote,
       },
-      extraContext: treasuryContext,
+      extraContext: companyContext,
     });
   } catch (err) {
     leadershipFailed = true;

@@ -22,7 +22,7 @@ import {
   linkOutreachScope,
   setOutreachEnabled,
 } from './finance/ventures.js';
-import { buildTreasuryContext, buildStudioContext } from './finance/context.js';
+import { buildCompanyContext, buildStudioContext } from './finance/context.js';
 import {
   handleProposeVenture,
   handleLogRevenue,
@@ -32,6 +32,7 @@ import {
   handleKillVenture,
   handleDeployCode,
   handleSendCustomerEmail,
+  handleLogContactNote,
 } from './actionHandlers.js';
 import { listDailyReports, getDailyReport, getLatestDailyReport } from './dailyReports.js';
 import { startDailyMeetingScheduler, runDailyMeetingNow, isDailyMeetingRunning } from './scheduler.js';
@@ -169,8 +170,11 @@ async function runCompanyTurn(sessionId, message) {
       // counterpart.
       deploy_code: (input) => handleDeployCode(input, 'interactive'),
       send_customer_email: (input) => handleSendCustomerEmail(input, 'interactive'),
+      // Internal memory only — no scope grant or cap, since nothing leaves
+      // the building (see actionHandlers.js).
+      log_contact_note: handleLogContactNote,
     },
-    extraContext: buildTreasuryContext(),
+    extraContext: buildCompanyContext(),
   });
 
   history.push({ role: 'user', content: message });

@@ -901,3 +901,41 @@ when the module first loaded, which meant a test that set `JARVIS_DATA_DIR`
 in a `before()` hook could still be writing to the real `server/data/` —
 which is exactly how a test run put fake spend into the real ledger the
 first time this was wired up.
+
+## What Sales knows before it writes
+
+The outreach log was write-only. An agent could send a fourth unanswered
+follow-up to the same person and have no way to know it, because the record
+of the first three only existed somewhere nothing read before drafting.
+Project Vend hit the same wall: its agent stopped repeating itself only once
+it had a CRM to consult.
+
+Two halves, matching the two kinds of thing worth remembering:
+
+- **History is derived, never duplicated.** `listContacts()`
+  (`server/finance/ventures.js`) aggregates the existing `sentEmails` log per
+  address — how many, when last, about what — so it can't drift out of sync
+  with what was actually sent. Addresses are matched case-insensitively, so
+  `Jane@Acme.com` and `jane@acme.com` are one person rather than two
+  half-remembered ones.
+- **Notes are the part nothing else captures.** `recordContactNote()` stores
+  what the agent learned from a reply — asked for pricing, revisit next
+  quarter, address bounced — which no amount of re-reading the outbox would
+  tell you. Capped at the five most recent per contact: this is working
+  memory for the next email, not an archive.
+
+`buildOutreachContext()` (`server/finance/context.js`) puts both in front of
+the agent *before* it drafts, which is the only moment where knowing changes
+what happens, and `buildCompanyContext()` is what the Executive Team now
+gets — treasury plus contact history. The Venture Studio deliberately still
+gets `buildStudioContext()` without it: ideation doesn't send email, and the
+contact list would be noise in a brainstorm.
+
+The Sales & Commercial Manager writes those notes itself via
+`log_contact_note`. That tool is wired into both the interactive chat and
+the unattended daily cycle — safe in the daily cycle for the opposite reason
+to `deploy_code` and `send_customer_email`: it has no real-world effect at
+all, so it needs no scope grant, no cap, and no kill-switch check. It only
+writes into the memory the next draft will read. The Ventures panel shows
+the latest note per contact under "What Sales knows", so the founder can see
+the same thing the agent will.
