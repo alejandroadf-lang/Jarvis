@@ -168,6 +168,18 @@ test('formatDeploymentEmail omits the commit line when no commitUrl is given', (
   assert.doesNotMatch(text, /Commit:/);
 });
 
+test('formatDeploymentEmail names the trigger source: a live conversation by default, the unattended daily cycle when told', () => {
+  const interactive = formatDeploymentEmail(makeDeployedVenture(), { path: 'content/home.md', commitUrl: '' });
+  assert.match(interactive.text, /Triggered by: a live Executive Team conversation/);
+
+  const autonomous = formatDeploymentEmail(makeDeployedVenture(), {
+    path: 'content/home.md',
+    commitUrl: '',
+    triggeredBy: 'daily_cycle',
+  });
+  assert.match(autonomous.text, /Triggered by: the unattended daily leadership sync/);
+});
+
 test('sendDeploymentEmail is a no-op without SMTP configured', async () => {
   const savedHost = process.env.SMTP_HOST;
   const savedTo = process.env.REPORT_EMAIL_TO;
@@ -231,6 +243,18 @@ test('formatOutreachAlertEmail names the venture, recipient, and subject', () =>
   assert.match(text, /Sales & Commercial Manager/);
   assert.match(text, /To: jane@acme\.com/);
   assert.match(text, /Subject: Proposal follow-up/);
+});
+
+test('formatOutreachAlertEmail names the trigger source: a live conversation by default, the unattended daily cycle when told', () => {
+  const interactive = formatOutreachAlertEmail(makeDeployedVenture(), { to: 'jane@acme.com', subject: 'Hi' });
+  assert.match(interactive.text, /Triggered by: a live Executive Team conversation/);
+
+  const autonomous = formatOutreachAlertEmail(makeDeployedVenture(), {
+    to: 'jane@acme.com',
+    subject: 'Hi',
+    triggeredBy: 'daily_cycle',
+  });
+  assert.match(autonomous.text, /Triggered by: the unattended daily leadership sync/);
 });
 
 test('sendOutreachAlertEmail is a no-op without SMTP configured', async () => {

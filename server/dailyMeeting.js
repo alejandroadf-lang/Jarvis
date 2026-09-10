@@ -120,7 +120,14 @@ export async function runDailyMeeting({ anthropic }) {
       // Only the two scope-gated real actions are wired in here — see file
       // header for why those specifically are safe in an unattended run
       // when every other treasury/venture action still isn't.
-      actionHandlers: { deploy_code: handleDeployCode, send_customer_email: handleSendCustomerEmail },
+      actionHandlers: {
+        // 'daily_cycle' is recorded on the venture's deployment/outreach log
+        // so the founder can tell an unattended real action apart from one
+        // that happened during a live conversation — see index.js's
+        // 'interactive' counterpart.
+        deploy_code: (input) => handleDeployCode(input, 'daily_cycle'),
+        send_customer_email: (input) => handleSendCustomerEmail(input, 'daily_cycle'),
+      },
       extraContext: treasuryContext,
     });
   } catch (err) {
