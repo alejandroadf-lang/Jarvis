@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { fetchPortfolio } from '../api/chat.js';
+import { fetchPortfolio, fetchProfitShare } from '../api/chat.js';
 
 function StatTile({ label, value, tone = 'text-cyan-100' }) {
   return (
@@ -20,14 +20,91 @@ function fmtMoney(n) {
   return `${sign}$${Math.abs(n).toFixed(0)}`;
 }
 
+// Who earned what, and the events behind it. The audit surface: an agent
+// only ever sees its own line, so this is the only place the whole
+// distribution is visible and checkable.
+function ProfitShare({ share }) {
+  const [showEvents, setShowEvents] = useState(false);
+  if (!share) return null;
+
+  const { poolUsd, sharePct, agents, contributions, net } = share;
+
+  return (
+    <div className="mb-6 border border-cyan-500/20 rounded-lg p-4">
+      <div className="flex items-baseline justify-between mb-1">
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-cyan-300">Agent profit share</h2>
+        <span className="text-[11px] text-cyan-500/50">{sharePct}% of net profit</span>
+      </div>
+      <p className="text-2xl font-semibold text-cyan-100">
+        {fmtMoney(poolUsd)}
+        <span className="text-xs text-cyan-500/50 font-normal"> pool</span>
+      </p>
+
+      {net <= 0 && (
+        <p className="text-[11px] text-cyan-500/50 mt-1">
+          Nothing to share until the company is profitable — contributions are still being tracked, so the
+          pool distributes the moment net turns positive.
+        </p>
+      )}
+
+      {agents.length === 0 ? (
+        <p className="text-[11px] text-cyan-500/50 mt-2">
+          No agent has done anything creditable yet. Credit is recorded when an action actually succeeds —
+          shipping code, contacting a customer, starting or ending a venture.
+        </p>
+      ) : (
+        <div className="mt-3 space-y-1">
+          {agents.map((a) => (
+            <div key={a.agentId} className="flex items-center gap-2 text-[11px]">
+              <span className="w-48 shrink-0 truncate text-cyan-100/90">{a.agentId}</span>
+              <div className="flex-1 h-1.5 bg-white/5 rounded-full overflow-hidden">
+                <div className="h-full bg-cyan-500/60" style={{ width: `${a.sharePct}%` }} />
+              </div>
+              <span className="w-14 text-right text-cyan-500/60">{a.sharePct.toFixed(1)}%</span>
+              <span className="w-16 text-right text-emerald-300 tabular-nums">{fmtMoney(a.earnedUsd)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {contributions?.length > 0 && (
+        <>
+          <button
+            onClick={() => setShowEvents((v) => !v)}
+            className="mt-3 text-[11px] text-cyan-400/80 hover:text-cyan-300 underline"
+          >
+            {showEvents ? 'Hide' : 'Show'} the {contributions.length} events behind these numbers
+          </button>
+          {showEvents && (
+            <div className="mt-2 max-h-64 overflow-y-auto space-y-1">
+              {contributions.map((c) => (
+                <p key={c.id} className="text-[11px] text-cyan-500/60">
+                  <span className="text-cyan-400/70">{c.at.slice(0, 10)}</span> · {c.agentId} · {c.kind}
+                  {c.detail && ` — ${c.detail}`}
+                </p>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function PortfolioView({ reloadKey }) {
   const [data, setData] = useState(null);
+  const [share, setShare] = useState(null);
   const [error, setError] = useState(null);
 
   useEffect(() => {
     fetchPortfolio()
       .then(setData)
       .catch((err) => setError(err.message));
+    // Separate from the portfolio fetch: the share is additive, so a failure
+    // here should cost the section, not the whole page.
+    fetchProfitShare()
+      .then(setShare)
+      .catch(() => {});
   }, [reloadKey]);
 
   if (error) {
@@ -50,6 +127,8 @@ export default function PortfolioView({ reloadKey }) {
         <StatTile label="Expenses" value={fmtMoney(totals.expense)} tone="text-red-300" />
         <StatTile label="Net" value={fmtMoney(totals.net)} tone={totals.net >= 0 ? 'text-emerald-300' : 'text-red-300'} />
       </div>
+
+      <ProfitShare share={share} />
 
       {sorted.length === 0 ? (
         <p className="text-xs text-cyan-500/50">

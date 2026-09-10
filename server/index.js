@@ -19,7 +19,7 @@ import {
   linkOutreachScope,
   setOutreachEnabled,
 } from './finance/ventures.js';
-import { buildCompanyContext, buildStudioContext } from './finance/context.js';
+import { buildCompanyContext, buildStudioContext, buildEarningsContext } from './finance/context.js';
 import { recordExchange, buildFounderContext } from './memory/honcho.js';
 import {
   handleProposeVenture,
@@ -36,6 +36,7 @@ import { startDailyMeetingScheduler, runDailyMeetingNow, isDailyMeetingRunning }
 import { getKillSwitch, haltRealActions, resumeRealActions } from './killSwitch.js';
 import { getSpendSummary } from './spend.js';
 import { getIntegrationStatus } from './integrations.js';
+import { getProfitShare, listContributions } from './finance/profitShare.js';
 import { listWeeklyReflections, getWeeklyReflection, getLatestWeeklyReflection } from './weeklyReflections.js';
 import { startWeeklyReflectionScheduler, runWeeklyReflectionNow, isWeeklyReflectionRunning } from './weeklyScheduler.js';
 
@@ -194,6 +195,7 @@ async function runCompanyTurn(sessionId, message) {
       log_contact_note: handleLogContactNote,
     },
     extraContext: joinContext(buildCompanyContext(), founderContext),
+    perAgentContext: buildEarningsContext,
   });
 
   history.push({ role: 'user', content: message });
@@ -265,6 +267,7 @@ app.post('/api/studio/chat', async (req, res) => {
       messages: workingMessages,
       actionHandlers: { propose_venture: handleProposeVenture },
       extraContext: joinContext(buildStudioContext(), founderContext),
+      perAgentContext: buildEarningsContext,
     });
 
     history.push({ role: 'user', content: message });
@@ -417,6 +420,13 @@ app.post('/api/kill-switch/resume', (_req, res) => {
 
 // Today's model spend against the daily ceiling agentRunner.js enforces
 // before every paid call (see spend.js).
+// Who has earned what, and the events behind each balance — the founder's
+// audit surface for the profit share. Agents see only their own line (see
+// finance/context.js's buildEarningsContext); this is the whole picture.
+app.get('/api/profit-share', (_req, res) => {
+  res.json({ ...getProfitShare(), contributions: listContributions().slice(-100).reverse() });
+});
+
 app.get('/api/spend', (_req, res) => {
   res.json(getSpendSummary());
 });

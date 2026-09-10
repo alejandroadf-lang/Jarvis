@@ -135,6 +135,13 @@ export async function fetchIntegrations() {
   return data;
 }
 
+// Who has earned what, plus the contribution events behind each balance so
+// any figure can be audited rather than taken on trust.
+export async function fetchProfitShare() {
+  const { data } = await axios.get('/api/profit-share');
+  return data; // { net, sharePct, poolUsd, totalWeight, agents, contributions }
+}
+
 export async function fetchSpend() {
   const { data } = await axios.get('/api/spend');
   return data; // { spentUsd, capUsd, date, overCap }

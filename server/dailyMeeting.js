@@ -27,7 +27,7 @@
 import { runAgent } from './agents/agentRunner.js';
 import { AGENTS as COMPANY_AGENTS, ROOT_AGENT_ID as COMPANY_ROOT } from './agents/orgChart.js';
 import { AGENTS as STUDIO_AGENTS, ROOT_AGENT_ID as STUDIO_ROOT } from './agents/ideationTeam.js';
-import { buildCompanyContext, buildStudioContext } from './finance/context.js';
+import { buildCompanyContext, buildStudioContext, buildEarningsContext } from './finance/context.js';
 import { getLedger } from './finance/ledger.js';
 import { listVentures } from './finance/ventures.js';
 import {
@@ -139,6 +139,7 @@ export async function runDailyMeeting({ anthropic }) {
         log_contact_note: handleLogContactNote,
       },
       extraContext: companyContext,
+      perAgentContext: buildEarningsContext,
     });
   } catch (err) {
     leadershipFailed = true;
@@ -161,6 +162,7 @@ export async function runDailyMeeting({ anthropic }) {
         messages: [{ role: 'user', content: studioKickoff(leadership.text) }],
         actionHandlers: { propose_venture: handleProposeVenture },
         extraContext: buildStudioContext(),
+        perAgentContext: buildEarningsContext,
       });
     } catch (err) {
       studio = { text: `(Venture Studio ideation pass failed: ${err.message})`, trace: [], usage: emptyUsage() };

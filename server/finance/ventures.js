@@ -238,7 +238,7 @@ export function authorizeDeployment(id, { path }) {
 // one fact the allowlist/cap don't capture on their own: now that both
 // paths can produce the exact same kind of entry, knowing which one fired
 // matters for anyone reviewing the log after the fact.
-export function recordDeployment(id, { path, message, commitSha, commitUrl, rationale, triggeredBy }) {
+export function recordDeployment(id, { path, message, commitSha, commitUrl, rationale, triggeredBy, agentId }) {
   const data = load();
   const venture = findOrThrow(data, id);
   venture.deployments = venture.deployments || [];
@@ -249,6 +249,10 @@ export function recordDeployment(id, { path, message, commitSha, commitUrl, rati
     commitUrl: String(commitUrl || ''),
     rationale: String(rationale || ''),
     triggeredBy: triggeredBy === 'daily_cycle' ? 'daily_cycle' : 'interactive',
+    // Which agent actually made this commit. Recorded by the runner, never
+    // claimed by the agent — the audit trail this app was missing, and the
+    // basis for the profit share (see profitShare.js).
+    agentId: agentId ? String(agentId) : null,
     deployedAt: new Date().toISOString(),
   };
   venture.deployments.push(entry);
@@ -385,7 +389,7 @@ export function listContacts(id) {
 
 // Same `triggeredBy` distinction as recordDeployment — which of the two
 // paths that can now both send this exact kind of real email actually did.
-export function recordOutreach(id, { to, subject, body, triggeredBy }) {
+export function recordOutreach(id, { to, subject, body, triggeredBy, agentId }) {
   const data = load();
   const venture = findOrThrow(data, id);
   venture.sentEmails = venture.sentEmails || [];
@@ -394,6 +398,8 @@ export function recordOutreach(id, { to, subject, body, triggeredBy }) {
     subject: String(subject || ''),
     body: String(body || ''),
     triggeredBy: triggeredBy === 'daily_cycle' ? 'daily_cycle' : 'interactive',
+    // Same audit trail as recordDeployment's agentId, for the same reason.
+    agentId: agentId ? String(agentId) : null,
     sentAt: new Date().toISOString(),
   };
   venture.sentEmails.push(entry);

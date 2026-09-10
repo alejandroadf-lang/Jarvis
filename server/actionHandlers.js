@@ -18,6 +18,7 @@ import {
   recordOutreach,
   recordContactNote,
 } from './finance/ventures.js';
+import { recordContribution } from './finance/profitShare.js';
 import {
   sendVentureProposedEmail,
   sendDeploymentEmail,
@@ -40,8 +41,12 @@ async function notify(sendFn, ...args) {
   }
 }
 
-export async function handleProposeVenture(input) {
+export async function handleProposeVenture(input, ctx = {}) {
   const venture = createVenture(input);
+  // Recorded only after the underlying action actually succeeded — a failed
+  // one earns nothing. See finance/profitShare.js for why credit is never
+  // self-reported.
+  recordContribution({ agentId: ctx.agentId, kind: 'propose_venture', ventureId: venture.id, detail: venture.title });
   await notify(sendVentureProposedEmail, venture);
   return `Started venture ${venture.id} ("${venture.title}") — it's active now and the executive team can pick it up. It has no real-world reach yet: linking a repo or an outreach list is something the founder grants it from the Ventures panel.`;
 }
@@ -70,27 +75,40 @@ function resolveTransactionInput(input, defaultDescription) {
   return { amount, ventureId, description };
 }
 
-export async function handleLogRevenue(input) {
+// The one pair worth being careful about: these two write the ledger the
+// profit share is computed from, so an agent that books revenue is moving
+// the number it gets paid on. Two things make that safe rather than a
+// conflict of interest, and neither is a prompt: the amount has to come from
+// the founder reporting real money, and neither tool is wired into the
+// autonomous daily cycle (see dailyMeeting.js), so nothing unattended can
+// touch it. Credit here is weighted lowest of any action for the same
+// reason — booking the number should never out-earn doing the work.
+export async function handleLogRevenue(input, ctx = {}) {
   const resolved = resolveTransactionInput(input, 'Revenue');
   if (resolved.error) return `Could not log revenue: ${resolved.error}`;
 
   const { amount, ventureId, description } = resolved;
   addTransaction({ type: 'revenue', amount, description, ventureId });
+  recordContribution({ agentId: ctx.agentId, kind: 'log_revenue', ventureId, detail: description });
   const { revenue, net } = getLedger();
   return `Logged $${amount} in revenue${ventureId ? ` for venture ${ventureId}` : ''} ("${description}"). Revenue to date is now $${revenue.toFixed(2)}, net $${net.toFixed(2)}.`;
 }
 
-export async function handleLogExpense(input) {
+export async function handleLogExpense(input, ctx = {}) {
   const resolved = resolveTransactionInput(input, 'Expense');
   if (resolved.error) return `Could not log expense: ${resolved.error}`;
 
   const { amount, ventureId, description } = resolved;
   addTransaction({ type: 'expense', amount, description, ventureId });
+  // Logging an expense *shrinks* the pool, and it still earns credit. That's
+  // deliberate: an agent that's paid on net must not be quietly incentivised
+  // to leave costs unrecorded.
+  recordContribution({ agentId: ctx.agentId, kind: 'log_expense', ventureId, detail: description });
   const { expenses, net } = getLedger();
   return `Logged $${amount} in expenses${ventureId ? ` for venture ${ventureId}` : ''} ("${description}"). Expenses to date are now $${expenses.toFixed(2)}, net $${net.toFixed(2)}.`;
 }
 
-export async function handleReportMilestoneProgress(input) {
+export async function handleReportMilestoneProgress(input, ctx = {}) {
   const index = Number(input.milestoneIndex);
   if (!Number.isInteger(index) || index < 0) {
     return 'Could not update milestone: milestoneIndex must be a non-negative integer.';
@@ -101,15 +119,24 @@ export async function handleReportMilestoneProgress(input) {
   try {
     const venture = setMilestoneStatus(input.ventureId, index, input.status, input.note);
     const milestone = venture.milestones[index];
+    recordContribution({
+      agentId: ctx.agentId,
+      kind: 'report_milestone_progress',
+      ventureId: venture.id,
+      detail: `${milestone.title} → ${input.status}`,
+    });
     return `Marked milestone [${index}] "${milestone.title}" as ${input.status} for "${venture.title}".`;
   } catch (err) {
     return `Could not update milestone: ${err.message}`;
   }
 }
 
-export async function handleKillVenture(input) {
+export async function handleKillVenture(input, ctx = {}) {
   try {
     const venture = killVenture(input.ventureId, input.reason);
+    // Ending something that isn't working is real work, and pays — otherwise
+    // the only incentive the share creates is to keep every venture alive.
+    recordContribution({ agentId: ctx.agentId, kind: 'kill_venture', ventureId: venture.id, detail: venture.title });
     return `Killed "${venture.title}". Reason: ${venture.killReason}.`;
   } catch (err) {
     return `Could not kill venture: ${err.message}`;
@@ -128,7 +155,7 @@ export async function handleKillVenture(input) {
 // daily cycle passes 'daily_cycle' — see dailyMeeting.js), so the log
 // records which of the two actually fired without asking the agent to
 // self-report something it has no reason to get right.
-export async function handleDeployCode(input, triggeredBy = 'interactive') {
+export async function handleDeployCode(input, triggeredBy = 'interactive', ctx = {}) {
   const { ventureId, path, content, message, rationale } = input;
   if (!isGithubConfigured()) {
     return 'Could not deploy: this server has no GITHUB_TOKEN configured, so real deployments are unavailable.';
@@ -149,7 +176,8 @@ export async function handleDeployCode(input, triggeredBy = 'interactive') {
       content,
       message: message?.trim() || `Update ${path} for ${venture.title}`,
     });
-    recordDeployment(ventureId, { path, message, commitSha, commitUrl, rationale, triggeredBy });
+    recordDeployment(ventureId, { path, message, commitSha, commitUrl, rationale, triggeredBy, agentId: ctx.agentId });
+    recordContribution({ agentId: ctx.agentId, kind: 'deploy_code', ventureId, detail: path });
     await notify(sendDeploymentEmail, venture, { path, commitUrl, triggeredBy });
     return `Deployed a real commit to "${venture.title}"'s repo (${venture.repo.owner}/${venture.repo.name}, branch ${venture.repo.branch}): ${path}. Commit: ${commitUrl || commitSha}.`;
   } catch (err) {
@@ -162,7 +190,7 @@ export async function handleDeployCode(input, triggeredBy = 'interactive') {
 // configured, missing input, an out-of-scope recipient, a spent weekly
 // cap) before ever attempting a real send. Same caller-supplied
 // `triggeredBy` as handleDeployCode, for the same reason.
-export async function handleSendCustomerEmail(input, triggeredBy = 'interactive') {
+export async function handleSendCustomerEmail(input, triggeredBy = 'interactive', ctx = {}) {
   const { ventureId, to, subject, body } = input;
   if (!isEmailConfigured()) {
     return 'Could not send: this server has no email delivery configured, so real outreach is unavailable.';
@@ -180,7 +208,8 @@ export async function handleSendCustomerEmail(input, triggeredBy = 'interactive'
     const venture = authorizeOutreach(ventureId, { to });
     const sent = await sendCustomerEmail(to, subject, body);
     if (!sent) return 'Could not send: the email server rejected the send.';
-    recordOutreach(ventureId, { to, subject, body, triggeredBy });
+    recordOutreach(ventureId, { to, subject, body, triggeredBy, agentId: ctx.agentId });
+    recordContribution({ agentId: ctx.agentId, kind: 'send_customer_email', ventureId, detail: `to ${to}` });
     await notify(sendOutreachAlertEmail, venture, { to, subject, triggeredBy });
     return `Sent a real email to ${to} on behalf of "${venture.title}": "${subject}".`;
   } catch (err) {
@@ -192,9 +221,10 @@ export async function handleSendCustomerEmail(input, triggeredBy = 'interactive'
 // nothing leaves the building. It's the counterpart to send_customer_email:
 // what the agent learned, recorded where the next draft will actually see it
 // (see finance/context.js's buildOutreachContext).
-export async function handleLogContactNote(input) {
+export async function handleLogContactNote(input, ctx = {}) {
   try {
     const { note } = recordContactNote(input.ventureId, { email: input.email, note: input.note });
+    recordContribution({ agentId: ctx.agentId, kind: 'log_contact_note', ventureId: input.ventureId, detail: note.email });
     return `Noted against ${note.email}: "${note.note}". It'll be in the contact history before the next email to them is drafted.`;
   } catch (err) {
     return `Could not log the contact note: ${err.message}`;
