@@ -38,6 +38,14 @@ const FILE = 'profitShare.json';
 // Everything above this stays with the company.
 const DEFAULT_SHARE_PCT = 10;
 
+// A hard ceiling on the *whole* pool, not on any one agent's slice — at most
+// this much of net profit is ever shared, however AGENT_PROFIT_SHARE_PCT is
+// set. It's enforced here rather than left to whoever edits the env var,
+// because this is the one number in the system that decides how much of the
+// company's profit leaves it, and a fat-fingered 100 shouldn't be able to
+// give the entire thing away.
+export const MAX_SHARE_PCT = 20;
+
 // The kinds of work that earn credit. Each corresponds to something the
 // system observes succeeding, never to something an agent says it did.
 export const CONTRIBUTION_KINDS = {
@@ -62,9 +70,13 @@ export function sharePct() {
   // earn a cent, with no error anywhere to explain why.
   const raw = (process.env.AGENT_PROFIT_SHARE_PCT || '').trim();
   if (!raw) return DEFAULT_SHARE_PCT;
+
   const pct = Number(raw);
-  if (!Number.isFinite(pct) || pct < 0 || pct > 100) return DEFAULT_SHARE_PCT;
-  return pct;
+  // Garbage and negatives fall back to the default; a real number that's
+  // simply too high is clamped rather than rejected, since someone setting 50
+  // wants as much as they can have, not the default they didn't ask for.
+  if (!Number.isFinite(pct) || pct < 0) return DEFAULT_SHARE_PCT;
+  return Math.min(pct, MAX_SHARE_PCT);
 }
 
 function load() {

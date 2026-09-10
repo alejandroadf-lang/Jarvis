@@ -586,8 +586,8 @@ agent made which commit and sent which email.
 ### How it works
 
 `server/finance/profitShare.js` keeps an append-only log of contribution
-events. `AGENT_PROFIT_SHARE_PCT` (default **10%**) of **net profit** forms a
-pool, split by weighted contribution:
+events. `AGENT_PROFIT_SHARE_PCT` (default **10%**, hard-capped at **20%**) of
+**net profit** forms a pool, split by weighted contribution:
 
 | Action | Weight |
 | --- | --- |
@@ -599,6 +599,16 @@ pool, split by weighted contribution:
 Net, not revenue, so nothing is owed while the company is unprofitable — but
 weight keeps accruing, so the pool distributes the moment net turns positive
 without any retroactive backfill.
+
+The **20% cap is on the whole pool shared between all the agents**, not on
+any one agent's slice, and it's enforced in `sharePct()` rather than left to
+whoever edits the env var — this is the single number deciding how much of
+the company's profit leaves it, and a fat-fingered `100` shouldn't be able to
+give the entire thing away. A value above the cap is *clamped* (someone
+setting 50 wants as much as they can have), while something that isn't a
+usable percentage at all — a negative, a typo — falls back to the default,
+since silently reading a config mistake as the maximum would be the worst
+possible guess.
 
 A worked example. Revenue $2,000, expenses $500 → net $1,500 → a $150 pool:
 

@@ -122,13 +122,43 @@ test('booking revenue is weighted no higher than the cheapest real work', () => 
   assert.equal(revenue.weight, Math.min(...Object.values(profitShare.CONTRIBUTION_KINDS).map((k) => k.weight)));
 });
 
-test('the share percentage is configurable but cannot be set to nonsense', () => {
-  process.env.AGENT_PROFIT_SHARE_PCT = '25';
-  assert.equal(profitShare.sharePct(), 25);
-  for (const bad of ['-5', '150', 'lots', '']) {
+test('the share percentage is configurable within the cap', () => {
+  process.env.AGENT_PROFIT_SHARE_PCT = '15';
+  assert.equal(profitShare.sharePct(), 15);
+  process.env.AGENT_PROFIT_SHARE_PCT = '0';
+  assert.equal(profitShare.sharePct(), 0, 'the share can be switched off entirely');
+});
+
+// The ceiling is on the whole pool, not on any one agent's slice: at most
+// this much of net profit ever leaves the company.
+test('no configuration can share more than the cap', () => {
+  for (const over of ['20.1', '25', '50', '100', '1000']) {
+    process.env.AGENT_PROFIT_SHARE_PCT = over;
+    assert.equal(profitShare.sharePct(), profitShare.MAX_SHARE_PCT, `"${over}" should clamp to the cap`);
+  }
+  assert.equal(profitShare.MAX_SHARE_PCT, 20);
+});
+
+// Clamping is for numbers that are merely too big. Something that isn't a
+// usable percentage at all is a config mistake, and silently reading it as
+// the maximum would be the worst possible guess.
+test('garbage and negatives fall back to the default rather than the cap', () => {
+  for (const bad of ['-5', 'lots', '']) {
     process.env.AGENT_PROFIT_SHARE_PCT = bad;
     assert.equal(profitShare.sharePct(), 10, `"${bad}" should fall back to the default`);
   }
+});
+
+test('the cap holds all the way through to what is actually distributed', () => {
+  process.env.AGENT_PROFIT_SHARE_PCT = '90';
+  ledger.addTransaction({ type: 'revenue', amount: 1000, description: 'a sale' });
+  profitShare.recordContribution({ agentId: 'ceo', kind: 'deploy_code' });
+
+  const share = profitShare.getProfitShare();
+  assert.equal(share.sharePct, 20);
+  // 20% of $1000, not 90% — the company keeps at least four fifths of it.
+  assert.equal(share.poolUsd, 200);
+  assert.equal(share.agents[0].earnedUsd, 200);
 });
 
 test("an agent's own context states its position and the rules that bound it", () => {
