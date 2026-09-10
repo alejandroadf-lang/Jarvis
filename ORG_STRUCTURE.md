@@ -702,3 +702,60 @@ allowed paths, weekly cap), an enable/disable toggle, and a running log of
 every real deployment — timestamp, path, commit message, and a link to the
 actual commit — so the founder can audit exactly what an agent has shipped
 without leaving the app.
+
+## Real customer email: the second action that leaves the simulation
+
+Same escalation as real code deployment, applied to an actual outbound
+message instead of a commit: the Sales & Commercial Manager can send a
+real email to a real prospect or customer. It reuses the exact same
+scope-grant shape proven out by deployment, because the two actions share
+the same underlying question — "what's the smallest bounded box a founder
+can hand an agent so it can act without asking every time?" — and that
+box looks the same whether the real thing on the other side is a repo or
+an inbox.
+
+- **`linkOutreachScope(id, { allowedRecipients, maxPerWeek })`**
+  (`server/finance/ventures.js`) sets an allowlist of who a venture is
+  allowed to email — an exact address (`jane@acme.com`) or a whole domain
+  via a leading `@` (`@acme.com`) — plus a weekly send cap.
+- **`setOutreachEnabled(id, true)`** is the actual grant, kept as a
+  separate step from linking so the founder can review the recipient list
+  before switching it on — same two-step shape as deployment.
+- **`authorizeOutreach(id, { to })`** is the enforcement point: venture
+  must be active, a scope must be set up and enabled, the recipient must
+  match the allowlist, and the venture must be under its `maxPerWeek` cap
+  (computed from its own `sentEmails` log). Any violation throws a
+  specific reason rather than silently dropping the message.
+
+No new external service is needed — `server/email.js` already has a
+working SMTP transport for founder notifications (the daily report,
+tranche/proposal alerts). `sendCustomerEmail(to, subject, body)` is the
+same `sendEmail()` used everywhere else, just given a real recipient
+address instead of defaulting to `REPORT_EMAIL_TO`; `isEmailConfigured()`
+exposes the same `SMTP_HOST` + `REPORT_EMAIL_TO` gate every other email in
+this app already depends on, so there's no separate "is outreach enabled"
+server config to set up beyond the per-venture scope. If SMTP was never
+configured, this capability is simply unavailable — same fail-closed
+behavior as `deploy_code` without `GITHUB_TOKEN`.
+
+`handleSendCustomerEmail` (`server/actionHandlers.js`) checks
+configuration and input first, then `authorizeOutreach`, then sends via
+`sendCustomerEmail`, then `recordOutreach()`s the result and immediately
+emails the founder an audit copy (`sendOutreachAlertEmail`) — recipient
+and subject, not the full body, enough to know what went out without
+duplicating the whole message. Like the deployment alert, this reports
+something that already happened; there's nothing left to approve.
+
+`send_customer_email` follows the identical wiring rule as `deploy_code`:
+it's on the Sales & Commercial Manager, and it's only reachable from the
+interactive Executive Team chat — never the autonomous daily or weekly
+cycles, for the same reason stated above. Two real actions in, that rule
+is holding as the actual boundary of this app's autonomy, not a one-off
+decision made for deployment specifically: **anything that reaches a real
+external system stays inside a scope the founder explicitly granted, and
+still only fires while the founder is in the room.**
+
+The Ventures panel shows this scope right below the deployment one: set
+allowed recipients and a weekly cap, flip outreach on or off, and see a
+running log of every real email actually sent — timestamp, recipient, and
+subject — the same audit-first pattern as the deployment log.

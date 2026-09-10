@@ -19,6 +19,8 @@ import {
   killVenture,
   linkRepo,
   setDeploymentEnabled,
+  linkOutreachScope,
+  setOutreachEnabled,
 } from './finance/ventures.js';
 import { buildTreasuryContext, buildStudioContext } from './finance/context.js';
 import {
@@ -29,6 +31,7 @@ import {
   handleRequestTranche,
   handleKillVenture,
   handleDeployCode,
+  handleSendCustomerEmail,
 } from './actionHandlers.js';
 import { listDailyReports, getDailyReport, getLatestDailyReport } from './dailyReports.js';
 import { startDailyMeetingScheduler, runDailyMeetingNow, isDailyMeetingRunning } from './scheduler.js';
@@ -140,14 +143,16 @@ async function runCompanyTurn(sessionId, message) {
       report_milestone_progress: handleReportMilestoneProgress,
       request_tranche: handleRequestTranche,
       kill_venture: handleKillVenture,
-      // deploy_code is only wired in here, the interactive Executive Team
-      // chat — never into the autonomous daily/weekly cycles, which are
-      // deliberately barred from any real-world action (see dailyMeeting.js
-      // and weeklyReflection.js). A founder-granted scope (see
-      // finance/ventures.js's authorizeDeployment) means no separate
-      // per-deploy approval is needed here, but it still only fires during a
-      // conversation the founder is actually having, not an unattended run.
+      // deploy_code and send_customer_email are only wired in here, the
+      // interactive Executive Team chat — never into the autonomous
+      // daily/weekly cycles, which are deliberately barred from any
+      // real-world action (see dailyMeeting.js and weeklyReflection.js). A
+      // founder-granted scope (see finance/ventures.js's authorizeDeployment
+      // and authorizeOutreach) means no separate per-action approval is
+      // needed here, but it still only fires during a conversation the
+      // founder is actually having, not an unattended run.
       deploy_code: handleDeployCode,
+      send_customer_email: handleSendCustomerEmail,
     },
     extraContext: buildTreasuryContext(),
   });
@@ -436,6 +441,39 @@ app.post('/api/ventures/:id/deployment/enable', (req, res) => {
 app.post('/api/ventures/:id/deployment/disable', (req, res) => {
   try {
     const venture = setDeploymentEnabled(req.params.id, false);
+    res.json({ venture });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Real customer email (see finance/ventures.js, email.js, actionHandlers.js's
+// handleSendCustomerEmail): the same scope-grant shape as deployment above,
+// applied to outbound email instead of a commit — an allowlist of
+// recipients/domains and a weekly cap, set once and then enabled.
+app.post('/api/ventures/:id/outreach', (req, res) => {
+  const { id } = req.params;
+  const { allowedRecipients, maxPerWeek } = req.body || {};
+  try {
+    const venture = linkOutreachScope(id, { allowedRecipients, maxPerWeek });
+    res.json({ venture });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/ventures/:id/outreach/enable', (req, res) => {
+  try {
+    const venture = setOutreachEnabled(req.params.id, true);
+    res.json({ venture });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/ventures/:id/outreach/disable', (req, res) => {
+  try {
+    const venture = setOutreachEnabled(req.params.id, false);
     res.json({ venture });
   } catch (err) {
     res.status(400).json({ error: err.message });
