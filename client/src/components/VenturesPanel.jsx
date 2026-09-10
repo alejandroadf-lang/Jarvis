@@ -12,7 +12,58 @@ import {
   linkVentureOutreach,
   enableVentureOutreach,
   disableVentureOutreach,
+  fetchKillSwitch,
+  haltRealActions,
+  resumeRealActions,
+  fetchSpend,
 } from '../api/chat.js';
+
+function formatUsd(amount) {
+  if (amount > 0 && amount < 0.01) return `$${amount.toFixed(4)}`;
+  return `$${amount.toFixed(2)}`;
+}
+
+// One control that stops every venture at once. Deliberately the first thing
+// in the panel and the loudest thing on screen when engaged: the whole point
+// is that it's reachable without hunting through per-venture settings.
+function KillSwitch({ state, onHalt, onResume, busy }) {
+  if (!state) return null;
+
+  if (state.halted) {
+    return (
+      <div className="border border-red-500/50 bg-red-950/30 rounded-lg p-3 mb-4">
+        <p className="text-[11px] uppercase tracking-wide text-red-400 font-semibold">All real actions halted</p>
+        <p className="text-[11px] text-red-300/80 mt-1">{state.reason}</p>
+        {state.changedAt && (
+          <p className="text-[10px] text-red-300/50 mt-1">Since {new Date(state.changedAt).toLocaleString()}</p>
+        )}
+        {state.envLocked ? (
+          <p className="text-[10px] text-red-300/60 mt-2">
+            Locked by the server environment — unset REAL_ACTIONS_DISABLED and restart to resume.
+          </p>
+        ) : (
+          <button
+            onClick={onResume}
+            disabled={busy}
+            className="mt-2 text-xs border border-red-500/40 text-red-300 hover:text-red-200 disabled:opacity-40 rounded-full px-3 py-1"
+          >
+            Resume real actions
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <button
+      onClick={onHalt}
+      disabled={busy}
+      className="w-full mb-4 text-xs border border-red-500/30 text-red-400/80 hover:text-red-300 hover:border-red-500/50 disabled:opacity-40 rounded-lg px-3 py-2"
+    >
+      Halt all real actions
+    </button>
+  );
+}
 
 function StatusBadge({ status }) {
   const styles = {
@@ -62,6 +113,7 @@ function DeploymentScope({ venture, onLinkRepo, onEnable, onDisable, busy }) {
   const [branch, setBranch] = useState('main');
   const [allowedPaths, setAllowedPaths] = useState('');
   const [maxPerWeek, setMaxPerWeek] = useState('3');
+  const [maxPerDay, setMaxPerDay] = useState('1');
 
   const repo = venture.repo;
   const inputClass =
@@ -78,6 +130,7 @@ function DeploymentScope({ venture, onLinkRepo, onEnable, onDisable, busy }) {
         .map((p) => p.trim())
         .filter(Boolean),
       maxPerWeek: Number(maxPerWeek) || 3,
+      maxPerDay: Number(maxPerDay) || 1,
     });
     setShowForm(false);
   };
@@ -89,7 +142,7 @@ function DeploymentScope({ venture, onLinkRepo, onEnable, onDisable, busy }) {
         <>
           <p className="text-[11px] text-cyan-500/60 mt-1">
             {repo.owner}/{repo.name} ({repo.branch}) · paths: {repo.allowedPaths.join(', ') || 'none set'} · cap{' '}
-            {repo.maxPerWeek}/week
+            {repo.maxPerDay || 1}/day, {repo.maxPerWeek}/week
           </p>
           <div className="flex items-center gap-2 mt-1">
             <span className={`text-[10px] ${repo.enabled ? 'text-emerald-400/80' : 'text-cyan-500/50'}`}>
@@ -141,14 +194,24 @@ function DeploymentScope({ venture, onLinkRepo, onEnable, onDisable, busy }) {
             placeholder="allowed paths, comma separated"
             className={inputClass}
           />
-          <input
-            value={maxPerWeek}
-            onChange={(e) => setMaxPerWeek(e.target.value)}
-            type="number"
-            min="1"
-            placeholder="max deploys/week"
-            className={inputClass}
-          />
+          <div className="flex gap-1">
+            <input
+              value={maxPerDay}
+              onChange={(e) => setMaxPerDay(e.target.value)}
+              type="number"
+              min="1"
+              placeholder="max/day"
+              className={inputClass}
+            />
+            <input
+              value={maxPerWeek}
+              onChange={(e) => setMaxPerWeek(e.target.value)}
+              type="number"
+              min="1"
+              placeholder="max/week"
+              className={inputClass}
+            />
+          </div>
           <div className="flex gap-2">
             <button
               type="submit"
@@ -179,6 +242,7 @@ function OutreachScope({ venture, onLinkOutreach, onEnable, onDisable, busy }) {
   const [showForm, setShowForm] = useState(false);
   const [allowedRecipients, setAllowedRecipients] = useState('');
   const [maxPerWeek, setMaxPerWeek] = useState('5');
+  const [maxPerDay, setMaxPerDay] = useState('1');
 
   const outreach = venture.outreach;
   const inputClass =
@@ -192,6 +256,7 @@ function OutreachScope({ venture, onLinkOutreach, onEnable, onDisable, busy }) {
         .map((r) => r.trim())
         .filter(Boolean),
       maxPerWeek: Number(maxPerWeek) || 5,
+      maxPerDay: Number(maxPerDay) || 1,
     });
     setShowForm(false);
   };
@@ -202,7 +267,8 @@ function OutreachScope({ venture, onLinkOutreach, onEnable, onDisable, busy }) {
       {outreach ? (
         <>
           <p className="text-[11px] text-cyan-500/60 mt-1">
-            allowed: {outreach.allowedRecipients.join(', ') || 'none set'} · cap {outreach.maxPerWeek}/week
+            allowed: {outreach.allowedRecipients.join(', ') || 'none set'} · cap {outreach.maxPerDay || 1}/day,{' '}
+            {outreach.maxPerWeek}/week
           </p>
           <div className="flex items-center gap-2 mt-1">
             <span className={`text-[10px] ${outreach.enabled ? 'text-emerald-400/80' : 'text-cyan-500/50'}`}>
@@ -242,14 +308,24 @@ function OutreachScope({ venture, onLinkOutreach, onEnable, onDisable, busy }) {
             placeholder="allowed recipients, comma separated (e.g. someone@acme.com, @acme.com)"
             className={inputClass}
           />
-          <input
-            value={maxPerWeek}
-            onChange={(e) => setMaxPerWeek(e.target.value)}
-            type="number"
-            min="1"
-            placeholder="max emails/week"
-            className={inputClass}
-          />
+          <div className="flex gap-1">
+            <input
+              value={maxPerDay}
+              onChange={(e) => setMaxPerDay(e.target.value)}
+              type="number"
+              min="1"
+              placeholder="max/day"
+              className={inputClass}
+            />
+            <input
+              value={maxPerWeek}
+              onChange={(e) => setMaxPerWeek(e.target.value)}
+              type="number"
+              min="1"
+              placeholder="max/week"
+              className={inputClass}
+            />
+          </div>
           <div className="flex gap-2">
             <button
               type="submit"
@@ -365,14 +441,18 @@ function VentureCard({
 export default function VenturesPanel({ sessionId, reloadKey, onGreenlit }) {
   const [ledger, setLedger] = useState(null);
   const [ventures, setVentures] = useState([]);
+  const [killSwitch, setKillSwitch] = useState(null);
+  const [spend, setSpend] = useState(null);
   const [busyId, setBusyId] = useState(null);
   const [error, setError] = useState(null);
 
   const load = useCallback(() => {
-    Promise.all([fetchLedger(), fetchVentures()])
-      .then(([l, v]) => {
+    Promise.all([fetchLedger(), fetchVentures(), fetchKillSwitch(), fetchSpend()])
+      .then(([l, v, k, s]) => {
         setLedger(l);
         setVentures(v);
+        setKillSwitch(k);
+        setSpend(s);
       })
       .catch((err) => setError(err.message));
   }, []);
@@ -476,6 +556,32 @@ export default function VenturesPanel({ sessionId, reloadKey, onGreenlit }) {
     }
   };
 
+  const handleHalt = async () => {
+    const reason = window.prompt('Why are you halting all real actions?');
+    if (reason === null) return; // cancelled
+    setBusyId('kill-switch');
+    setError(null);
+    try {
+      setKillSwitch(await haltRealActions(reason));
+    } catch (err) {
+      setError(err.response?.data?.error || err.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleResume = async () => {
+    setBusyId('kill-switch');
+    setError(null);
+    try {
+      setKillSwitch(await resumeRealActions());
+    } catch (err) {
+      setError(err.response?.data?.error || err.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const handleLinkOutreach = async (id, outreachConfig) => {
     setBusyId(id);
     setError(null);
@@ -527,11 +633,24 @@ export default function VenturesPanel({ sessionId, reloadKey, onGreenlit }) {
 
   return (
     <div className="p-4 border-t border-cyan-500/20">
+      <KillSwitch
+        state={killSwitch}
+        onHalt={handleHalt}
+        onResume={handleResume}
+        busy={busyId === 'kill-switch'}
+      />
+
       <h2 className="text-xs font-semibold uppercase tracking-wide text-cyan-300 mb-2">Treasury</h2>
       <p className="text-2xl font-semibold text-cyan-100">
         ${ledger.balance.toFixed(0)}
         <span className="text-xs text-cyan-500/50 font-normal"> / ${ledger.startingCapital} seed</span>
       </p>
+      {spend && (
+        <p className={`text-[11px] mt-1 ${spend.overCap ? 'text-red-400/80' : 'text-cyan-500/50'}`}>
+          Agent spend today: {formatUsd(spend.spentUsd)} / {formatUsd(spend.capUsd)} cap
+          {spend.overCap && ' — model calls paused until the UTC day rolls over'}
+        </p>
+      )}
 
       {proposed.length === 0 && active.length === 0 && (
         <p className="text-[11px] text-cyan-500/50 mt-3">

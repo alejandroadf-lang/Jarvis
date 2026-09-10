@@ -192,6 +192,64 @@ test('recordDeployment records triggeredBy as daily_cycle when told to, and norm
   assert.equal(bogus.entry.triggeredBy, 'interactive');
 });
 
+test('authorizeDeployment enforces the daily cap before the weekly one is anywhere near spent', () => {
+  const v = makeVenture();
+  ventures.activateVenture(v.id);
+  ventures.linkRepo(v.id, { owner: 'acme', name: 'landing', allowedPaths: ['content/'], maxPerWeek: 5, maxPerDay: 2 });
+  ventures.setDeploymentEnabled(v.id, true);
+
+  // Two today, well under the weekly cap of 5 — but the daily cap is 2.
+  ventures.recordDeployment(v.id, { path: 'content/a.md' });
+  ventures.recordDeployment(v.id, { path: 'content/b.md' });
+
+  assert.throws(() => ventures.authorizeDeployment(v.id, { path: 'content/c.md' }), /Daily deployment cap reached \(2\/day\)/);
+});
+
+test('a venture linked without a daily cap defaults to one real action per day', () => {
+  const v = makeVenture();
+  ventures.activateVenture(v.id);
+  ventures.linkRepo(v.id, { owner: 'acme', name: 'landing', allowedPaths: ['content/'], maxPerWeek: 5 });
+  ventures.setDeploymentEnabled(v.id, true);
+
+  assert.equal(ventures.getVenture(v.id).repo.maxPerDay, 1);
+  ventures.recordDeployment(v.id, { path: 'content/a.md' });
+  assert.throws(() => ventures.authorizeDeployment(v.id, { path: 'content/b.md' }), /Daily deployment cap reached \(1\/day\)/);
+});
+
+test('a daily cap above the weekly cap is clamped, since it could never bind', () => {
+  const v = makeVenture();
+  ventures.linkRepo(v.id, { owner: 'acme', name: 'landing', allowedPaths: ['content/'], maxPerWeek: 2, maxPerDay: 99 });
+  assert.equal(ventures.getVenture(v.id).repo.maxPerDay, 2);
+});
+
+test('the cooldown blocks a second real action fired seconds after the first', () => {
+  const v = makeVenture();
+  ventures.activateVenture(v.id);
+  ventures.linkRepo(v.id, { owner: 'acme', name: 'landing', allowedPaths: ['content/'], maxPerWeek: 9, maxPerDay: 9 });
+  ventures.setDeploymentEnabled(v.id, true);
+
+  ventures.recordDeployment(v.id, { path: 'content/a.md' });
+  assert.throws(() => ventures.authorizeDeployment(v.id, { path: 'content/b.md' }), /cooldown between real actions/);
+});
+
+test('an action from outside the cooldown window is allowed again', () => {
+  const v = makeVenture();
+  ventures.activateVenture(v.id);
+  ventures.linkRepo(v.id, { owner: 'acme', name: 'landing', allowedPaths: ['content/'], maxPerWeek: 9, maxPerDay: 9 });
+  ventures.setDeploymentEnabled(v.id, true);
+  ventures.recordDeployment(v.id, { path: 'content/a.md' });
+
+  // Backdate the entry on disk past the cooldown, but well inside both caps'
+  // windows — so the only thing that could still block is the cooldown.
+  const file = path.join(tmpDir, 'ventures.json');
+  const data = JSON.parse(fs.readFileSync(file, 'utf-8'));
+  const stored = data.ventures.find((venture) => venture.id === v.id);
+  stored.deployments[0].deployedAt = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+  fs.writeFileSync(file, JSON.stringify(data, null, 2));
+
+  assert.doesNotThrow(() => ventures.authorizeDeployment(v.id, { path: 'content/b.md' }));
+});
+
 test('authorizeOutreach refuses an inactive venture, an unset scope, and a disabled scope', () => {
   const v = makeVenture();
   assert.throws(() => ventures.authorizeOutreach(v.id, { to: 'x@acme.com' }), /must be active/);
@@ -247,6 +305,31 @@ test('recordOutreach appends to the sent-email log with a timestamp', () => {
   assert.equal(entry.subject, 'Following up');
   assert.ok(entry.sentAt);
   assert.equal(entry.triggeredBy, 'interactive'); // default when not specified
+});
+
+test('the global halt overrides a fully-granted scope for both real actions', async () => {
+  const killSwitch = await import('../killSwitch.js');
+
+  const v = makeVenture();
+  ventures.activateVenture(v.id);
+  ventures.linkRepo(v.id, { owner: 'acme', name: 'landing', allowedPaths: ['content/'] });
+  ventures.setDeploymentEnabled(v.id, true);
+  ventures.linkOutreachScope(v.id, { allowedRecipients: ['@acme.com'] });
+  ventures.setOutreachEnabled(v.id, true);
+
+  // Both would be authorized on their own merits.
+  assert.doesNotThrow(() => ventures.authorizeDeployment(v.id, { path: 'content/a.md' }));
+  assert.doesNotThrow(() => ventures.authorizeOutreach(v.id, { to: 'jane@acme.com' }));
+
+  killSwitch.haltRealActions('stop everything');
+  try {
+    assert.throws(() => ventures.authorizeDeployment(v.id, { path: 'content/a.md' }), /halted/);
+    assert.throws(() => ventures.authorizeOutreach(v.id, { to: 'jane@acme.com' }), /halted/);
+  } finally {
+    killSwitch.resumeRealActions();
+  }
+
+  assert.doesNotThrow(() => ventures.authorizeDeployment(v.id, { path: 'content/a.md' }));
 });
 
 test('recordOutreach records triggeredBy as daily_cycle when told to, and normalizes anything else to interactive', () => {

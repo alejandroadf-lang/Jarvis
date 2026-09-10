@@ -99,8 +99,15 @@ export async function killVenture(ventureId, reason) {
   return data; // { venture }
 }
 
-export async function linkVentureRepo(ventureId, { owner, name, branch, allowedPaths, maxPerWeek }) {
-  const { data } = await axios.post(`/api/ventures/${ventureId}/repo`, { owner, name, branch, allowedPaths, maxPerWeek });
+export async function linkVentureRepo(ventureId, { owner, name, branch, allowedPaths, maxPerWeek, maxPerDay }) {
+  const { data } = await axios.post(`/api/ventures/${ventureId}/repo`, {
+    owner,
+    name,
+    branch,
+    allowedPaths,
+    maxPerWeek,
+    maxPerDay,
+  });
   return data; // { venture }
 }
 
@@ -114,9 +121,29 @@ export async function disableVentureDeployment(ventureId) {
   return data; // { venture }
 }
 
-export async function linkVentureOutreach(ventureId, { allowedRecipients, maxPerWeek }) {
-  const { data } = await axios.post(`/api/ventures/${ventureId}/outreach`, { allowedRecipients, maxPerWeek });
+export async function linkVentureOutreach(ventureId, { allowedRecipients, maxPerWeek, maxPerDay }) {
+  const { data } = await axios.post(`/api/ventures/${ventureId}/outreach`, { allowedRecipients, maxPerWeek, maxPerDay });
   return data; // { venture }
+}
+
+export async function fetchKillSwitch() {
+  const { data } = await axios.get('/api/kill-switch');
+  return data; // { halted, reason, changedAt, envLocked }
+}
+
+export async function haltRealActions(reason) {
+  const { data } = await axios.post('/api/kill-switch/halt', { reason });
+  return data;
+}
+
+export async function resumeRealActions() {
+  const { data } = await axios.post('/api/kill-switch/resume');
+  return data;
+}
+
+export async function fetchSpend() {
+  const { data } = await axios.get('/api/spend');
+  return data; // { spentUsd, capUsd, date, overCap }
 }
 
 export async function enableVentureOutreach(ventureId) {

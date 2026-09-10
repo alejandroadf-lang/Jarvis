@@ -35,6 +35,8 @@ import {
 } from './actionHandlers.js';
 import { listDailyReports, getDailyReport, getLatestDailyReport } from './dailyReports.js';
 import { startDailyMeetingScheduler, runDailyMeetingNow, isDailyMeetingRunning } from './scheduler.js';
+import { getKillSwitch, haltRealActions, resumeRealActions } from './killSwitch.js';
+import { getSpendSummary } from './spend.js';
 import { listWeeklyReflections, getWeeklyReflection, getLatestWeeklyReflection } from './weeklyReflections.js';
 import { startWeeklyReflectionScheduler, runWeeklyReflectionNow, isWeeklyReflectionRunning } from './weeklyScheduler.js';
 
@@ -124,6 +126,17 @@ app.post('/api/reset', (req, res) => {
   res.json({ ok: true });
 });
 
+// A spend-cap refusal (see spend.js) is a deliberate, actionable stop with a
+// message worth reading — not a failure to reach the model, which is what a
+// generic 502 would tell the founder.
+function sendAgentError(res, err, fallbackMessage) {
+  if (typeof err?.message === 'string' && err.message.startsWith('Daily spend cap reached')) {
+    return res.status(429).json({ error: err.message });
+  }
+  console.error(fallbackMessage, err);
+  return res.status(502).json({ error: fallbackMessage });
+}
+
 app.get('/api/company/org-chart', (_req, res) => {
   res.json({ rootAgentId: COMPANY_ROOT, agents: listAgents(COMPANY_AGENTS) });
 });
@@ -182,8 +195,7 @@ app.post('/api/company/chat', async (req, res) => {
     const { reply, trace } = await runCompanyTurn(sessionId, message);
     res.json({ reply, trace });
   } catch (err) {
-    console.error('Company agent error:', err);
-    res.status(502).json({ error: 'Failed to reach the executive team' });
+    sendAgentError(res, err, 'Failed to reach the executive team');
   }
 });
 
@@ -230,8 +242,7 @@ app.post('/api/studio/chat', async (req, res) => {
 
     res.json({ reply: text, trace });
   } catch (err) {
-    console.error('Studio agent error:', err);
-    res.status(502).json({ error: 'Failed to reach the venture studio' });
+    sendAgentError(res, err, 'Failed to reach the venture studio');
   }
 });
 
@@ -423,9 +434,9 @@ app.post('/api/ventures/:id/kill', (req, res) => {
 // active conversation with the Engineering Lead can later act inside.
 app.post('/api/ventures/:id/repo', (req, res) => {
   const { id } = req.params;
-  const { owner, name, branch, allowedPaths, maxPerWeek } = req.body || {};
+  const { owner, name, branch, allowedPaths, maxPerWeek, maxPerDay } = req.body || {};
   try {
-    const venture = linkRepo(id, { owner, name, branch, allowedPaths, maxPerWeek });
+    const venture = linkRepo(id, { owner, name, branch, allowedPaths, maxPerWeek, maxPerDay });
     res.json({ venture });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -450,15 +461,43 @@ app.post('/api/ventures/:id/deployment/disable', (req, res) => {
   }
 });
 
+// The global halt (see killSwitch.js): one control that overrides every
+// venture's own scope at once, flippable at runtime because an emergency
+// shouldn't require a redeploy. Enforcement is inside authorizeDeployment
+// and authorizeOutreach, so these endpoints only set state — nothing here
+// needs to reach into individual ventures.
+app.get('/api/kill-switch', (_req, res) => {
+  res.json(getKillSwitch());
+});
+
+app.post('/api/kill-switch/halt', (req, res) => {
+  const { reason } = req.body || {};
+  res.json(haltRealActions(reason));
+});
+
+app.post('/api/kill-switch/resume', (_req, res) => {
+  try {
+    res.json(resumeRealActions());
+  } catch (err) {
+    res.status(409).json({ error: err.message });
+  }
+});
+
+// Today's model spend against the daily ceiling agentRunner.js enforces
+// before every paid call (see spend.js).
+app.get('/api/spend', (_req, res) => {
+  res.json(getSpendSummary());
+});
+
 // Real customer email (see finance/ventures.js, email.js, actionHandlers.js's
 // handleSendCustomerEmail): the same scope-grant shape as deployment above,
 // applied to outbound email instead of a commit — an allowlist of
 // recipients/domains and a weekly cap, set once and then enabled.
 app.post('/api/ventures/:id/outreach', (req, res) => {
   const { id } = req.params;
-  const { allowedRecipients, maxPerWeek } = req.body || {};
+  const { allowedRecipients, maxPerWeek, maxPerDay } = req.body || {};
   try {
-    const venture = linkOutreachScope(id, { allowedRecipients, maxPerWeek });
+    const venture = linkOutreachScope(id, { allowedRecipients, maxPerWeek, maxPerDay });
     res.json({ venture });
   } catch (err) {
     res.status(400).json({ error: err.message });
