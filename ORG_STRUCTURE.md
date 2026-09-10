@@ -810,3 +810,37 @@ lands as a real, recorded deployment when a venture's scope is enabled;
 another proves the same for `send_customer_email`; a third proves
 `log_revenue` still resolves as an unknown tool there, confirming the
 boundary didn't quietly widen further than intended.
+
+## Knowing who was watching: `triggeredBy` on every real action
+
+Once `deploy_code` and `send_customer_email` could fire from two different
+places, the deployment and outreach logs had a gap: a log entry recorded
+*what* happened but not whether a founder was actually present when it
+did. That distinction is now the single most useful fact about any real
+action in this app, so it's recorded directly rather than left to infer
+from context.
+
+`recordDeployment()` and `recordOutreach()` (`server/finance/ventures.js`)
+both take a `triggeredBy` field, normalized to exactly `'interactive'` or
+`'daily_cycle'` — anything else collapses to `'interactive'` rather than
+storing an unrecognized value. `handleDeployCode` and
+`handleSendCustomerEmail` (`server/actionHandlers.js`) accept it as a
+second argument the model never sets and never sees; it's supplied by
+whichever caller wires the handler in — `index.js`'s interactive chat
+passes `'interactive'`, `dailyMeeting.js`'s leadership sync passes
+`'daily_cycle'` — so the tag reflects which code path actually ran, not
+something an agent could get wrong by describing its own actions
+inaccurately.
+
+It surfaces in both places a founder would look: the alert email
+(`describeTrigger()` in `server/email.js` renders it as a plain sentence —
+"a live Executive Team conversation" or "the unattended daily leadership
+sync — nobody was watching when this happened") and the Ventures panel's
+deployment/outreach logs, where a `daily_cycle` entry gets a visible
+"unattended daily cycle" tag next to it
+(`client/src/components/VenturesPanel.jsx`) rather than looking identical
+to one from a live conversation. Nothing about this changes what's
+allowed to happen — `authorizeDeployment` and `authorizeOutreach` enforce
+the same scope regardless of the source — it only makes the already-real
+consequences of "Full autonomy" (above) something a founder can actually
+audit at a glance instead of having to reconstruct from timestamps.

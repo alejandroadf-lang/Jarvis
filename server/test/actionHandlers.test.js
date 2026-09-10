@@ -160,6 +160,32 @@ test('handleDeployCode commits within scope and records the deployment', async (
     const updated = ventures.getVenture(v.id);
     assert.equal(updated.deployments.length, 1);
     assert.equal(updated.deployments[0].commitSha, 'sha1');
+    assert.equal(updated.deployments[0].triggeredBy, 'interactive'); // default when no second arg is passed
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('handleDeployCode records triggeredBy as daily_cycle when called with that explicit second argument', async () => {
+  process.env.GITHUB_TOKEN = 'test-token';
+  const originalFetch = global.fetch;
+  global.fetch = async (url, options) => {
+    if (options?.method === undefined) return { ok: false, status: 404, text: async () => '' };
+    return { ok: true, json: async () => ({ commit: { sha: 'sha2', html_url: 'https://github.com/acme/landing/commit/sha2' } }) };
+  };
+
+  try {
+    const v = makeActiveVenture();
+    ventures.linkRepo(v.id, { owner: 'acme', name: 'landing', allowedPaths: ['content/'] });
+    ventures.setDeploymentEnabled(v.id, true);
+
+    await actionHandlers.handleDeployCode(
+      { ventureId: v.id, path: 'content/home.md', content: '# hi', message: 'm' },
+      'daily_cycle'
+    );
+
+    const updated = ventures.getVenture(v.id);
+    assert.equal(updated.deployments[0].triggeredBy, 'daily_cycle');
   } finally {
     global.fetch = originalFetch;
   }
@@ -258,6 +284,32 @@ test(
       const updated = ventures.getVenture(v.id);
       assert.equal(updated.sentEmails.length, 1);
       assert.equal(updated.sentEmails[0].to, 'jane@acme.com');
+      assert.equal(updated.sentEmails[0].triggeredBy, 'interactive'); // default when no second arg is passed
+    } finally {
+      mockedTransport.mock.restore();
+    }
+  })
+);
+
+test(
+  'handleSendCustomerEmail records triggeredBy as daily_cycle when called with that explicit second argument',
+  withSmtpConfigured(async () => {
+    const mockedTransport = mock.method(nodemailer, 'createTransport', () => ({
+      sendMail: async () => {},
+    }));
+
+    try {
+      const v = makeActiveVenture();
+      ventures.linkOutreachScope(v.id, { allowedRecipients: ['@acme.com'] });
+      ventures.setOutreachEnabled(v.id, true);
+
+      await actionHandlers.handleSendCustomerEmail(
+        { ventureId: v.id, to: 'jane@acme.com', subject: 'Hi', body: 'Body' },
+        'daily_cycle'
+      );
+
+      const updated = ventures.getVenture(v.id);
+      assert.equal(updated.sentEmails[0].triggeredBy, 'daily_cycle');
     } finally {
       mockedTransport.mock.restore();
     }

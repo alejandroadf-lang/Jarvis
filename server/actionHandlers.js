@@ -140,7 +140,13 @@ export async function handleKillVenture(input) {
 // is fail-closed: no GITHUB_TOKEN, no repo link, deployments not enabled, an
 // out-of-scope path, or a spent weekly cap all return a plain refusal
 // instead of attempting a partial or best-effort commit.
-export async function handleDeployCode(input) {
+//
+// `triggeredBy` isn't part of the tool's own input_schema — the model never
+// sets it. It's supplied by the caller (index.js passes 'interactive', the
+// daily cycle passes 'daily_cycle' — see dailyMeeting.js), so the log
+// records which of the two actually fired without asking the agent to
+// self-report something it has no reason to get right.
+export async function handleDeployCode(input, triggeredBy = 'interactive') {
   const { ventureId, path, content, message, rationale } = input;
   if (!isGithubConfigured()) {
     return 'Could not deploy: this server has no GITHUB_TOKEN configured, so real deployments are unavailable.';
@@ -161,8 +167,8 @@ export async function handleDeployCode(input) {
       content,
       message: message?.trim() || `Update ${path} for ${venture.title}`,
     });
-    recordDeployment(ventureId, { path, message, commitSha, commitUrl, rationale });
-    await notify(sendDeploymentEmail, venture, { path, commitUrl });
+    recordDeployment(ventureId, { path, message, commitSha, commitUrl, rationale, triggeredBy });
+    await notify(sendDeploymentEmail, venture, { path, commitUrl, triggeredBy });
     return `Deployed a real commit to "${venture.title}"'s repo (${venture.repo.owner}/${venture.repo.name}, branch ${venture.repo.branch}): ${path}. Commit: ${commitUrl || commitSha}.`;
   } catch (err) {
     return `Could not deploy: ${err.message}`;
@@ -172,8 +178,9 @@ export async function handleDeployCode(input) {
 // The second action reaching a real, live system outside the simulation —
 // same shape as handleDeployCode: fail-closed on every check (SMTP not
 // configured, missing input, an out-of-scope recipient, a spent weekly
-// cap) before ever attempting a real send.
-export async function handleSendCustomerEmail(input) {
+// cap) before ever attempting a real send. Same caller-supplied
+// `triggeredBy` as handleDeployCode, for the same reason.
+export async function handleSendCustomerEmail(input, triggeredBy = 'interactive') {
   const { ventureId, to, subject, body } = input;
   if (!isEmailConfigured()) {
     return 'Could not send: this server has no email delivery configured, so real outreach is unavailable.';
@@ -191,8 +198,8 @@ export async function handleSendCustomerEmail(input) {
     const venture = authorizeOutreach(ventureId, { to });
     const sent = await sendCustomerEmail(to, subject, body);
     if (!sent) return 'Could not send: the email server rejected the send.';
-    recordOutreach(ventureId, { to, subject, body });
-    await notify(sendOutreachAlertEmail, venture, { to, subject });
+    recordOutreach(ventureId, { to, subject, body, triggeredBy });
+    await notify(sendOutreachAlertEmail, venture, { to, subject, triggeredBy });
     return `Sent a real email to ${to} on behalf of "${venture.title}": "${subject}".`;
   } catch (err) {
     return `Could not send: ${err.message}`;

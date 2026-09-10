@@ -240,7 +240,13 @@ export function authorizeDeployment(id, { path }) {
   return venture;
 }
 
-export function recordDeployment(id, { path, message, commitSha, commitUrl, rationale }) {
+// `triggeredBy` records whether a real deploy happened during a live
+// conversation ('interactive') or the unattended daily cycle
+// ('daily_cycle') — see dailyMeeting.js's "Full autonomy" note. This is the
+// one fact the allowlist/cap don't capture on their own: now that both
+// paths can produce the exact same kind of entry, knowing which one fired
+// matters for anyone reviewing the log after the fact.
+export function recordDeployment(id, { path, message, commitSha, commitUrl, rationale, triggeredBy }) {
   const data = load();
   const venture = findOrThrow(data, id);
   venture.deployments = venture.deployments || [];
@@ -250,6 +256,7 @@ export function recordDeployment(id, { path, message, commitSha, commitUrl, rati
     commitSha: String(commitSha || ''),
     commitUrl: String(commitUrl || ''),
     rationale: String(rationale || ''),
+    triggeredBy: triggeredBy === 'daily_cycle' ? 'daily_cycle' : 'interactive',
     deployedAt: new Date().toISOString(),
   };
   venture.deployments.push(entry);
@@ -324,7 +331,9 @@ export function authorizeOutreach(id, { to }) {
   return venture;
 }
 
-export function recordOutreach(id, { to, subject, body }) {
+// Same `triggeredBy` distinction as recordDeployment — which of the two
+// paths that can now both send this exact kind of real email actually did.
+export function recordOutreach(id, { to, subject, body, triggeredBy }) {
   const data = load();
   const venture = findOrThrow(data, id);
   venture.sentEmails = venture.sentEmails || [];
@@ -332,6 +341,7 @@ export function recordOutreach(id, { to, subject, body }) {
     to: String(to),
     subject: String(subject || ''),
     body: String(body || ''),
+    triggeredBy: triggeredBy === 'daily_cycle' ? 'daily_cycle' : 'interactive',
     sentAt: new Date().toISOString(),
   };
   venture.sentEmails.push(entry);

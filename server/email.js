@@ -137,7 +137,17 @@ export async function sendWeeklyReflectionEmail(reflection) {
 // Unlike the other alerts here, this one reports something that already
 // happened to a real, external system, not a pending decision — the
 // founder can't approve or deny it after the fact, only know about it.
-export function formatDeploymentEmail(venture, { path, commitUrl }) {
+// The daily cycle can now trigger the same real actions a live
+// conversation can (see dailyMeeting.js's "Full autonomy" note) — this
+// line is how the founder tells the two apart without opening the Ventures
+// panel's log.
+function describeTrigger(triggeredBy) {
+  return triggeredBy === 'daily_cycle'
+    ? 'the unattended daily leadership sync — nobody was watching when this happened'
+    : 'a live Executive Team conversation';
+}
+
+export function formatDeploymentEmail(venture, { path, commitUrl, triggeredBy }) {
   const subject = `Real deploy: "${venture.title}" — ${path}`;
   const text = [
     `The Engineering Lead deployed a real change to "${venture.title}"'s repo.`,
@@ -145,6 +155,7 @@ export function formatDeploymentEmail(venture, { path, commitUrl }) {
     `Repo: ${venture.repo.owner}/${venture.repo.name} (${venture.repo.branch})`,
     `File: ${path}`,
     commitUrl ? `Commit: ${commitUrl}` : null,
+    `Triggered by: ${describeTrigger(triggeredBy)}`,
     '',
     'Review it from the Ventures panel if you want to see the full deployment log.',
   ]
@@ -169,13 +180,14 @@ export async function sendCustomerEmail(to, subject, body) {
 // Reports something that already happened to a real person outside the
 // simulation, same as formatDeploymentEmail — nothing left to approve or
 // deny after the fact, just an audit trail landing in the founder's inbox.
-export function formatOutreachAlertEmail(venture, { to, subject }) {
+export function formatOutreachAlertEmail(venture, { to, subject, triggeredBy }) {
   const alertSubject = `Real email sent: "${venture.title}" -> ${to}`;
   const text = [
     `The Sales & Commercial Manager sent a real email on behalf of "${venture.title}".`,
     '',
     `To: ${to}`,
     `Subject: ${subject}`,
+    `Triggered by: ${describeTrigger(triggeredBy)}`,
     '',
     'Review it from the Ventures panel if you want to see the full outreach log.',
   ].join('\n');

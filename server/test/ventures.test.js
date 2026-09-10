@@ -177,6 +177,19 @@ test('recordDeployment appends to the deployment log with a timestamp', () => {
   assert.equal(entry.path, 'content/home.md');
   assert.equal(entry.commitSha, 'abc123');
   assert.ok(entry.deployedAt);
+  assert.equal(entry.triggeredBy, 'interactive'); // default when not specified
+});
+
+test('recordDeployment records triggeredBy as daily_cycle when told to, and normalizes anything else to interactive', () => {
+  const v = makeVenture();
+  ventures.activateVenture(v.id);
+  ventures.linkRepo(v.id, { owner: 'acme', name: 'landing', allowedPaths: ['content/'] });
+
+  const daily = ventures.recordDeployment(v.id, { path: 'content/a.md', triggeredBy: 'daily_cycle' });
+  assert.equal(daily.entry.triggeredBy, 'daily_cycle');
+
+  const bogus = ventures.recordDeployment(v.id, { path: 'content/b.md', triggeredBy: 'something_else' });
+  assert.equal(bogus.entry.triggeredBy, 'interactive');
 });
 
 test('authorizeOutreach refuses an inactive venture, an unset scope, and a disabled scope', () => {
@@ -233,4 +246,17 @@ test('recordOutreach appends to the sent-email log with a timestamp', () => {
   assert.equal(entry.to, 'jane@acme.com');
   assert.equal(entry.subject, 'Following up');
   assert.ok(entry.sentAt);
+  assert.equal(entry.triggeredBy, 'interactive'); // default when not specified
+});
+
+test('recordOutreach records triggeredBy as daily_cycle when told to, and normalizes anything else to interactive', () => {
+  const v = makeVenture();
+  ventures.activateVenture(v.id);
+  ventures.linkOutreachScope(v.id, { allowedRecipients: ['@acme.com'] });
+
+  const daily = ventures.recordOutreach(v.id, { to: 'a@acme.com', triggeredBy: 'daily_cycle' });
+  assert.equal(daily.entry.triggeredBy, 'daily_cycle');
+
+  const bogus = ventures.recordOutreach(v.id, { to: 'b@acme.com', triggeredBy: 'something_else' });
+  assert.equal(bogus.entry.triggeredBy, 'interactive');
 });

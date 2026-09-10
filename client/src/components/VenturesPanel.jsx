@@ -120,6 +120,9 @@ function DeploymentScope({ venture, onLinkRepo, onEnable, onDisable, busy }) {
                     ) : (
                       d.message || 'commit'
                     )}
+                    {d.triggeredBy === 'daily_cycle' && (
+                      <span className="text-amber-400/70"> · unattended daily cycle</span>
+                    )}
                   </li>
                 ))}
             </ul>
@@ -223,6 +226,9 @@ function OutreachScope({ venture, onLinkOutreach, onEnable, onDisable, busy }) {
                 .map((e, i) => (
                   <li key={i} className="text-[10px] text-cyan-500/50">
                     {new Date(e.sentAt).toLocaleString()} · to {e.to} — {e.subject || 'no subject'}
+                    {e.triggeredBy === 'daily_cycle' && (
+                      <span className="text-amber-400/70"> · unattended daily cycle</span>
+                    )}
                   </li>
                 ))}
             </ul>

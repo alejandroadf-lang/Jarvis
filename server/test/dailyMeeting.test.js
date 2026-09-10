@@ -113,6 +113,7 @@ test('deploy_code actually fires during the unattended leadership sync for a ven
     const updated = ventures.getVenture(v.id);
     assert.equal(updated.deployments.length, 1);
     assert.equal(updated.deployments[0].commitSha, 'sha1');
+    assert.equal(updated.deployments[0].triggeredBy, 'daily_cycle');
   } finally {
     global.fetch = originalFetch;
     if (savedToken !== undefined) process.env.GITHUB_TOKEN = savedToken;
@@ -157,6 +158,7 @@ test('send_customer_email actually fires during the unattended leadership sync f
     const updated = ventures.getVenture(v.id);
     assert.equal(updated.sentEmails.length, 1);
     assert.equal(updated.sentEmails[0].to, 'jane@acme.com');
+    assert.equal(updated.sentEmails[0].triggeredBy, 'daily_cycle');
   } finally {
     mockedTransport.mock.restore();
     if (savedHost !== undefined) process.env.SMTP_HOST = savedHost;

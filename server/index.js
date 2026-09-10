@@ -151,8 +151,11 @@ async function runCompanyTurn(sessionId, message) {
       // one here specifically. Every other treasury/venture action stays
       // interactive-only, since those depend on the founder having actually
       // reported a real outcome — see dailyMeeting.js's file header.
-      deploy_code: handleDeployCode,
-      send_customer_email: handleSendCustomerEmail,
+      // 'interactive' is the triggeredBy tag recorded on the venture's
+      // deployment/outreach log — see dailyMeeting.js for the 'daily_cycle'
+      // counterpart.
+      deploy_code: (input) => handleDeployCode(input, 'interactive'),
+      send_customer_email: (input) => handleSendCustomerEmail(input, 'interactive'),
     },
     extraContext: buildTreasuryContext(),
   });
