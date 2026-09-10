@@ -126,6 +126,15 @@ export async function resumeRealActions() {
   return data;
 }
 
+// Which optional integrations are actually live. The OpenRouter and Honcho
+// entries are real probes server-side, so this is slower than a plain read —
+// worth it, since both fail silently and this is the only place a bad key
+// becomes visible without reading deploy logs.
+export async function fetchIntegrations() {
+  const { data } = await axios.get('/api/integrations');
+  return data;
+}
+
 export async function fetchSpend() {
   const { data } = await axios.get('/api/spend');
   return data; // { spentUsd, capUsd, date, overCap }

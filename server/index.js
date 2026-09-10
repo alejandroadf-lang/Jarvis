@@ -35,6 +35,7 @@ import { listDailyReports, getDailyReport, getLatestDailyReport } from './dailyR
 import { startDailyMeetingScheduler, runDailyMeetingNow, isDailyMeetingRunning } from './scheduler.js';
 import { getKillSwitch, haltRealActions, resumeRealActions } from './killSwitch.js';
 import { getSpendSummary } from './spend.js';
+import { getIntegrationStatus } from './integrations.js';
 import { listWeeklyReflections, getWeeklyReflection, getLatestWeeklyReflection } from './weeklyReflections.js';
 import { startWeeklyReflectionScheduler, runWeeklyReflectionNow, isWeeklyReflectionRunning } from './weeklyScheduler.js';
 
@@ -418,6 +419,20 @@ app.post('/api/kill-switch/resume', (_req, res) => {
 // before every paid call (see spend.js).
 app.get('/api/spend', (_req, res) => {
   res.json(getSpendSummary());
+});
+
+// Which optional integrations are actually live. Every one of them fails
+// quietly by design, so without this the only way to tell a working key from
+// a typo is to read deploy logs. The OpenRouter and Honcho entries are real
+// probes, not just an env-var check — see integrations.js.
+app.get('/api/integrations', async (_req, res) => {
+  try {
+    res.json(await getIntegrationStatus());
+  } catch (err) {
+    // getIntegrationStatus already catches per-probe failures, so reaching
+    // here means something unexpected — still no reason to 500 a diagnostic.
+    res.status(500).json({ error: `Couldn't read integration status: ${err.message}` });
+  }
 });
 
 // Real customer email (see finance/ventures.js, email.js, actionHandlers.js's
