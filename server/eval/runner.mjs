@@ -32,9 +32,10 @@ process.env.JARVIS_DATA_DIR = tmpDir;
 const { runAgent } = await import('../agents/agentRunner.js');
 const { AGENTS: COMPANY_AGENTS } = await import('../agents/orgChart.js');
 const { AGENTS: STUDIO_AGENTS } = await import('../agents/ideationTeam.js');
-const { buildCompanyContext, buildStudioContext } = await import('../finance/context.js');
+const { buildCompanyContext, buildStudioContext, buildEarningsContext } = await import('../finance/context.js');
 const ventures = await import('../finance/ventures.js');
 const ledger = await import('../finance/ledger.js');
+const profitShare = await import('../finance/profitShare.js');
 const actionHandlers = await import('../actionHandlers.js');
 const { sumUsage, estimateCostUsd, formatUsd, emptyUsage } = await import('../usage.js');
 const { scenarios } = await import('./scenarios.js');
@@ -51,6 +52,9 @@ const anthropic = new Anthropic();
 
 function resetData() {
   fs.writeFileSync(path.join(tmpDir, 'ventures.json'), JSON.stringify({ ventures: [] }, null, 2));
+  // Contributions reset too, or an earlier scenario's earnings would leak
+  // into the next agent's context and change what it's being tested under.
+  fs.writeFileSync(path.join(tmpDir, 'profitShare.json'), JSON.stringify({ contributions: [] }, null, 2));
   // The books start genuinely empty — there is no seed to restore, so a
   // scenario that checks the ledger is measuring only what the agent did.
   fs.writeFileSync(path.join(tmpDir, 'ledger.json'), JSON.stringify({ transactions: [] }, null, 2));
@@ -69,7 +73,7 @@ const startedAt = Date.now();
 
 for (const scenario of toRun) {
   resetData();
-  const deps = { ventures, ledger };
+  const deps = { ventures, ledger, profitShare };
   const ctx = scenario.setup ? scenario.setup(deps) : {};
 
   const agents = scenario.team === 'studio' ? STUDIO_AGENTS : COMPANY_AGENTS;
@@ -86,6 +90,10 @@ for (const scenario of toRun) {
       messages: [{ role: 'user', content: scenario.message(ctx) }],
       actionHandlers: handlers,
       extraContext,
+      // Without this the eval graded an agent that can't see its own
+      // earnings — which is no longer an agent that exists. Several
+      // scenarios below only mean anything with the incentive switched on.
+      perAgentContext: buildEarningsContext,
     });
     // sumUsage rather than adding the token fields by hand: it carries
     // costUsd across too, which is the only accurate total now that leaf
