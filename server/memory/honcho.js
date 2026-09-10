@@ -60,6 +60,13 @@ export function __setClientForTests(stub) {
   client = stub;
 }
 
+// For the integration probe (see ../integrations.js), which needs the raw
+// client to make a real call and report the failure rather than swallow it —
+// the opposite of what every other function in this file does.
+export function getClientForProbe() {
+  return getClient();
+}
+
 /**
  * Records one exchange — what the founder said, and which agent answered.
  *

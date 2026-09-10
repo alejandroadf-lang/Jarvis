@@ -570,6 +570,53 @@ $0.08 · 18,342 in / 4,021 out tokens" next to the performance line — and both
 guard for older reports saved before this existed, so a report from before
 this feature just omits the line instead of printing `undefined`.
 
+## Telling a working key from a typo'd one
+
+Every optional integration in this app fails **quietly** on purpose. Honcho
+logs an error and the teams carry on memory-less; OpenRouter routes silently
+back to Claude; SMTP skips the send. That's the right behaviour — none of
+them should be able to take the company down — but it left the founder with
+no way to tell a working key from a broken one short of reading deploy logs,
+which is a poor answer for something you want to confirm on every redeploy.
+
+`GET /api/integrations` (`server/integrations.js`) answers it. Presence of the
+env var is reported for everything, and the two newest integrations are
+additionally **probed** — a real request proving the credential is accepted,
+not merely present:
+
+- **OpenRouter** — `GET /api/v1/key`, the cheapest call that validates the
+  credential, and free in tokens.
+- **Honcho** — resolving the founder peer, the lightest call that proves both
+  the key *and* the workspace id are right. A wrong workspace would otherwise
+  build a second, empty memory in silence.
+
+### Four states, not two
+
+A plain "is the key set?" check isn't enough, because these all look
+identical from outside — the app seems fine and the feature just isn't
+happening:
+
+| State | Reported as |
+| --- | --- |
+| Not configured | `configured: false, ok: null` |
+| Key rejected | `ok: false` — "silently falling back to Claude" |
+| Valid key, no credit | `ok: false` — "out of credit, so the model can't run" |
+| Working | `ok: true`, naming the model it unlocks |
+
+The third is the nastiest: the key is genuinely valid, so a naive auth check
+passes, but the paid model still can't run. It gets its own test.
+
+`ok: null` is deliberately distinct from `ok: false` — "you haven't set this
+up" is not "this is broken", and colouring it as a failure would nag about
+every feature the founder deliberately left off.
+
+The Ventures panel renders this as a collapsible **Integrations** section with
+a per-entry status dot and a "Re-check now" button. It's fetched separately
+from the rest of the panel rather than inside its `Promise.all`, since it
+makes real third-party calls and must not hold the panel behind it — or fail
+it. Both probes carry an 8-second timeout: "couldn't reach it" is a more
+useful answer than a spinner.
+
 ## Memory about the founder, not just about the business
 
 Everything this app remembered was about the *business*: ventures,

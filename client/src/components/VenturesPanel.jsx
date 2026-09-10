@@ -13,6 +13,7 @@ import {
   haltRealActions,
   resumeRealActions,
   fetchSpend,
+  fetchIntegrations,
 } from '../api/chat.js';
 
 function formatUsd(amount) {
@@ -23,6 +24,71 @@ function formatUsd(amount) {
 // One control that stops every venture at once. Deliberately the first thing
 // in the panel and the loudest thing on screen when engaged: the whole point
 // is that it's reachable without hunting through per-venture settings.
+const INTEGRATION_LABELS = {
+  anthropic: 'Claude',
+  openrouter: 'OpenRouter (specialist agents)',
+  honcho: 'Honcho (founder memory)',
+  email: 'Email',
+  github: 'GitHub',
+};
+
+// Three states, not two. `ok === null` means "nothing to verify" — either the
+// integration was never set up, or it's one that fails loudly at the point of
+// use and needs no probe. Colouring that as a failure would nag about every
+// feature the founder deliberately hasn't turned on.
+function statusDot(entry) {
+  if (entry.ok === true) return { color: 'bg-emerald-400', title: 'Working' };
+  if (entry.ok === false) return { color: 'bg-red-400', title: 'Not working' };
+  return { color: entry.configured ? 'bg-cyan-400/60' : 'bg-cyan-500/20', title: entry.configured ? 'Set' : 'Not set' };
+}
+
+function Integrations({ status, onRefresh, busy }) {
+  const [open, setOpen] = useState(false);
+  if (!status) return null;
+
+  const broken = Object.values(status).filter((entry) => entry.ok === false).length;
+
+  return (
+    <div className="mb-4 border border-cyan-500/20 rounded-lg">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between px-3 py-2 text-[11px] uppercase tracking-wide text-cyan-300"
+      >
+        <span>Integrations</span>
+        <span className={broken ? 'text-red-400' : 'text-cyan-500/50'}>
+          {broken > 0 ? `${broken} not working` : 'all good'} {open ? '▾' : '▸'}
+        </span>
+      </button>
+
+      {open && (
+        <div className="px-3 pb-3 space-y-2">
+          {Object.entries(status).map(([key, entry]) => {
+            const dot = statusDot(entry);
+            return (
+              <div key={key} className="flex gap-2">
+                <span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${dot.color}`} title={dot.title} />
+                <div className="min-w-0">
+                  <p className="text-[11px] text-cyan-100/90">{INTEGRATION_LABELS[key] || key}</p>
+                  <p className={`text-[11px] ${entry.ok === false ? 'text-red-400/80' : 'text-cyan-500/50'}`}>
+                    {entry.detail}
+                  </p>
+                </div>
+              </div>
+            );
+          })}
+          <button
+            onClick={onRefresh}
+            disabled={busy}
+            className="text-[11px] text-cyan-400/80 hover:text-cyan-300 disabled:opacity-40 underline"
+          >
+            {busy ? 'Checking…' : 'Re-check now'}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function KillSwitch({ state, onHalt, onResume, busy }) {
   if (!state) return null;
 
@@ -428,6 +494,8 @@ export default function VenturesPanel({ reloadKey }) {
   const [ventures, setVentures] = useState([]);
   const [killSwitch, setKillSwitch] = useState(null);
   const [spend, setSpend] = useState(null);
+  const [integrations, setIntegrations] = useState(null);
+  const [checkingIntegrations, setCheckingIntegrations] = useState(false);
   const [busyId, setBusyId] = useState(null);
   const [error, setError] = useState(null);
 
@@ -440,6 +508,23 @@ export default function VenturesPanel({ reloadKey }) {
         setSpend(s);
       })
       .catch((err) => setError(err.message));
+    // Kept out of the Promise.all above on purpose: it makes real network
+    // calls to two third parties, so it's slower than the rest and must not
+    // hold the whole panel behind it — or fail it.
+    fetchIntegrations()
+      .then(setIntegrations)
+      .catch(() => {});
+  }, []);
+
+  const recheckIntegrations = useCallback(async () => {
+    setCheckingIntegrations(true);
+    try {
+      setIntegrations(await fetchIntegrations());
+    } catch {
+      // The panel keeps showing the last known state rather than blanking.
+    } finally {
+      setCheckingIntegrations(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -576,6 +661,8 @@ export default function VenturesPanel({ reloadKey }) {
 
   return (
     <div className="p-4 border-t border-cyan-500/20">
+      <Integrations status={integrations} onRefresh={recheckIntegrations} busy={checkingIntegrations} />
+
       <KillSwitch
         state={killSwitch}
         onHalt={handleHalt}
