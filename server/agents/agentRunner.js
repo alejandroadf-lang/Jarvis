@@ -26,6 +26,7 @@ import { getAgent } from './registry.js';
 import { assertUnderDailyCap, recordSpend } from '../spend.js';
 import { priceUsage, emptyUsage } from '../usage.js';
 import { resolveModelForAgent } from './models.js';
+import { recordContribution } from '../finance/profitShare.js';
 import { isOpenRouterConfigured, createCompletion } from './openrouter.js';
 
 const MAX_TOKENS = 1024;
@@ -220,6 +221,16 @@ export async function runAgent({
           });
           resultText = sub.text;
           trace.push({ id: report.id, title: report.title, department: report.department, depth: depth + 1 });
+          // Credit the specialist for answering — but only if it actually
+          // said something. A consult that errored or came back empty is not
+          // work, and the catch below means a failed one never reaches here.
+          if (resultText && resultText.trim()) {
+            recordContribution({
+              agentId: report.id,
+              kind: 'consulted',
+              detail: `consulted by ${agent.id}`,
+            });
+          }
         } catch (err) {
           resultText = `(Could not reach ${toolUse.name}: ${err.message})`;
         }

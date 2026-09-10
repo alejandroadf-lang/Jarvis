@@ -57,6 +57,19 @@ export const CONTRIBUTION_KINDS = {
   log_revenue: { label: 'Booked revenue the founder reported', weight: 1 },
   log_expense: { label: 'Booked an expense the founder reported', weight: 1 },
   kill_venture: { label: 'Ended a venture', weight: 2 },
+  // Without this, 18 of the 24 agents could never earn anything: credit came
+  // only from action tools, and a specialist doesn't have one. Every
+  // researcher, analyst and critic on the bench was told it had a stake in a
+  // pool it was structurally unable to touch, which is worse than not
+  // telling it at all — the ideation team in particular exists entirely to
+  // be consulted.
+  //
+  // Weighted lowest deliberately. Answering when asked is real work, but it
+  // must not out-earn doing the thing, and it's the one kind of credit a
+  // manager could hand out freely — so it's cheap, capped by the runner's
+  // own MAX_ROUNDS, and paid for out of the same daily model-spend budget
+  // that bounds everything else.
+  consulted: { label: 'Gave a specialist opinion when consulted', weight: 1 },
 };
 
 // Weights are deliberately flat-ish. A wider spread would make the highest

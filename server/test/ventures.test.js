@@ -364,3 +364,19 @@ test('recordOutreach records triggeredBy as daily_cycle when told to, and normal
   const bogus = ventures.recordOutreach(v.id, { to: 'b@acme.com', triggeredBy: 'something_else' });
   assert.equal(bogus.entry.triggeredBy, 'interactive');
 });
+
+// The studio's whole premise: an idea has to name why an agent-run company
+// wins at it. It's a required field on propose_venture, so it has to survive
+// into the stored venture — otherwise execution loses the reason the thing
+// was started.
+test('a venture records why an agent-run company wins at it', () => {
+  const v = makeVenture({ agentNativeEdge: 'Per-customer bespoke reports at a price no staffed firm can serve.' });
+  assert.match(ventures.getVenture(v.id).agentNativeEdge, /no staffed firm can serve/);
+});
+
+test('a venture created without that reasoning stores an empty string, not undefined', () => {
+  // Older ventures predate the field; they should read as blank rather than
+  // putting "undefined" in front of an agent.
+  const v = makeVenture();
+  assert.equal(ventures.getVenture(v.id).agentNativeEdge, '');
+});

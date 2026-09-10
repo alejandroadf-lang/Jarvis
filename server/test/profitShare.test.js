@@ -210,3 +210,60 @@ test('the weekly reflection remains entirely read-only', async () => {
   const source = fs.readFileSync(new URL('../weeklyReflection.js', import.meta.url), 'utf-8');
   assert.match(source, /actionHandlers:\s*\{\s*\}/, 'the weekly reflection must pass an empty handler map');
 });
+
+// Being consulted is how most of this company's agents do their work. Credit
+// only came from action tools, so 18 of the 24 agents — the entire ideation
+// bench included — were told they had a stake in a pool they could never
+// touch. These pin the fix.
+test('a consulted specialist earns credit for answering', async () => {
+  const { runAgent } = await import('../agents/agentRunner.js');
+
+  const AGENTS = {
+    boss: {
+      id: 'boss',
+      title: 'Boss',
+      department: 'Test',
+      reportsTo: null,
+      reports: ['specialist'],
+      systemPrompt: 'You are the boss.',
+      toolDescription: 'Consult the boss.',
+    },
+    specialist: {
+      id: 'specialist',
+      title: 'Specialist',
+      department: 'Test',
+      reportsTo: 'boss',
+      reports: [],
+      systemPrompt: 'You are a specialist.',
+      toolDescription: 'Consult the specialist.',
+    },
+  };
+
+  const responses = [
+    {
+      stop_reason: 'tool_use',
+      content: [{ type: 'tool_use', id: 't1', name: 'consult_specialist', input: { task: 'what do you think?' } }],
+      usage: { input_tokens: 10, output_tokens: 5 },
+    },
+    { stop_reason: 'end_turn', content: [{ type: 'text', text: 'A considered opinion.' }], usage: { input_tokens: 10, output_tokens: 5 } },
+    { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Here is the answer.' }], usage: { input_tokens: 10, output_tokens: 5 } },
+  ];
+  let i = 0;
+  const anthropic = { messages: { create: async () => responses[i++] } };
+
+  await runAgent({ anthropic, agents: AGENTS, agentId: 'boss', messages: [{ role: 'user', content: 'go' }] });
+
+  const earned = profitShare.listContributions('specialist');
+  assert.equal(earned.length, 1, 'the consulted specialist should have earned credit');
+  assert.equal(earned[0].kind, 'consulted');
+  assert.match(earned[0].detail, /consulted by boss/);
+  // The manager earns nothing for delegating — otherwise the cheapest way to
+  // get paid would be to ask someone else to do the work.
+  assert.equal(profitShare.listContributions('boss').length, 0);
+});
+
+test('being consulted is weighted below every action that produces something', () => {
+  const { consulted, deploy_code: deploy, propose_venture: propose } = profitShare.CONTRIBUTION_KINDS;
+  assert.ok(consulted.weight < deploy.weight);
+  assert.ok(consulted.weight < propose.weight);
+});

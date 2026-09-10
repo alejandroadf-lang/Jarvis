@@ -570,6 +570,75 @@ $0.08 · 18,342 in / 4,021 out tokens" next to the performance line — and both
 guard for older reports saved before this existed, so a report from before
 this feature just omits the line instead of printing `undefined`.
 
+## Ideas a company without payroll can actually win
+
+The studio's ambition bar asked whether an idea was *big*. It never asked the
+question that makes this particular company interesting: **why would an
+agent-run company win at this?**
+
+Without that filter, a studio with no payroll mostly finds cheaper versions
+of ordinary businesses — and a funded team with real staff will out-execute
+you on any of them. The premise is different: no payroll doesn't just make
+normal businesses cheaper to run, it puts a different set of businesses
+within reach. The ones worth the company's attention are those that were
+previously **impossible** rather than merely expensive.
+
+So `propose_venture` now *requires* an `agentNativeEdge`, alongside
+`marketSize` and `pathToMillions` — the Venture Partner structurally cannot
+log an idea without naming the advantage. What counts:
+
+- **Labour that costs cents rather than salaries**, making a price point or a
+  long tail viable that nobody could afford to staff. This is the big one.
+- **Always-on** — responding in seconds at 3am is normal, not a night shift.
+- **Parallelism** — a thousand instances on a thousand customers is a
+  configuration choice, not a hiring plan.
+- **Bespoke work at volume**, where the human version only ever penciled out
+  as a template.
+- **Perfect recall and consistency**, where people drift.
+
+And what disqualifies an idea outright rather than merely making it harder:
+anything physical; anything needing a licence, a signature, or a person who
+can be held liable; relationship-led selling and long enterprise
+procurement; holding money or acting as a legal entity.
+
+The failure mode the whole filter exists to catch is *"a normal software
+company, except the staff are agents."* That isn't an edge. The
+`agentNativeEdge` field says so explicitly, and the **Validation Critic** has
+a third standing job on top of feasibility and ambition: challenge the
+agent-native claim, and treat "it's cheaper for us" as a non-answer, because
+a well-funded competitor can absorb that and beat us everywhere else.
+
+The brief is appended to **every** agent in `ideationTeam.js` by a loop
+rather than pasted into six prompts, so a specialist added later inherits it
+instead of quietly brainstorming for a company that doesn't exist. The
+Executive Team deliberately doesn't get it — it executes what the studio
+decided, and re-litigating the premise mid-build isn't its job. The stored
+`agentNativeEdge` does travel into the shared context, so execution stays
+pointed at the same edge that justified starting the venture.
+
+## Paying the agents who don't have hands
+
+A flaw that shipped with the profit share and was caught the same day: credit
+came only from action tools, and most agents don't have one. **18 of the 24
+agents could never earn a cent** — every researcher, analyst, architect and
+critic, including the entire ideation bench — while all 24 were told they
+had a stake. Telling an agent it has a share of a pool it is structurally
+unable to touch is worse than not telling it at all.
+
+Being consulted *is* the work for most of this org chart, so `agentRunner`
+now records a `consulted` contribution when a delegated agent returns
+substantive text. Three details matter:
+
+- **Only if it actually answered.** An empty or errored consult earns
+  nothing, and the failure path never reaches the recording call.
+- **The manager earns nothing for delegating.** Otherwise the cheapest way to
+  get paid would be to ask someone else to do the work.
+- **It's weighted lowest**, tied with filing a note. Answering when asked is
+  real work, but it must not out-earn doing the thing — and it's the one kind
+  of credit a manager could hand out freely, so it's cheap, bounded by the
+  runner's `MAX_ROUNDS`, and paid for out of the same daily model-spend
+  budget that caps everything else.
+
 ## Every agent earns a share of what the company makes
 
 The founder's framing: *"every single agent wins a percentage once we start

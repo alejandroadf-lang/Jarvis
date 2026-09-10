@@ -63,6 +63,7 @@ export function createVenture({
   businessModel,
   marketSize,
   pathToMillions,
+  agentNativeEdge,
   milestones,
 }) {
   const data = load();
@@ -75,6 +76,12 @@ export function createVenture({
     businessModel: String(businessModel || ''),
     marketSize: String(marketSize || ''),
     pathToMillions: String(pathToMillions || ''),
+    // Why an agent-run company wins at this specifically. Required by the
+    // propose_venture tool, so it's the studio's answer rather than a
+    // rationalisation added later — and it's read back into every agent's
+    // context so execution stays pointed at the same edge that justified
+    // starting it.
+    agentNativeEdge: String(agentNativeEdge || ''),
     milestones: normalizeMilestones(milestones),
     status: 'active',
     createdAt: new Date().toISOString(),
