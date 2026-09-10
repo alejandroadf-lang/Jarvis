@@ -570,6 +570,57 @@ $0.08 · 18,342 in / 4,021 out tokens" next to the performance line — and both
 guard for older reports saved before this existed, so a report from before
 this feature just omits the line instead of printing `undefined`.
 
+## Memory about the founder, not just about the business
+
+Everything this app remembered was about the *business*: ventures,
+milestones, killed ideas, who Sales has emailed. Nothing was ever about the
+person running it — so every conversation started cold on the one subject
+that never changes.
+
+It's also worth noticing the shape of the existing memory. Each store is a
+flat JSON list read back verbatim, and each one therefore carries an
+arbitrary cap: five notes per contact, one weekly reflection, the last N
+turns of history. A cap is what you reach for when you can't retrieve the
+*relevant* memory, only the most recent few.
+
+[Honcho](https://honcho.dev/) is built for that gap. Participants are
+**peers**, conversations are **sessions**, and it derives a representation of
+a peer from their messages asynchronously — which you then query in natural
+language. `server/memory/honcho.js` maps the founder to a peer, each chat
+mode to a session (namespaced `company-` / `studio-`, since the founder
+behaves differently in each room), and attributes each turn to two peers
+rather than one transcript: the founder, and the agent that actually
+answered. The CEO and the Venture Partner are different voices, and keeping
+them apart is what lets Honcho tell them apart later.
+
+Two things then use it:
+
+- **`buildFounderContext()`** joins the business context on every Executive
+  Team and Venture Studio turn, wrapped in framing that keeps it as context
+  on how the founder thinks — explicitly *not* as instructions, and never as
+  a substitute for what they're asking for right now.
+- **`askAboutFounder()`** answers the kind of question a JSON list
+  structurally cannot: "what has the founder consistently pushed back on?"
+  has no key to look up.
+
+### Three properties, in priority order
+
+**It's opt-in.** No `HONCHO_API_KEY`, no calls, no behaviour change anywhere.
+
+**It's never load-bearing.** Recording is fire-and-forget — the reply is
+already final, and the founder shouldn't wait on a memory write to see it.
+Recall failures return an empty string, which every caller concatenates into
+a system prompt, so "unconfigured", "nothing learned yet" and "the service is
+down" all degrade to the same correct no-op. A memory outage taking down the
+executive team would be a much worse failure than having no memory at all,
+and a test asserts each function against exactly the failures it can actually
+hit.
+
+**Nothing there is a source of truth.** Ventures, the ledger and the outreach
+log stay in `server/data/`. This is an additional lens on the founder, not a
+second copy of the business — so losing the Honcho workspace costs the
+company its recall, never its records.
+
 ## Mixed-model routing: paying frontier prices only where they buy something
 
 With the capital model gone, model spend is the company's only real

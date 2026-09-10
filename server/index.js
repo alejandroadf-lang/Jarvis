@@ -20,6 +20,7 @@ import {
   setOutreachEnabled,
 } from './finance/ventures.js';
 import { buildCompanyContext, buildStudioContext } from './finance/context.js';
+import { recordExchange, buildFounderContext } from './memory/honcho.js';
 import {
   handleProposeVenture,
   handleLogRevenue,
@@ -138,9 +139,31 @@ app.get('/api/company/org-chart', (_req, res) => {
   res.json({ rootAgentId: COMPANY_ROOT, agents: listAgents(COMPANY_AGENTS) });
 });
 
+// Honcho sessions are namespaced per chat mode so the Executive Team and
+// the Venture Studio don't read as one rambling conversation — they're
+// different rooms, and the founder behaves differently in each.
+function companySessionKey(sessionId) {
+  return `company-${sessionId}`;
+}
+
+function studioSessionKey(sessionId) {
+  return `studio-${sessionId}`;
+}
+
+// buildFounderContext returns '' whenever Honcho is unconfigured or quiet,
+// so this keeps the prompt free of the trailing blank lines that would
+// otherwise appear on every single turn.
+function joinContext(...parts) {
+  return parts.filter((part) => part && part.trim()).join('\n\n');
+}
+
 async function runCompanyTurn(sessionId, message) {
   const history = companySessions.get(sessionId) || [];
   const workingMessages = [...history, { role: 'user', content: message }];
+  // Awaited because it shapes the prompt, but it can only ever return a
+  // string — buildFounderContext swallows its own failures (see
+  // memory/honcho.js) rather than taking the turn down.
+  const founderContext = await buildFounderContext(companySessionKey(sessionId));
 
   const { text, trace } = await runAgent({
     anthropic,
@@ -169,7 +192,7 @@ async function runCompanyTurn(sessionId, message) {
       // the building (see actionHandlers.js).
       log_contact_note: handleLogContactNote,
     },
-    extraContext: buildCompanyContext(),
+    extraContext: joinContext(buildCompanyContext(), founderContext),
   });
 
   history.push({ role: 'user', content: message });
@@ -177,6 +200,15 @@ async function runCompanyTurn(sessionId, message) {
   const trimmed = history.slice(-MAX_TURNS);
   companySessions.set(sessionId, trimmed);
   saveSession('company', sessionId, trimmed);
+
+  // Not awaited: the reply is already final, and the founder shouldn't wait
+  // on a memory write to see it.
+  recordExchange({
+    sessionKey: companySessionKey(sessionId),
+    founderMessage: message,
+    agentId: COMPANY_ROOT,
+    agentReply: text,
+  });
 
   return { reply: text, trace };
 }
@@ -224,13 +256,14 @@ app.post('/api/studio/chat', async (req, res) => {
   const workingMessages = [...history, { role: 'user', content: message }];
 
   try {
+    const founderContext = await buildFounderContext(studioSessionKey(sessionId));
     const { text, trace } = await runAgent({
       anthropic,
       agents: STUDIO_AGENTS,
       agentId: STUDIO_ROOT,
       messages: workingMessages,
       actionHandlers: { propose_venture: handleProposeVenture },
-      extraContext: buildStudioContext(),
+      extraContext: joinContext(buildStudioContext(), founderContext),
     });
 
     history.push({ role: 'user', content: message });
@@ -238,6 +271,13 @@ app.post('/api/studio/chat', async (req, res) => {
     const trimmed = history.slice(-MAX_TURNS);
     studioSessions.set(sessionId, trimmed);
     saveSession('studio', sessionId, trimmed);
+
+    recordExchange({
+      sessionKey: studioSessionKey(sessionId),
+      founderMessage: message,
+      agentId: STUDIO_ROOT,
+      agentReply: text,
+    });
 
     res.json({ reply: text, trace });
   } catch (err) {
