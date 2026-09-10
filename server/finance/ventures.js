@@ -13,6 +13,7 @@
 // here moves budget on its own.
 
 import { readJson, writeJson } from '../store.js';
+import { assertRealActionsAllowed } from '../killSwitch.js';
 
 const FILE = 'ventures.json';
 
@@ -175,21 +176,59 @@ export function killVenture(id, reason) {
 // spam commits. authorizeDeployment() below is the enforcement point.
 
 // Shared by both real-world action scopes below (deployment, outreach) —
-// each enforces its own weekly cap against its own log, but "a week" means
-// the same rolling window either way.
+// each enforces its own caps against its own log, but the windows mean the
+// same thing either way.
 const WEEKLY_CAP_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+const DAILY_CAP_WINDOW_MS = 24 * 60 * 60 * 1000;
 
-export function linkRepo(id, { owner, name, branch, allowedPaths, maxPerWeek }) {
+// A weekly cap alone let a single unattended run spend the entire week's
+// allowance in one pass — the daily cap is what actually keeps an autonomous
+// cycle to a sane pace, and the cooldown catches the tighter failure a cap
+// can't see: the same agent firing the same action repeatedly inside one
+// turn because its reasoning looped. One per day is the deliberate default
+// for a venture whose founder didn't pick a number: enough for the daily
+// cycle to act every day, not enough for a bad day to compound.
+const DEFAULT_MAX_PER_DAY = 1;
+const MIN_MS_BETWEEN_ACTIONS = 60 * 1000;
+
+function enforceRateLimits({ entries, timestampKey, scope, label }) {
+  const now = Date.now();
+  const times = (entries || [])
+    .map((entry) => new Date(entry[timestampKey]).getTime())
+    .filter((time) => Number.isFinite(time));
+
+  const inWeek = times.filter((time) => time >= now - WEEKLY_CAP_WINDOW_MS).length;
+  if (inWeek >= scope.maxPerWeek) {
+    throw new Error(`Weekly ${label} cap reached (${scope.maxPerWeek}/week) for this venture.`);
+  }
+
+  const maxPerDay = scope.maxPerDay || DEFAULT_MAX_PER_DAY;
+  const inDay = times.filter((time) => time >= now - DAILY_CAP_WINDOW_MS).length;
+  if (inDay >= maxPerDay) {
+    throw new Error(`Daily ${label} cap reached (${maxPerDay}/day) for this venture.`);
+  }
+
+  if (times.length > 0 && now - Math.max(...times) < MIN_MS_BETWEEN_ACTIONS) {
+    throw new Error(
+      `Too soon after the last ${label} — this venture has a ${MIN_MS_BETWEEN_ACTIONS / 1000}s cooldown between real actions.`
+    );
+  }
+}
+
+export function linkRepo(id, { owner, name, branch, allowedPaths, maxPerWeek, maxPerDay }) {
   if (!owner || !name) throw new Error('owner and name are required to link a repo');
   const data = load();
   const venture = findOrThrow(data, id);
+  const weekly = Math.max(1, Number(maxPerWeek) || 3);
   venture.repo = {
     owner: String(owner),
     name: String(name),
     branch: branch ? String(branch) : 'main',
     allowedPaths: Array.isArray(allowedPaths) ? allowedPaths.filter(Boolean).map(String) : [],
     enabled: false,
-    maxPerWeek: Math.max(1, Number(maxPerWeek) || 3),
+    maxPerWeek: weekly,
+    // A daily cap above the weekly one would never bind, so clamp it.
+    maxPerDay: Math.min(weekly, Math.max(1, Number(maxPerDay) || DEFAULT_MAX_PER_DAY)),
   };
   venture.deployments = venture.deployments || [];
   save(data);
@@ -211,17 +250,17 @@ function isPathAllowed(repo, targetPath) {
   );
 }
 
-function deploysInLastWeek(venture) {
-  const cutoff = Date.now() - WEEKLY_CAP_WINDOW_MS;
-  return (venture.deployments || []).filter((d) => new Date(d.deployedAt).getTime() >= cutoff).length;
-}
-
 // Throws with a specific, human-readable reason on any scope violation
 // rather than silently narrowing the request — the founder set this scope
 // deliberately, so a violation should be visible (surfaced back to the
 // agent as a failed tool call, and from there to whoever's watching the
 // conversation), not quietly no-opped.
+//
+// The global halt is checked first: when everything is stopped, the reason
+// the agent gets back should be "everything is stopped", not whichever
+// per-venture rule it would have hit next.
 export function authorizeDeployment(id, { path }) {
+  assertRealActionsAllowed();
   const venture = getVenture(id);
   if (!venture) throw new Error('Venture not found');
   if (venture.status !== 'active') throw new Error(`Venture must be active to deploy (is ${venture.status})`);
@@ -234,9 +273,12 @@ export function authorizeDeployment(id, { path }) {
       `"${path}" is outside the allowed scope (${venture.repo.allowedPaths.join(', ') || 'no paths allowed'}).`
     );
   }
-  if (deploysInLastWeek(venture) >= venture.repo.maxPerWeek) {
-    throw new Error(`Weekly deployment cap reached (${venture.repo.maxPerWeek}/week) for this venture.`);
-  }
+  enforceRateLimits({
+    entries: venture.deployments,
+    timestampKey: 'deployedAt',
+    scope: venture.repo,
+    label: 'deployment',
+  });
   return venture;
 }
 
@@ -272,13 +314,15 @@ export function recordDeployment(id, { path, message, commitSha, commitUrl, rati
 // authorizeOutreach() below is the enforcement point every send passes
 // through, the same shape as authorizeDeployment().
 
-export function linkOutreachScope(id, { allowedRecipients, maxPerWeek }) {
+export function linkOutreachScope(id, { allowedRecipients, maxPerWeek, maxPerDay }) {
   const data = load();
   const venture = findOrThrow(data, id);
+  const weekly = Math.max(1, Number(maxPerWeek) || 5);
   venture.outreach = {
     allowedRecipients: Array.isArray(allowedRecipients) ? allowedRecipients.filter(Boolean).map(String) : [],
     enabled: false,
-    maxPerWeek: Math.max(1, Number(maxPerWeek) || 5),
+    maxPerWeek: weekly,
+    maxPerDay: Math.min(weekly, Math.max(1, Number(maxPerDay) || DEFAULT_MAX_PER_DAY)),
   };
   venture.sentEmails = venture.sentEmails || [];
   save(data);
@@ -305,12 +349,8 @@ function isRecipientAllowed(outreach, to) {
   });
 }
 
-function outreachInLastWeek(venture) {
-  const cutoff = Date.now() - WEEKLY_CAP_WINDOW_MS;
-  return (venture.sentEmails || []).filter((e) => new Date(e.sentAt).getTime() >= cutoff).length;
-}
-
 export function authorizeOutreach(id, { to }) {
+  assertRealActionsAllowed();
   const venture = getVenture(id);
   if (!venture) throw new Error('Venture not found');
   if (venture.status !== 'active') throw new Error(`Venture must be active to send outreach (is ${venture.status})`);
@@ -325,9 +365,12 @@ export function authorizeOutreach(id, { to }) {
       `"${to}" is outside the allowed recipients (${venture.outreach.allowedRecipients.join(', ') || 'none allowed'}).`
     );
   }
-  if (outreachInLastWeek(venture) >= venture.outreach.maxPerWeek) {
-    throw new Error(`Weekly outreach cap reached (${venture.outreach.maxPerWeek}/week) for this venture.`);
-  }
+  enforceRateLimits({
+    entries: venture.sentEmails,
+    timestampKey: 'sentAt',
+    scope: venture.outreach,
+    label: 'outreach',
+  });
   return venture;
 }
 

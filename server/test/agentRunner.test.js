@@ -1,6 +1,24 @@
-import { test } from 'node:test';
+import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { runAgent, isRetryableError } from '../agents/agentRunner.js';
+
+// runAgent records real spend against the ledger on every call (see
+// spend.js), so this file needs its own data dir like every other test —
+// otherwise a test run writes fake spend into the real server/data.
+let tmpDir;
+
+before(() => {
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jarvis-agentrunner-test-'));
+  process.env.JARVIS_DATA_DIR = tmpDir;
+});
+
+after(() => {
+  delete process.env.JARVIS_DATA_DIR;
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
 
 function apiError(status, message) {
   return Object.assign(new Error(message || `status ${status}`), { status });
@@ -138,6 +156,57 @@ test('runAgent reports token usage for a single-round turn', async () => {
   });
 
   assert.deepEqual(usage, { inputTokens: 12, outputTokens: 6 });
+});
+
+// The spend ledger is shared state for the whole run, so these two put it
+// back where they found it rather than leaving a balance that would trip
+// whichever test happens to come next.
+async function withIsolatedSpend(capUsd, fn) {
+  const spend = await import('../spend.js');
+  const savedCap = process.env.DAILY_SPEND_CAP_USD;
+  process.env.DAILY_SPEND_CAP_USD = capUsd;
+  try {
+    await fn(spend);
+  } finally {
+    if (savedCap === undefined) delete process.env.DAILY_SPEND_CAP_USD;
+    else process.env.DAILY_SPEND_CAP_USD = savedCap;
+    fs.rmSync(path.join(tmpDir, 'spend.json'), { force: true });
+  }
+}
+
+test('runAgent records real spend from the response it just paid for', async () => {
+  await withIsolatedSpend('1000', async (spend) => {
+    const before = spend.getSpendToday();
+
+    await runAgent({
+      anthropic: makeClient([textResponse('hello', { input_tokens: 1_000_000, output_tokens: 1_000_000 })]),
+      agents: AGENTS,
+      agentId: 'test_agent',
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+
+    // $2.00/MTok in + $10.00/MTok out on a million tokens each.
+    assert.equal(Math.round((spend.getSpendToday() - before) * 100) / 100, 12);
+  });
+});
+
+test('runAgent refuses to make a paid call once the daily spend cap is spent', async () => {
+  await withIsolatedSpend('0.001', async (spend) => {
+    spend.recordSpend(0.01); // over the cap set above
+
+    const anthropic = makeClient([textResponse('should never be reached')]);
+    await assert.rejects(
+      runAgent({
+        anthropic,
+        agents: AGENTS,
+        agentId: 'test_agent',
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+      /Daily spend cap reached/
+    );
+    // The whole point of checking before the call: no request was made at all.
+    assert.equal(anthropic.callCount, 0);
+  });
 });
 
 test('runAgent accumulates token usage across a delegated sub-agent call', async () => {

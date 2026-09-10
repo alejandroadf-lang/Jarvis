@@ -844,3 +844,60 @@ allowed to happen — `authorizeDeployment` and `authorizeOutreach` enforce
 the same scope regardless of the source — it only makes the already-real
 consequences of "Full autonomy" (above) something a founder can actually
 audit at a glance instead of having to reconstruct from timestamps.
+
+## The stop button and the spend ceiling
+
+A comparison against how real autonomous deployments are actually run
+(Anthropic's Project Vend and Project Deal, Cognition's Devin, Sierra and
+Decagon, and current agent-governance practice) turned up two gaps that
+mattered more than anything else once unattended real actions shipped:
+there was no single way to stop everything, and every limit in the app
+counted *actions* while the runaway-cost failure mode happens in the model
+calls *between* them.
+
+**One halt, not a tour of settings pages.** `server/killSwitch.js` is the
+single control that overrides every venture's scope at once. It has two
+deliberately different strengths: a stored halt flipped at runtime from the
+Ventures panel, which takes effect on the very next authorization check with
+no restart (the point, when something is already going wrong), and
+`REAL_ACTIONS_DISABLED=true` on the server, which halts everything and
+*cannot* be lifted from the app — for when the deployed instance should be
+incapable of real-world action until a human changes the environment and
+restarts it. `assertRealActionsAllowed()` is called at the top of both
+`authorizeDeployment` and `authorizeOutreach`, so the halt applies to
+interactive chat and the unattended daily cycle identically, and nothing
+added later can route around it by forgetting to check. It's checked before
+the per-venture rules, so a halted agent is told "everything is stopped"
+rather than whichever scope rule it would have hit next.
+
+**A dollar ceiling where the money is actually spent.** `usage.js` already
+converted tokens to dollars, but only to *report* a number after the fact —
+no help against a delegation loop that keeps calling the API because nothing
+tells it to stop, and no help from a per-venture action cap either, since
+that loop can burn money without ever reaching an action. `server/spend.js`
+keeps a UTC-day ledger of real per-call cost, and `agentRunner.js`'s
+`createMessage()` — the one function every paid call in this app funnels
+through — checks it *before* each request and records the response's real
+token cost immediately after. Over the cap, agent runs stop with a plain,
+actionable message (surfaced as a 429 rather than a generic 502, since "you
+hit your own ceiling" is not "the model is unreachable"). The default is
+$5/day, overridable with `DAILY_SPEND_CAP_USD`, and today's balance shows
+under the treasury in the Ventures panel.
+
+**Caps that a single run can't spend all at once.** The weekly cap alone let
+one unattended run use a whole week's allowance in a single pass, so both
+scopes now also carry a `maxPerDay` (defaulting to **1** — enough for the
+daily cycle to act every day, not enough for a bad day to compound) and a
+60-second cooldown between real actions on the same venture. The cooldown
+catches what a cap structurally can't see: the same agent firing the same
+action repeatedly inside one turn because its reasoning looped. All three
+limits — weekly, daily, cooldown — are enforced by one shared
+`enforceRateLimits()` helper in `server/finance/ventures.js`, so deployment
+and outreach can't drift apart in what they allow.
+
+One related cleanup came out of building this: `store.js` now resolves its
+data directory per call instead of once at import. It used to be captured
+when the module first loaded, which meant a test that set `JARVIS_DATA_DIR`
+in a `before()` hook could still be writing to the real `server/data/` —
+which is exactly how a test run put fake spend into the real ledger the
+first time this was wired up.

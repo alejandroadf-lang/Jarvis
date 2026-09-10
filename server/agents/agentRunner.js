@@ -23,6 +23,8 @@
 // the dispatch loop below doesn't need to know these tools exist.
 
 import { getAgent } from './registry.js';
+import { assertUnderDailyCap, recordSpend } from '../spend.js';
+import { estimateCostUsd } from '../usage.js';
 
 const MODEL = 'claude-sonnet-5';
 const MAX_TOKENS = 1024;
@@ -51,14 +53,33 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Every paid call in this app funnels through here, which makes it the one
+// honest place to enforce a spend ceiling: checked *before* the request (so a
+// runaway delegation loop stops costing money at the cap rather than after
+// someone notices), and recorded from the response's real token counts
+// immediately after. See spend.js for why a per-venture action cap doesn't
+// cover this.
 async function createMessage(anthropic, params) {
+  assertUnderDailyCap();
+
+  let response;
   try {
-    return await anthropic.messages.create(params);
+    response = await anthropic.messages.create(params);
   } catch (err) {
     if (!isRetryableError(err)) throw err;
     await sleep(EXTRA_RETRY_DELAY_MS + Math.random() * 250);
-    return anthropic.messages.create(params);
+    response = await anthropic.messages.create(params);
   }
+
+  if (response?.usage) {
+    recordSpend(
+      estimateCostUsd({
+        inputTokens: response.usage.input_tokens || 0,
+        outputTokens: response.usage.output_tokens || 0,
+      })
+    );
+  }
+  return response;
 }
 
 function buildTools(agents, agent) {
