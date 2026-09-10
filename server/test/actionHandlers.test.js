@@ -39,7 +39,7 @@ after(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-test('handleProposeVenture logs the venture and returns normally with no SMTP configured', async () => {
+test('handleProposeVenture starts the venture and returns normally with no SMTP configured', async () => {
   const result = await actionHandlers.handleProposeVenture({
     title: 'Test Venture',
     oneLiner: 'Does a thing',
@@ -48,41 +48,29 @@ test('handleProposeVenture logs the venture and returns normally with no SMTP co
     businessModel: 'm',
     marketSize: 's',
     pathToMillions: 'path',
-    budgetRequested: 20,
     milestones: ['ship it'],
   });
 
-  assert.match(result, /Logged venture proposal/);
+  assert.match(result, /Started venture/);
   assert.match(result, /Test Venture/);
+  // The reply has to be clear on both halves of the new model: the venture
+  // is live without anyone approving it, and being live buys it nothing in
+  // the real world until the founder grants it scope.
+  assert.match(result, /active now/);
+  assert.match(result, /no real-world reach yet/);
   assert.equal(ventures.listVentures().length, 1);
+  assert.equal(ventures.listVentures()[0].status, 'active');
 });
 
-test('handleRequestTranche records the request and returns normally with no SMTP configured', async () => {
-  const v = ventures.createVenture({
-    title: 'Active Venture',
-    oneLiner: 'x',
-    problem: 'p',
-    targetCustomer: 'c',
-    businessModel: 'm',
-    marketSize: 's',
-    pathToMillions: 'path',
-    budgetRequested: 10,
-    milestones: ['first step'],
-  });
-  ventures.activateVenture(v.id);
-
-  const result = await actionHandlers.handleRequestTranche({
-    ventureId: v.id,
-    amount: 15,
-    description: 'second step',
-  });
-
-  assert.match(result, /Requested a \$15 tranche/);
-  assert.equal(ventures.getVenture(v.id).pendingTranche.amount, 15);
+// request_tranche was the CFO's way to ask the founder for more of the seed.
+// With no seed there is nothing to ask for, so the handler is gone rather
+// than left as a no-op an agent could still call and believe worked.
+test('handleRequestTranche is gone along with the funding model', () => {
+  assert.equal(actionHandlers.handleRequestTranche, undefined);
 });
 
 function makeActiveVenture(overrides = {}) {
-  const v = ventures.createVenture({
+  return ventures.createVenture({
     title: 'Deployable Venture',
     oneLiner: 'x',
     problem: 'p',
@@ -90,12 +78,9 @@ function makeActiveVenture(overrides = {}) {
     businessModel: 'm',
     marketSize: 's',
     pathToMillions: 'path',
-    budgetRequested: 10,
     milestones: ['ship it'],
     ...overrides,
   });
-  ventures.activateVenture(v.id);
-  return v;
 }
 
 test('handleDeployCode refuses when GITHUB_TOKEN is not configured', async () => {

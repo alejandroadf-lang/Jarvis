@@ -1,16 +1,23 @@
-// Ventures are ideas that made it out of the studio: first logged as a
-// `proposed` business case by the Venture Partner agent (see
-// server/agents/ideationTeam.js), then `active` once the founder greenlights
-// them and the treasury allocates budget (see the /api/ventures/:id/greenlight
-// route in index.js).
+// Ventures are ideas that made it out of the studio, logged by the Venture
+// Partner agent (see server/agents/ideationTeam.js) and active from the
+// moment they're logged.
 //
-// Funding is staged, not a single upfront check: a venture's initial
-// `budgetRequested` funds only its first milestone. Beyond that, the CFO
-// (see server/agents/orgChart.js) reports milestone outcomes and requests
-// follow-on tranches as the founder tells it what actually happened; each
-// tranche still needs the founder's approval (see the
-// /api/ventures/:id/tranche/* routes) before it hits the treasury — nothing
-// here moves budget on its own.
+// There is no funding step, because there is no capital to allocate. A
+// venture used to be `proposed` until the founder greenlit it and a $100
+// seed released a budget in staged tranches — a model that priced the one
+// input this company doesn't buy. Agent labour is the work, and its cost is
+// model spend, metered and capped in server/spend.js. So nothing here is
+// gated on money.
+//
+// Milestones survive that change and matter more without it: they're the
+// only structure left that says whether a venture is actually progressing
+// rather than just existing. The CFO reports outcomes against them (see
+// report_milestone_progress in server/agents/orgChart.js).
+//
+// What still requires an explicit human decision is real-world capability —
+// a linked repo, an outreach allowlist — granted per venture from the
+// Ventures panel and enforced by authorizeDeployment/authorizeOutreach
+// below. Becoming active grants a venture none of that.
 
 import { readJson, writeJson } from '../store.js';
 import { assertRealActionsAllowed } from '../killSwitch.js';
@@ -56,7 +63,6 @@ export function createVenture({
   businessModel,
   marketSize,
   pathToMillions,
-  budgetRequested,
   milestones,
 }) {
   const data = load();
@@ -69,24 +75,11 @@ export function createVenture({
     businessModel: String(businessModel || ''),
     marketSize: String(marketSize || ''),
     pathToMillions: String(pathToMillions || ''),
-    budgetRequested: Math.max(0, Number(budgetRequested) || 0),
     milestones: normalizeMilestones(milestones),
-    pendingTranche: null,
-    tranches: [],
-    status: 'proposed',
+    status: 'active',
     createdAt: new Date().toISOString(),
   };
   data.ventures.push(venture);
-  save(data);
-  return venture;
-}
-
-export function activateVenture(id) {
-  const data = load();
-  const venture = findOrThrow(data, id);
-  if (venture.status !== 'proposed') throw new Error(`Venture is already ${venture.status}`);
-  venture.status = 'active';
-  venture.activatedAt = new Date().toISOString();
   save(data);
   return venture;
 }
@@ -108,48 +101,6 @@ export function setMilestoneStatus(id, index, status, note) {
   return venture;
 }
 
-export function requestTranche(id, { amount, description }) {
-  const numericAmount = Number(amount);
-  if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
-    throw new Error('amount must be a positive number');
-  }
-  const data = load();
-  const venture = findOrThrow(data, id);
-  if (venture.status !== 'active') {
-    throw new Error(`Venture must be active to request a tranche (is ${venture.status})`);
-  }
-  if (venture.pendingTranche) {
-    throw new Error('A tranche request is already pending for this venture');
-  }
-  venture.pendingTranche = {
-    amount: numericAmount,
-    description: String(description || ''),
-    requestedAt: new Date().toISOString(),
-  };
-  save(data);
-  return venture;
-}
-
-export function approveTranche(id) {
-  const data = load();
-  const venture = findOrThrow(data, id);
-  if (!venture.pendingTranche) throw new Error('No pending tranche request for this venture');
-  const tranche = { ...venture.pendingTranche, approvedAt: new Date().toISOString() };
-  venture.pendingTranche = null;
-  venture.tranches.push(tranche);
-  save(data);
-  return { venture, tranche };
-}
-
-export function denyTranche(id) {
-  const data = load();
-  const venture = findOrThrow(data, id);
-  if (!venture.pendingTranche) throw new Error('No pending tranche request for this venture');
-  venture.pendingTranche = null;
-  save(data);
-  return venture;
-}
-
 export function killVenture(id, reason) {
   const data = load();
   const venture = findOrThrow(data, id);
@@ -157,7 +108,6 @@ export function killVenture(id, reason) {
   venture.status = 'killed';
   venture.killedAt = new Date().toISOString();
   venture.killReason = String(reason || '');
-  venture.pendingTranche = null;
   save(data);
   return venture;
 }
@@ -372,6 +322,65 @@ export function authorizeOutreach(id, { to }) {
     label: 'outreach',
   });
   return venture;
+}
+
+// The outreach log answers "what did we send"; this answers "who is this
+// person to us" — the question worth asking *before* drafting rather than
+// after. Anthropic's Project Vend landed on the same conclusion the hard
+// way: its agent only stopped repeating itself once it had a CRM to consult.
+//
+// History is derived from the sentEmails log rather than duplicated, so it
+// can't drift out of sync with what was actually sent. Notes are the part
+// that can't be derived: what the agent learned from a reply, which nothing
+// else in this app records. Kept to the most recent few per contact — this
+// is working memory for the next email, not an archive.
+const NOTES_KEPT_PER_CONTACT = 5;
+
+export function recordContactNote(id, { email, note }) {
+  const address = String(email || '').trim().toLowerCase();
+  if (!address) throw new Error('email is required to log a contact note');
+  const text = String(note || '').trim();
+  if (!text) throw new Error('note is required');
+
+  const data = load();
+  const venture = findOrThrow(data, id);
+  venture.contactNotes = venture.contactNotes || {};
+  const existing = venture.contactNotes[address] || [];
+  venture.contactNotes[address] = [...existing, { note: text, at: new Date().toISOString() }].slice(
+    -NOTES_KEPT_PER_CONTACT
+  );
+  save(data);
+  return { venture, note: { email: address, note: text } };
+}
+
+export function listContacts(id) {
+  const venture = getVenture(id);
+  if (!venture) return [];
+
+  const byAddress = new Map();
+  for (const sent of venture.sentEmails || []) {
+    const address = String(sent.to || '').toLowerCase();
+    if (!address) continue;
+    const entry = byAddress.get(address) || { email: address, emailCount: 0, lastSentAt: null, lastSubject: '' };
+    entry.emailCount += 1;
+    // `>=` rather than `>`: two sends can land in the same millisecond, and
+    // the log is append-ordered, so on a tie the later entry is the newer one.
+    if (!entry.lastSentAt || sent.sentAt >= entry.lastSentAt) {
+      entry.lastSentAt = sent.sentAt;
+      entry.lastSubject = sent.subject || '';
+    }
+    byAddress.set(address, entry);
+  }
+
+  // A contact can exist on notes alone — someone the founder or an agent
+  // learned something about before anything was ever sent to them.
+  for (const [address, notes] of Object.entries(venture.contactNotes || {})) {
+    const entry = byAddress.get(address) || { email: address, emailCount: 0, lastSentAt: null, lastSubject: '' };
+    entry.notes = notes;
+    byAddress.set(address, entry);
+  }
+
+  return [...byAddress.values()].sort((a, b) => (a.lastSentAt || '') < (b.lastSentAt || '') ? 1 : -1);
 }
 
 // Same `triggeredBy` distinction as recordDeployment — which of the two

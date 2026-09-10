@@ -3,8 +3,6 @@ import assert from 'node:assert/strict';
 import {
   formatReportEmail,
   sendDailyReportEmail,
-  formatTrancheRequestEmail,
-  sendTrancheRequestEmail,
   formatVentureProposedEmail,
   sendVentureProposedEmail,
   formatWeeklyReflectionEmail,
@@ -24,7 +22,7 @@ function makeReport(overrides = {}) {
     leadership: { reply: 'CTO: shipping steadily.\nCFO: runway healthy.', trace: [] },
     studio: { reply: 'Nothing clears the bar today.', trace: [] },
     proposedVentureIds: [],
-    treasury: { balance: 70, startingCapital: 100 },
+    business: { revenue: 120, expenses: 50, net: 70 },
     ...overrides,
   };
 }
@@ -34,21 +32,21 @@ test('formatReportEmail includes the date in the subject', () => {
   assert.match(subject, /2026-03-05/);
 });
 
-test('formatReportEmail body includes treasury, leadership, and studio sections', () => {
+test('formatReportEmail body includes the business line, leadership, and studio sections', () => {
   const { text } = formatReportEmail(makeReport());
-  assert.match(text, /\$70\.00 \/ \$100/);
+  assert.match(text, /Revenue to date: \$120\.00 · expenses: \$50\.00 · net: \$70\.00/);
   assert.match(text, /Leadership Sync/);
   assert.match(text, /CTO: shipping steadily\./);
   assert.match(text, /Opportunity Review/);
   assert.match(text, /Nothing clears the bar today\./);
 });
 
-test('formatReportEmail mentions new venture proposals only when there are some', () => {
-  const withProposals = formatReportEmail(makeReport({ proposedVentureIds: ['v_1', 'v_2'] }));
-  assert.match(withProposals.text, /New venture proposals logged today: v_1, v_2/);
+test('formatReportEmail mentions new ventures only when there are some', () => {
+  const withVentures = formatReportEmail(makeReport({ proposedVentureIds: ['v_1', 'v_2'] }));
+  assert.match(withVentures.text, /New ventures started today: v_1, v_2/);
 
   const without = formatReportEmail(makeReport());
-  assert.doesNotMatch(without.text, /New venture proposal/);
+  assert.doesNotMatch(without.text, /New venture/);
 });
 
 test('sendDailyReportEmail is a no-op (returns false, does not throw) without SMTP_HOST/REPORT_EMAIL_TO', async () => {
@@ -71,35 +69,38 @@ function makeVenture(overrides = {}) {
     id: 'v_1',
     title: 'Widget Co',
     oneLiner: 'Widgets for people who need widgets',
-    budgetRequested: 25,
-    pendingTranche: { amount: 15, description: 'next milestone' },
+    milestones: [{ title: 'Ship an MVP', status: 'pending' }],
     ...overrides,
   };
 }
 
-test('formatTrancheRequestEmail names the venture, amount, and purpose', () => {
-  const { subject, text } = formatTrancheRequestEmail(makeVenture());
-  assert.match(subject, /Widget Co/);
-  assert.match(subject, /Action needed/);
-  assert.match(text, /\$15/);
-  assert.match(text, /next milestone/);
+// The tranche-request email is gone with the funding model it served: there
+// is no amount to approve, so there is nothing for the founder to action.
+test('the tranche-request email no longer exists', async () => {
+  const email = await import('../email.js');
+  assert.equal(email.formatTrancheRequestEmail, undefined);
+  assert.equal(email.sendTrancheRequestEmail, undefined);
 });
 
-test('formatVentureProposedEmail names the venture and asking amount', () => {
+test('formatVentureProposedEmail announces a started venture, with no ask attached', () => {
   const { subject, text } = formatVentureProposedEmail(makeVenture());
   assert.match(subject, /Widget Co/);
+  assert.match(subject, /New venture started/);
   assert.match(text, /Widgets for people who need widgets/);
-  assert.match(text, /\$25/);
+  assert.match(text, /First milestone: Ship an MVP/);
+  // It's live immediately, so the mail informs rather than asks — and says
+  // plainly that being active isn't the same as having real-world reach.
+  assert.match(text, /no reach outside the app/);
+  assert.doesNotMatch(text, /\$/);
 });
 
-test('sendTrancheRequestEmail and sendVentureProposedEmail are no-ops without SMTP configured', async () => {
+test('sendVentureProposedEmail is a no-op without SMTP configured', async () => {
   const savedHost = process.env.SMTP_HOST;
   const savedTo = process.env.REPORT_EMAIL_TO;
   delete process.env.SMTP_HOST;
   delete process.env.REPORT_EMAIL_TO;
 
   try {
-    assert.equal(await sendTrancheRequestEmail(makeVenture()), false);
     assert.equal(await sendVentureProposedEmail(makeVenture()), false);
   } finally {
     if (savedHost !== undefined) process.env.SMTP_HOST = savedHost;

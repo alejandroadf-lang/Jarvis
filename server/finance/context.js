@@ -1,10 +1,10 @@
-// Builds the treasury/venture status text every agent team (Executive Team,
-// Venture Studio, and the autonomous daily meeting cycle in
-// server/dailyMeeting.js) gets appended to its system prompt, so every agent
-// always sees the same real numbers instead of drifting on stale context.
+// Builds the business-state text every agent team (Executive Team, Venture
+// Studio, and the autonomous daily meeting cycle in server/dailyMeeting.js)
+// gets appended to its system prompt, so every agent always sees the same
+// real numbers instead of drifting on stale context.
 
 import { getLedger } from './ledger.js';
-import { listVentures } from './ventures.js';
+import { listVentures, listContacts } from './ventures.js';
 import { getLatestWeeklyReflection } from '../weeklyReflections.js';
 
 function describeMilestones(venture) {
@@ -13,39 +13,79 @@ function describeMilestones(venture) {
 }
 
 function describeActiveVenture(venture) {
-  const pending = venture.pendingTranche
-    ? ` — PENDING TRANCHE REQUEST: $${venture.pendingTranche.amount} for "${venture.pendingTranche.description}" (awaiting founder approval; don't request another for this venture until it's resolved)`
-    : '';
-  return `"${venture.title}" [id: ${venture.id}] — milestones: ${describeMilestones(venture)}${pending}`;
+  return `"${venture.title}" [id: ${venture.id}] — milestones: ${describeMilestones(venture)}`;
 }
 
-export function buildTreasuryContext() {
-  const { balance, startingCapital } = getLedger();
-  const ventures = listVentures();
-  const active = ventures.filter((v) => v.status === 'active');
-  const proposed = ventures.filter((v) => v.status === 'proposed');
-
+// Deliberately not a treasury. This company has no seed capital and no
+// budget to run out of, because the input a normal business pays most for —
+// people — is what it doesn't buy. What it reports instead is the only money
+// that's real (revenue earned, expenses actually paid) and the constraints
+// that actually bind (attention, model spend, whether a venture is
+// progressing at all).
+export function buildBusinessContext() {
+  const { revenue, expenses, net } = getLedger();
+  const active = listVentures().filter((v) => v.status === 'active');
   const activeList = active.length ? active.map(describeActiveVenture).join('\n') : 'none yet';
-  const proposedList = proposed.length
-    ? proposed.map((v) => `"${v.title}" [id: ${v.id}] (asking $${v.budgetRequested})`).join('; ')
-    : 'none yet';
 
-  return `Company treasury: $${balance.toFixed(2)} available out of a $${startingCapital} starting seed.
+  return `Money actually earned so far: $${revenue.toFixed(2)}. Real expenses paid: $${expenses.toFixed(2)}. Net: $${net.toFixed(2)}.
 
-Active (funded) ventures:
+Active ventures:
 ${activeList}
 
-Proposed (not yet funded) ventures: ${proposedList}
+There is no seed capital and no budget ceiling here — nothing is blocked for
+lack of money, and no venture needs funding approval to start. Don't reason
+about affordability, runway, or what the treasury can bear; those aren't the
+constraints. What is scarce: the founder's attention, the daily model-spend
+budget every agent turn draws on, and the fact that only one thing can be
+the priority at a time. Choose accordingly — the question is never "can we
+afford this", it's "is this the most valuable thing to be working on".
 
-This treasury funds cheap first experiments, not the ceiling on how big any
-venture is allowed to become — keep the budget *ask* realistic against
-what's actually left, but keep the *ambition* aimed at a real venture-scale
-outcome. Funding here is staged: when the founder reports a real outcome
-for a specific milestone on an active venture, use its id and milestone
-index above to call report_milestone_progress. Once a venture's current
-milestone is marked done and there's a concrete next step, request_tranche
-can ask the founder to fund it — never while a tranche is already pending
-for that venture.`;
+Money still matters in exactly two places: revenue a venture has genuinely
+earned, and an expense someone actually paid — log those with log_revenue
+and log_expense when the founder reports one. When the founder reports a
+real outcome for a specific milestone, use the venture id and milestone
+index above to call report_milestone_progress; milestones are how a venture
+shows it's progressing rather than merely existing.`;
+}
+
+function describeContact(contact) {
+  const history = contact.emailCount
+    ? `${contact.emailCount} email(s) sent, last on ${contact.lastSentAt.slice(0, 10)}${
+        contact.lastSubject ? ` — "${contact.lastSubject}"` : ''
+      }`
+    : 'never emailed';
+  const notes = (contact.notes || []).map((n) => `    · ${n.at.slice(0, 10)}: ${n.note}`).join('\n');
+  return `  - ${contact.email}: ${history}${notes ? `\n${notes}` : ''}`;
+}
+
+// The outreach log was write-only: an agent could send a fourth follow-up to
+// someone who never replied and have no way to know it. This puts the same
+// record in front of it *before* it drafts, which is the only point where
+// knowing changes what happens.
+export function buildOutreachContext() {
+  const withOutreach = listVentures().filter((v) => v.status === 'active' && v.outreach);
+  if (withOutreach.length === 0) {
+    return 'No venture has an outreach scope set up, so there is no contact history to check.';
+  }
+
+  const sections = withOutreach.map((venture) => {
+    const contacts = listContacts(venture.id);
+    const body = contacts.length ? contacts.map(describeContact).join('\n') : '  (no contacts on record yet)';
+    return `"${venture.title}" [id: ${venture.id}]:\n${body}`;
+  });
+
+  return `Contact history for ventures with an outreach scope — check this before
+drafting anything, and use log_contact_note to record what you learn from a
+reply so the next email isn't written blind:
+${sections.join('\n')}`;
+}
+
+// What the Executive Team sees: the business picture plus who has already
+// been contacted. The Venture Studio deliberately doesn't get the
+// contact history — it's an execution concern, and ideation doesn't send
+// email.
+export function buildCompanyContext() {
+  return `${buildBusinessContext()}\n\n${buildOutreachContext()}`;
 }
 
 // Without this, every ideation session starts cold and can re-pitch an idea
@@ -82,11 +122,11 @@ function buildWeeklyReflectionContext() {
 ${latest.reflection}`;
 }
 
-// What the Venture Studio's agents see: treasury/venture status, the
-// record of what's already been tried and killed, and the latest weekly
+// What the Venture Studio's agents see: business state, the record of
+// what's already been tried and killed, and the latest weekly
 // reflection, so ideation compounds instead of resetting every session.
 // Not used by the Executive Team — avoiding re-pitches and recalibrating
 // on a weekly verdict are ideation concerns, not execution ones.
 export function buildStudioContext() {
-  return `${buildTreasuryContext()}\n\n${buildPastLessonsContext()}\n\n${buildWeeklyReflectionContext()}`;
+  return `${buildBusinessContext()}\n\n${buildPastLessonsContext()}\n\n${buildWeeklyReflectionContext()}`;
 }

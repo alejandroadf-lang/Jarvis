@@ -53,6 +53,10 @@ const MODES = {
     label: 'Executive Team',
     placeholder: 'Ask the executive team…',
     emptyHint: "Ask for anything — the CEO will route it to the right department.",
+    // These turns fan out from the CEO to the C-suite and their reports, so
+    // they can run a minute or more with nothing streaming back. Without
+    // this the screen just sits there and the team looks dead.
+    pendingLabel: 'The CEO is consulting the team…',
     send: sendCompanyMessage,
     reset: resetCompanyConversation,
   },
@@ -60,7 +64,8 @@ const MODES = {
     label: 'Venture Studio',
     placeholder: 'Pitch an idea, or ask the team to brainstorm…',
     emptyHint:
-      "Brainstorm here. When an idea is ready, the Venture Partner logs it as a proposal you can greenlight and push to the company.",
+      'Brainstorm here. When an idea clears the bar, the Venture Partner starts it as a venture and the executive team picks it up.',
+    pendingLabel: 'The studio is working through it…',
     send: sendStudioMessage,
     reset: resetStudioConversation,
   },
@@ -99,6 +104,16 @@ export default function App() {
     });
   }, [mode]);
 
+  // Swaps the whole message rather than merging into it — used to turn a
+  // "working on it" placeholder into the real reply, which has to drop the
+  // pending flag as well as gain content.
+  const replaceLastMessage = useCallback((message, targetMode = mode) => {
+    setMessagesByMode((prev) => {
+      const list = prev[targetMode];
+      return { ...prev, [targetMode]: list.slice(0, -1).concat(message) };
+    });
+  }, [mode]);
+
   const submit = useCallback(
     async (text) => {
       const trimmed = text.trim();
@@ -121,27 +136,45 @@ export default function App() {
           });
           if (speakReplies && sentenceBuffer.trim()) enqueue(sentenceBuffer);
         } else {
+          appendMessage({ role: 'assistant', content: '', pending: true });
           const { reply, trace } = await modeConfig.send(sessionId, trimmed);
-          appendMessage({ role: 'assistant', content: reply, trace });
+          replaceLastMessage({ role: 'assistant', content: reply, trace });
           if (speakReplies) speak(reply);
-          // Either team can now touch the treasury (studio proposes/spends,
-          // the CFO logs revenue), so refresh the panel after any turn.
+          // Either team can change what the panel shows (the studio starts
+          // ventures, the CFO logs revenue), so refresh after any turn.
           setVenturesReloadKey((k) => k + 1);
         }
-      } catch {
-        const errorText = 'Sorry, I ran into a problem reaching the server.';
-        // Jarvis mode already appended an (empty, streaming) placeholder bubble
-        // before the request started — fill that in rather than adding a new one.
+      } catch (err) {
+        // The server says useful things — which spend cap was hit, that the
+        // API key is missing — and flattening every failure into one generic
+        // sentence threw all of it away, leaving no way to tell a real error
+        // from a slow one.
+        const detail = err?.response?.data?.error || err?.message;
+        const errorText = detail ? `Couldn't get a reply — ${detail}` : "Couldn't reach the server.";
+        // Both paths already have a placeholder bubble on screen (empty and
+        // streaming for Jarvis, "working on it" for the teams) — fill that in
+        // rather than leaving it hanging next to a new error bubble.
         if (mode === 'jarvis') {
           updateLastMessage(errorText);
         } else {
-          appendMessage({ role: 'assistant', content: errorText });
+          replaceLastMessage({ role: 'assistant', content: errorText });
         }
       } finally {
         setSending(false);
       }
     },
-    [sending, sessionId, speak, enqueue, speakReplies, mode, modeConfig, appendMessage, updateLastMessage]
+    [
+      sending,
+      sessionId,
+      speak,
+      enqueue,
+      speakReplies,
+      mode,
+      modeConfig,
+      appendMessage,
+      updateLastMessage,
+      replaceLastMessage,
+    ]
   );
 
   const { listening, start, stop, supported: sttSupported } = useSpeechRecognition({
@@ -159,19 +192,6 @@ export default function App() {
     setMessagesByMode((prev) => ({ ...prev, [mode]: [] }));
     cancel();
   };
-
-  const handleGreenlit = useCallback(
-    (result) => {
-      if (!result.companyBriefing) return;
-      appendMessage({ role: 'user', content: result.companyBriefing.message }, 'company');
-      appendMessage(
-        { role: 'assistant', content: result.companyBriefing.reply, trace: result.companyBriefing.trace },
-        'company'
-      );
-      setMode('company');
-    },
-    [appendMessage]
-  );
 
   return (
     <div className="min-h-screen flex flex-col bg-[#0b0d10] text-cyan-50">
@@ -249,17 +269,21 @@ export default function App() {
         {mode === 'company' && (
           <aside className="hidden md:flex md:flex-col w-72 shrink-0 border-r border-cyan-500/20 overflow-y-auto">
             <OrgChart kind="company" title="The Company" />
-            <VenturesPanel sessionId={sessionId} reloadKey={venturesReloadKey} onGreenlit={handleGreenlit} />
+            <VenturesPanel reloadKey={venturesReloadKey} />
           </aside>
         )}
         {mode === 'studio' && (
           <aside className="hidden md:flex md:flex-col w-72 shrink-0 border-r border-cyan-500/20 overflow-y-auto">
             <OrgChart kind="studio" title="The Studio" />
-            <VenturesPanel sessionId={sessionId} reloadKey={venturesReloadKey} onGreenlit={handleGreenlit} />
+            <VenturesPanel reloadKey={venturesReloadKey} />
           </aside>
         )}
         <div className="flex-1 flex flex-col min-w-0">
-          <ChatWindow messages={messages} emptyHint={modeConfig.emptyHint} />
+          <ChatWindow
+            messages={messages}
+            emptyHint={modeConfig.emptyHint}
+            pendingLabel={modeConfig.pendingLabel}
+          />
 
           <form
             onSubmit={(e) => {

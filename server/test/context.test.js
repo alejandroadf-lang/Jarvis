@@ -36,10 +36,8 @@ test('buildPastLessonsContext lists a killed venture with its title and reason',
     businessModel: 'm',
     marketSize: 's',
     pathToMillions: 'path',
-    budgetRequested: 10,
     milestones: ['ship it'],
   });
-  ventures.activateVenture(v.id);
   ventures.killVenture(v.id, 'market too saturated, no real differentiation');
 
   const text = context.buildPastLessonsContext();
@@ -49,27 +47,63 @@ test('buildPastLessonsContext lists a killed venture with its title and reason',
   assert.doesNotMatch(text, /No ventures have been killed yet/);
 });
 
-test('buildPastLessonsContext ignores proposed and active ventures, only killed ones', () => {
+test('buildPastLessonsContext ignores live ventures, only killed ones', () => {
   ventures.createVenture({
-    title: 'Still Proposed Co',
+    title: 'Still Running Co',
     oneLiner: 'x',
     problem: 'p',
     targetCustomer: 'c',
     businessModel: 'm',
     marketSize: 's',
     pathToMillions: 'path',
-    budgetRequested: 5,
     milestones: [],
   });
 
   const text = context.buildPastLessonsContext();
-  assert.doesNotMatch(text, /Still Proposed Co/);
+  assert.doesNotMatch(text, /Still Running Co/);
 });
 
-test('buildStudioContext includes the treasury context and the past-lessons context', () => {
+test('buildStudioContext includes the business context and the past-lessons context', () => {
   const text = context.buildStudioContext();
-  assert.match(text, /Company treasury:/);
+  assert.match(text, /Money actually earned so far:/);
   assert.match(text, /Yet Another Resume Builder|No ventures have been killed yet/);
+});
+
+test('buildOutreachContext says there is nothing to check when no venture has an outreach scope', () => {
+  assert.match(context.buildOutreachContext(), /No venture has an outreach scope/);
+});
+
+test('buildOutreachContext puts prior emails and notes in front of the agent before it drafts', () => {
+  const v = ventures.createVenture({
+    title: 'Outreach Co',
+    oneLiner: 'x',
+    problem: 'p',
+    targetCustomer: 'c',
+    businessModel: 'm',
+    marketSize: 's',
+    pathToMillions: 'path',
+    milestones: [],
+  });
+  ventures.linkOutreachScope(v.id, { allowedRecipients: ['@acme.com'] });
+  ventures.recordOutreach(v.id, { to: 'jane@acme.com', subject: 'Following up on the proposal' });
+  ventures.recordContactNote(v.id, { email: 'jane@acme.com', note: 'Said revisit next quarter' });
+
+  const text = context.buildOutreachContext();
+  assert.match(text, /Outreach Co/);
+  assert.match(text, /jane@acme\.com/);
+  assert.match(text, /1 email\(s\) sent/);
+  assert.match(text, /Following up on the proposal/);
+  assert.match(text, /Said revisit next quarter/);
+});
+
+test('buildCompanyContext carries both the business picture and the contact history', () => {
+  const text = context.buildCompanyContext();
+  assert.match(text, /Money actually earned so far:/);
+  assert.match(text, /jane@acme\.com/);
+});
+
+test('buildStudioContext leaves contact history out — ideation does not send email', () => {
+  assert.doesNotMatch(context.buildStudioContext(), /jane@acme\.com/);
 });
 
 test('buildStudioContext says no weekly reflection has run yet when none exists', () => {
@@ -93,4 +127,22 @@ test('buildStudioContext includes the latest weekly reflection once one exists',
   assert.match(text, /week ending 2026-01-04/);
   assert.match(text, /competitor-gap opportunity was the only one/);
   assert.doesNotMatch(text, /No weekly reflection has run yet/);
+});
+
+// The old context told every agent how much of a $100 seed was left, which
+// invited exactly the reasoning the founder wanted gone: weighing ideas by
+// what the treasury could bear. These two guard the replacement.
+test('buildTreasuryContext is gone; buildBusinessContext replaces it', () => {
+  assert.equal(context.buildTreasuryContext, undefined);
+  assert.equal(typeof context.buildBusinessContext, 'function');
+});
+
+test('buildBusinessContext tells agents affordability is not a constraint', () => {
+  const text = context.buildBusinessContext();
+  assert.match(text, /no seed capital and no budget ceiling/);
+  assert.match(text, /Don't reason\s+about affordability, runway/);
+  assert.doesNotMatch(text, /\$100/);
+  // What actually binds instead.
+  assert.match(text, /founder's attention/);
+  assert.match(text, /model-spend\s+budget/);
 });

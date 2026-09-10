@@ -7,7 +7,7 @@
 //
 // Every action that requires the founder to have personally reported a real
 // outcome is still barred here: log_revenue, log_expense,
-// report_milestone_progress, request_tranche, and kill_venture are not
+// report_milestone_progress, and kill_venture are not
 // wired in, so a stray call resolves as an unknown tool rather than a no-op
 // that could be mistaken for success — there's nothing genuine for those to
 // log in an unattended run. deploy_code and send_customer_email are the
@@ -19,32 +19,36 @@
 // cycle." A venture with no scope granted, or scope left disabled, still
 // can't be touched here (see finance/ventures.js's authorizeDeployment and
 // authorizeOutreach) — this only changes what happens for ventures the
-// founder has already explicitly opted in. The Studio phase can still also
-// cause a venture *proposal*, which spends no money and still needs the
-// founder's greenlight before anything is funded.
+// founder has already explicitly opted in. The Studio phase can also start
+// a new venture on its own — that costs nothing and grants it nothing: a
+// new venture has no repo and no outreach list until the founder gives it
+// one.
 
 import { runAgent } from './agents/agentRunner.js';
 import { AGENTS as COMPANY_AGENTS, ROOT_AGENT_ID as COMPANY_ROOT } from './agents/orgChart.js';
 import { AGENTS as STUDIO_AGENTS, ROOT_AGENT_ID as STUDIO_ROOT } from './agents/ideationTeam.js';
-import { buildTreasuryContext, buildStudioContext } from './finance/context.js';
+import { buildCompanyContext, buildStudioContext } from './finance/context.js';
 import { getLedger } from './finance/ledger.js';
 import { listVentures } from './finance/ventures.js';
-import { handleProposeVenture, handleDeployCode, handleSendCustomerEmail } from './actionHandlers.js';
+import {
+  handleProposeVenture,
+  handleDeployCode,
+  handleSendCustomerEmail,
+  handleLogContactNote,
+} from './actionHandlers.js';
 import { todayKey, saveDailyReport } from './dailyReports.js';
 import { sendDailyReportEmail } from './email.js';
-import { estimateCostUsd, sumUsage } from './usage.js';
+import { estimateCostUsd, sumUsage, emptyUsage } from './usage.js';
 
-const ZERO_USAGE = { inputTokens: 0, outputTokens: 0 };
 
 function leadershipKickoff(date) {
   return `It's ${date}. Time for today's daily leadership sync.
 
 This is an internal status meeting, not a real-world event: don't call
-log_revenue, log_expense, report_milestone_progress, request_tranche, or
-kill_venture here — those are only for when the founder reports something
-that actually happened, and nobody is reporting anything today. Just
-gather information and make recommendations for the founder to act on
-afterward.
+log_revenue, log_expense, report_milestone_progress, or kill_venture here —
+those are only for when the founder reports something that actually
+happened, and nobody is reporting anything today. Just gather information
+and make recommendations for the founder to act on afterward.
 
 The exceptions are deploy_code and send_customer_email: for any venture
 where the founder has already linked a repo or set up an outreach scope
@@ -88,7 +92,9 @@ venture proposal? Feel free to pull in your specialists if it's worth a
 real look.
 
 If something genuinely clears the bar (a believable path to $1M+ revenue,
-a real market, not just a vague opportunity), log it with propose_venture.
+a real market, not just a vague opportunity), start it with propose_venture
+— that activates it, so only do it for something genuinely worth the
+company's attention, never because it's free to try.
 If nothing does today, say so plainly and explain why — don't force a
 proposal just to produce one. Keep your reply short either way; this is a
 quick daily check-in, not a full brainstorming session.`;
@@ -102,7 +108,7 @@ quick daily check-in, not a full brainstorming session.`;
 export async function runDailyMeeting({ anthropic }) {
   const date = todayKey();
   const startedAt = Date.now();
-  const treasuryContext = buildTreasuryContext();
+  const companyContext = buildCompanyContext();
   const beforeIds = new Set(listVentures().map((v) => v.id));
 
   // Both phases are isolated the same way: a persistent failure in one
@@ -119,7 +125,7 @@ export async function runDailyMeeting({ anthropic }) {
       messages: [{ role: 'user', content: leadershipKickoff(date) }],
       // Only the two scope-gated real actions are wired in here — see file
       // header for why those specifically are safe in an unattended run
-      // when every other treasury/venture action still isn't.
+      // when the book-keeping and venture-status actions still aren't.
       actionHandlers: {
         // 'daily_cycle' is recorded on the venture's deployment/outreach log
         // so the founder can tell an unattended real action apart from one
@@ -127,12 +133,16 @@ export async function runDailyMeeting({ anthropic }) {
         // 'interactive' counterpart.
         deploy_code: (input) => handleDeployCode(input, 'daily_cycle'),
         send_customer_email: (input) => handleSendCustomerEmail(input, 'daily_cycle'),
+        // Safe unattended for the opposite reason to the two above: it has
+        // no real-world effect at all, it only writes what the agent learned
+        // into memory the next draft will read.
+        log_contact_note: handleLogContactNote,
       },
-      extraContext: treasuryContext,
+      extraContext: companyContext,
     });
   } catch (err) {
     leadershipFailed = true;
-    leadership = { text: `(Leadership sync failed: ${err.message})`, trace: [], usage: { ...ZERO_USAGE } };
+    leadership = { text: `(Leadership sync failed: ${err.message})`, trace: [], usage: emptyUsage() };
   }
 
   let studio;
@@ -140,7 +150,7 @@ export async function runDailyMeeting({ anthropic }) {
     studio = {
       text: "(Skipped: today's leadership sync failed, so there's nothing fresh to review.)",
       trace: [],
-      usage: { ...ZERO_USAGE },
+      usage: emptyUsage(),
     };
   } else {
     try {
@@ -153,13 +163,13 @@ export async function runDailyMeeting({ anthropic }) {
         extraContext: buildStudioContext(),
       });
     } catch (err) {
-      studio = { text: `(Venture Studio ideation pass failed: ${err.message})`, trace: [], usage: { ...ZERO_USAGE } };
+      studio = { text: `(Venture Studio ideation pass failed: ${err.message})`, trace: [], usage: emptyUsage() };
     }
   }
 
   const afterIds = listVentures().map((v) => v.id);
   const proposedVentureIds = afterIds.filter((id) => !beforeIds.has(id));
-  const { balance, startingCapital } = getLedger();
+  const { revenue, expenses, net } = getLedger();
   const usage = sumUsage(leadership.usage, studio.usage);
 
   const report = {
@@ -168,7 +178,7 @@ export async function runDailyMeeting({ anthropic }) {
     leadership: { reply: leadership.text, trace: leadership.trace },
     studio: { reply: studio.text, trace: studio.trace },
     proposedVentureIds,
-    treasury: { balance, startingCapital },
+    business: { revenue, expenses, net },
     usage,
     costUsd: estimateCostUsd(usage),
     durationMs: Date.now() - startedAt,

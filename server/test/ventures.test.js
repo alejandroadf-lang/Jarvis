@@ -27,31 +27,38 @@ function makeVenture(overrides = {}) {
     businessModel: 'Subscription',
     marketSize: 'Big',
     pathToMillions: 'Scale it',
-    budgetRequested: 20,
     milestones: ['Ship an MVP', 'Get first customer'],
     ...overrides,
   });
 }
 
-test('createVenture normalizes string milestones and starts proposed', () => {
+// Starting a venture costs nothing now, so there's no capital gate to pass
+// and no 'proposed' waiting room to sit in — it's active the moment the
+// studio starts it. Real-world reach is still granted separately, per
+// venture, by the founder (see the authorize* tests below).
+test('createVenture normalizes string milestones and starts active', () => {
   const v = makeVenture();
-  assert.equal(v.status, 'proposed');
+  assert.equal(v.status, 'active');
   assert.equal(v.milestones.length, 2);
   assert.deepEqual(v.milestones[0], { title: 'Ship an MVP', status: 'pending' });
-  assert.equal(v.pendingTranche, null);
-  assert.deepEqual(v.tranches, []);
 });
 
-test('activateVenture flips status and rejects a second activation', () => {
-  const v = makeVenture();
-  const activated = ventures.activateVenture(v.id);
-  assert.equal(activated.status, 'active');
-  assert.throws(() => ventures.activateVenture(v.id), /already active/);
+test('the capital-model funding API is gone entirely', () => {
+  assert.equal(ventures.activateVenture, undefined);
+  assert.equal(ventures.requestTranche, undefined);
+  assert.equal(ventures.approveTranche, undefined);
+  assert.equal(ventures.denyTranche, undefined);
+});
+
+test('a venture carries no budget or tranche state', () => {
+  const v = makeVenture({ budgetRequested: 20 });
+  assert.equal(v.budgetRequested, undefined);
+  assert.equal(v.pendingTranche, undefined);
+  assert.equal(v.tranches, undefined);
 });
 
 test('setMilestoneStatus updates the right milestone and validates status', () => {
   const v = makeVenture();
-  ventures.activateVenture(v.id);
   const updated = ventures.setMilestoneStatus(v.id, 0, 'done', 'shipped it');
   assert.equal(updated.milestones[0].status, 'done');
   assert.equal(updated.milestones[0].note, 'shipped it');
@@ -60,73 +67,33 @@ test('setMilestoneStatus updates the right milestone and validates status', () =
   assert.throws(() => ventures.setMilestoneStatus(v.id, 99, 'done'), /No milestone at index/);
 });
 
-test('tranche lifecycle: request requires active status and blocks concurrent requests', () => {
+test('killVenture sets status and reason, and refuses to kill twice', () => {
   const v = makeVenture();
-  assert.throws(
-    () => ventures.requestTranche(v.id, { amount: 10, description: 'next step' }),
-    /must be active/
-  );
-
-  ventures.activateVenture(v.id);
-  const withPending = ventures.requestTranche(v.id, { amount: 10, description: 'next step' });
-  assert.ok(withPending.pendingTranche);
-  assert.equal(withPending.pendingTranche.amount, 10);
-
-  assert.throws(
-    () => ventures.requestTranche(v.id, { amount: 5, description: 'another' }),
-    /already pending/
-  );
-});
-
-test('approveTranche clears the pending request and records history', () => {
-  const v = makeVenture();
-  ventures.activateVenture(v.id);
-  ventures.requestTranche(v.id, { amount: 15, description: 'next step' });
-
-  const { venture, tranche } = ventures.approveTranche(v.id);
-  assert.equal(venture.pendingTranche, null);
-  assert.equal(venture.tranches.length, 1);
-  assert.equal(tranche.amount, 15);
-  assert.ok(tranche.approvedAt);
-
-  assert.throws(() => ventures.approveTranche(v.id), /No pending tranche/);
-});
-
-test('denyTranche clears the pending request without recording history', () => {
-  const v = makeVenture();
-  ventures.activateVenture(v.id);
-  ventures.requestTranche(v.id, { amount: 15, description: 'next step' });
-
-  const denied = ventures.denyTranche(v.id);
-  assert.equal(denied.pendingTranche, null);
-  assert.equal(denied.tranches.length, 0);
-
-  assert.throws(() => ventures.denyTranche(v.id), /No pending tranche/);
-});
-
-test('killVenture sets status, reason, and clears any pending tranche', () => {
-  const v = makeVenture();
-  ventures.activateVenture(v.id);
-  ventures.requestTranche(v.id, { amount: 15, description: 'next step' });
 
   const killed = ventures.killVenture(v.id, 'market did not want this');
   assert.equal(killed.status, 'killed');
   assert.equal(killed.killReason, 'market did not want this');
-  assert.equal(killed.pendingTranche, null);
 
   assert.throws(() => ventures.killVenture(v.id, 'again'), /already killed/);
 });
 
 test('getVenture returns null for an unknown id, findOrThrow paths error clearly', () => {
   assert.equal(ventures.getVenture('nope'), null);
-  assert.throws(() => ventures.activateVenture('nope'), /Venture not found/);
+  assert.throws(() => ventures.killVenture('nope', 'x'), /Venture not found/);
 });
 
-test('authorizeDeployment refuses an inactive venture, an unlinked repo, and a disabled scope', () => {
-  const v = makeVenture();
-  assert.throws(() => ventures.authorizeDeployment(v.id, { path: 'content/home.md' }), /must be active/);
+// A killed venture is the one status that still blocks real actions — the
+// active check outlived the capital model because it stops a venture the
+// founder has walked away from from still deploying or emailing.
+test('authorizeDeployment refuses a killed venture, an unlinked repo, and a disabled scope', () => {
+  const killedVenture = makeVenture();
+  ventures.killVenture(killedVenture.id, 'shut down');
+  assert.throws(
+    () => ventures.authorizeDeployment(killedVenture.id, { path: 'content/home.md' }),
+    /must be active/
+  );
 
-  ventures.activateVenture(v.id);
+  const v = makeVenture();
   assert.throws(() => ventures.authorizeDeployment(v.id, { path: 'content/home.md' }), /No repo linked/);
 
   ventures.linkRepo(v.id, { owner: 'acme', name: 'landing', allowedPaths: ['content/'] });
@@ -135,7 +102,6 @@ test('authorizeDeployment refuses an inactive venture, an unlinked repo, and a d
 
 test('authorizeDeployment enforces the path allowlist once enabled', () => {
   const v = makeVenture();
-  ventures.activateVenture(v.id);
   ventures.linkRepo(v.id, { owner: 'acme', name: 'landing', allowedPaths: ['content/', 'config.json'] });
   ventures.setDeploymentEnabled(v.id, true);
 
@@ -146,7 +112,6 @@ test('authorizeDeployment enforces the path allowlist once enabled', () => {
 
 test('authorizeDeployment enforces the weekly cap from recordDeployment history', () => {
   const v = makeVenture();
-  ventures.activateVenture(v.id);
   ventures.linkRepo(v.id, { owner: 'acme', name: 'landing', allowedPaths: ['content/'], maxPerWeek: 2 });
   ventures.setDeploymentEnabled(v.id, true);
 
@@ -163,7 +128,6 @@ test('setDeploymentEnabled requires a linked repo first', () => {
 
 test('recordDeployment appends to the deployment log with a timestamp', () => {
   const v = makeVenture();
-  ventures.activateVenture(v.id);
   ventures.linkRepo(v.id, { owner: 'acme', name: 'landing', allowedPaths: ['content/'] });
 
   const { venture, entry } = ventures.recordDeployment(v.id, {
@@ -182,7 +146,6 @@ test('recordDeployment appends to the deployment log with a timestamp', () => {
 
 test('recordDeployment records triggeredBy as daily_cycle when told to, and normalizes anything else to interactive', () => {
   const v = makeVenture();
-  ventures.activateVenture(v.id);
   ventures.linkRepo(v.id, { owner: 'acme', name: 'landing', allowedPaths: ['content/'] });
 
   const daily = ventures.recordDeployment(v.id, { path: 'content/a.md', triggeredBy: 'daily_cycle' });
@@ -194,7 +157,6 @@ test('recordDeployment records triggeredBy as daily_cycle when told to, and norm
 
 test('authorizeDeployment enforces the daily cap before the weekly one is anywhere near spent', () => {
   const v = makeVenture();
-  ventures.activateVenture(v.id);
   ventures.linkRepo(v.id, { owner: 'acme', name: 'landing', allowedPaths: ['content/'], maxPerWeek: 5, maxPerDay: 2 });
   ventures.setDeploymentEnabled(v.id, true);
 
@@ -207,7 +169,6 @@ test('authorizeDeployment enforces the daily cap before the weekly one is anywhe
 
 test('a venture linked without a daily cap defaults to one real action per day', () => {
   const v = makeVenture();
-  ventures.activateVenture(v.id);
   ventures.linkRepo(v.id, { owner: 'acme', name: 'landing', allowedPaths: ['content/'], maxPerWeek: 5 });
   ventures.setDeploymentEnabled(v.id, true);
 
@@ -224,7 +185,6 @@ test('a daily cap above the weekly cap is clamped, since it could never bind', (
 
 test('the cooldown blocks a second real action fired seconds after the first', () => {
   const v = makeVenture();
-  ventures.activateVenture(v.id);
   ventures.linkRepo(v.id, { owner: 'acme', name: 'landing', allowedPaths: ['content/'], maxPerWeek: 9, maxPerDay: 9 });
   ventures.setDeploymentEnabled(v.id, true);
 
@@ -234,7 +194,6 @@ test('the cooldown blocks a second real action fired seconds after the first', (
 
 test('an action from outside the cooldown window is allowed again', () => {
   const v = makeVenture();
-  ventures.activateVenture(v.id);
   ventures.linkRepo(v.id, { owner: 'acme', name: 'landing', allowedPaths: ['content/'], maxPerWeek: 9, maxPerDay: 9 });
   ventures.setDeploymentEnabled(v.id, true);
   ventures.recordDeployment(v.id, { path: 'content/a.md' });
@@ -250,11 +209,12 @@ test('an action from outside the cooldown window is allowed again', () => {
   assert.doesNotThrow(() => ventures.authorizeDeployment(v.id, { path: 'content/b.md' }));
 });
 
-test('authorizeOutreach refuses an inactive venture, an unset scope, and a disabled scope', () => {
-  const v = makeVenture();
-  assert.throws(() => ventures.authorizeOutreach(v.id, { to: 'x@acme.com' }), /must be active/);
+test('authorizeOutreach refuses a killed venture, an unset scope, and a disabled scope', () => {
+  const killedVenture = makeVenture();
+  ventures.killVenture(killedVenture.id, 'shut down');
+  assert.throws(() => ventures.authorizeOutreach(killedVenture.id, { to: 'x@acme.com' }), /must be active/);
 
-  ventures.activateVenture(v.id);
+  const v = makeVenture();
   assert.throws(() => ventures.authorizeOutreach(v.id, { to: 'x@acme.com' }), /No outreach scope/);
 
   ventures.linkOutreachScope(v.id, { allowedRecipients: ['@acme.com'] });
@@ -263,7 +223,6 @@ test('authorizeOutreach refuses an inactive venture, an unset scope, and a disab
 
 test('authorizeOutreach enforces the recipient allowlist, matching exact addresses and whole domains', () => {
   const v = makeVenture();
-  ventures.activateVenture(v.id);
   ventures.linkOutreachScope(v.id, { allowedRecipients: ['jane@acme.com', '@partner.com'] });
   ventures.setOutreachEnabled(v.id, true);
 
@@ -275,7 +234,6 @@ test('authorizeOutreach enforces the recipient allowlist, matching exact address
 
 test('authorizeOutreach enforces the weekly cap from recordOutreach history', () => {
   const v = makeVenture();
-  ventures.activateVenture(v.id);
   ventures.linkOutreachScope(v.id, { allowedRecipients: ['@acme.com'], maxPerWeek: 2 });
   ventures.setOutreachEnabled(v.id, true);
 
@@ -292,7 +250,6 @@ test('setOutreachEnabled requires a scope to already be set up', () => {
 
 test('recordOutreach appends to the sent-email log with a timestamp', () => {
   const v = makeVenture();
-  ventures.activateVenture(v.id);
   ventures.linkOutreachScope(v.id, { allowedRecipients: ['@acme.com'] });
 
   const { venture, entry } = ventures.recordOutreach(v.id, {
@@ -307,11 +264,76 @@ test('recordOutreach appends to the sent-email log with a timestamp', () => {
   assert.equal(entry.triggeredBy, 'interactive'); // default when not specified
 });
 
+test('listContacts derives history from the sent log, newest contact first', () => {
+  const v = makeVenture();
+  ventures.linkOutreachScope(v.id, { allowedRecipients: ['@acme.com'] });
+
+  ventures.recordOutreach(v.id, { to: 'jane@acme.com', subject: 'Intro' });
+  ventures.recordOutreach(v.id, { to: 'jane@acme.com', subject: 'Following up' });
+  ventures.recordOutreach(v.id, { to: 'bob@acme.com', subject: 'Hello' });
+
+  const contacts = ventures.listContacts(v.id);
+  assert.equal(contacts.length, 2);
+
+  const jane = contacts.find((c) => c.email === 'jane@acme.com');
+  assert.equal(jane.emailCount, 2);
+  assert.equal(jane.lastSubject, 'Following up'); // the most recent one, not the first
+  assert.ok(jane.lastSentAt);
+});
+
+test('listContacts matches addresses case-insensitively rather than splitting one person in two', () => {
+  const v = makeVenture();
+  ventures.recordOutreach(v.id, { to: 'Jane@Acme.com', subject: 'One' });
+  ventures.recordOutreach(v.id, { to: 'jane@acme.com', subject: 'Two' });
+
+  const contacts = ventures.listContacts(v.id);
+  assert.equal(contacts.length, 1);
+  assert.equal(contacts[0].emailCount, 2);
+});
+
+test('recordContactNote attaches a note to a contact and keeps it in listContacts', () => {
+  const v = makeVenture();
+  ventures.recordOutreach(v.id, { to: 'jane@acme.com', subject: 'Intro' });
+  ventures.recordContactNote(v.id, { email: 'JANE@acme.com', note: 'Asked for pricing in Q3' });
+
+  const jane = ventures.listContacts(v.id).find((c) => c.email === 'jane@acme.com');
+  assert.equal(jane.notes.length, 1);
+  assert.equal(jane.notes[0].note, 'Asked for pricing in Q3');
+  assert.ok(jane.notes[0].at);
+});
+
+test('a contact can exist on a note alone, before anything has been sent to them', () => {
+  const v = makeVenture();
+  ventures.recordContactNote(v.id, { email: 'newlead@acme.com', note: 'Met at a meetup' });
+
+  const contacts = ventures.listContacts(v.id);
+  assert.equal(contacts.length, 1);
+  assert.equal(contacts[0].emailCount, 0);
+  assert.equal(contacts[0].lastSentAt, null);
+});
+
+test('recordContactNote requires both an address and a note', () => {
+  const v = makeVenture();
+  assert.throws(() => ventures.recordContactNote(v.id, { email: '   ', note: 'x' }), /email is required/);
+  assert.throws(() => ventures.recordContactNote(v.id, { email: 'a@b.com', note: '  ' }), /note is required/);
+});
+
+test('contact notes are capped so working memory cannot grow without bound', () => {
+  const v = makeVenture();
+  for (let i = 1; i <= 8; i++) {
+    ventures.recordContactNote(v.id, { email: 'jane@acme.com', note: `note ${i}` });
+  }
+
+  const jane = ventures.listContacts(v.id).find((c) => c.email === 'jane@acme.com');
+  assert.equal(jane.notes.length, 5);
+  assert.equal(jane.notes[0].note, 'note 4'); // oldest kept
+  assert.equal(jane.notes[4].note, 'note 8'); // newest
+});
+
 test('the global halt overrides a fully-granted scope for both real actions', async () => {
   const killSwitch = await import('../killSwitch.js');
 
   const v = makeVenture();
-  ventures.activateVenture(v.id);
   ventures.linkRepo(v.id, { owner: 'acme', name: 'landing', allowedPaths: ['content/'] });
   ventures.setDeploymentEnabled(v.id, true);
   ventures.linkOutreachScope(v.id, { allowedRecipients: ['@acme.com'] });
@@ -334,7 +356,6 @@ test('the global halt overrides a fully-granted scope for both real actions', as
 
 test('recordOutreach records triggeredBy as daily_cycle when told to, and normalizes anything else to interactive', () => {
   const v = makeVenture();
-  ventures.activateVenture(v.id);
   ventures.linkOutreachScope(v.id, { allowedRecipients: ['@acme.com'] });
 
   const daily = ventures.recordOutreach(v.id, { to: 'a@acme.com', triggeredBy: 'daily_cycle' });

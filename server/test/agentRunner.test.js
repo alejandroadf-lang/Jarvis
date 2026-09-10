@@ -155,7 +155,9 @@ test('runAgent reports token usage for a single-round turn', async () => {
     messages: [{ role: 'user', content: 'hi' }],
   });
 
-  assert.deepEqual(usage, { inputTokens: 12, outputTokens: 6 });
+  assert.equal(usage.inputTokens, 12);
+  assert.equal(usage.outputTokens, 6);
+  assert.ok(usage.costUsd > 0, 'a real call should record a real cost');
 });
 
 // The spend ledger is shared state for the whole run, so these two put it
@@ -224,5 +226,7 @@ test('runAgent accumulates token usage across a delegated sub-agent call', async
   });
 
   assert.equal(text, 'final answer');
-  assert.deepEqual(usage, { inputTokens: 75, outputTokens: 23 });
+  assert.equal(usage.inputTokens, 75);
+  assert.equal(usage.outputTokens, 23);
+  assert.ok(usage.costUsd > 0, 'a delegated run should accumulate cost too');
 });

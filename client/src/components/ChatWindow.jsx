@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import MessageBubble from './MessageBubble.jsx';
 
-export default function ChatWindow({ messages, emptyHint }) {
+export default function ChatWindow({ messages, emptyHint, pendingLabel }) {
   const bottomRef = useRef(null);
 
   useEffect(() => {
@@ -16,7 +16,14 @@ export default function ChatWindow({ messages, emptyHint }) {
         </p>
       )}
       {messages.map((m, i) => (
-        <MessageBubble key={i} role={m.role} content={m.content} trace={m.trace} />
+        <MessageBubble
+          key={i}
+          role={m.role}
+          content={m.content}
+          trace={m.trace}
+          pending={m.pending}
+          pendingLabel={pendingLabel}
+        />
       ))}
       <div ref={bottomRef} />
     </div>

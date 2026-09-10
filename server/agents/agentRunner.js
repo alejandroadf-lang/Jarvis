@@ -24,9 +24,10 @@
 
 import { getAgent } from './registry.js';
 import { assertUnderDailyCap, recordSpend } from '../spend.js';
-import { estimateCostUsd } from '../usage.js';
+import { priceUsage, emptyUsage } from '../usage.js';
+import { resolveModelForAgent } from './models.js';
+import { isOpenRouterConfigured, createCompletion } from './openrouter.js';
 
-const MODEL = 'claude-sonnet-5';
 const MAX_TOKENS = 1024;
 const MAX_ROUNDS = 6; // safety cap on tool-calling rounds within one agent's turn
 
@@ -59,25 +60,40 @@ function sleep(ms) {
 // someone notices), and recorded from the response's real token counts
 // immediately after. See spend.js for why a per-venture action cap doesn't
 // cover this.
-async function createMessage(anthropic, params) {
+async function createMessage(anthropic, modelSpec, params) {
   assertUnderDailyCap();
+
+  // Both providers are called through here so neither can slip past the
+  // spend cap, and the retry policy is identical because openrouter.js
+  // sets the same `.status` the Anthropic SDK does.
+  const send = () =>
+    modelSpec.provider === 'openrouter'
+      ? createCompletion({
+          model: modelSpec.model,
+          system: params.system,
+          messages: params.messages,
+          maxTokens: params.max_tokens,
+        })
+      : anthropic.messages.create({ ...params, model: modelSpec.model });
 
   let response;
   try {
-    response = await anthropic.messages.create(params);
+    response = await send();
   } catch (err) {
     if (!isRetryableError(err)) throw err;
     await sleep(EXTRA_RETRY_DELAY_MS + Math.random() * 250);
-    response = await anthropic.messages.create(params);
+    response = await send();
   }
 
   if (response?.usage) {
-    recordSpend(
-      estimateCostUsd({
+    response.costUsd = priceUsage(
+      {
         inputTokens: response.usage.input_tokens || 0,
         outputTokens: response.usage.output_tokens || 0,
-      })
+      },
+      modelSpec
     );
+    recordSpend(response.costUsd);
   }
   return response;
 }
@@ -126,8 +142,8 @@ function buildTools(agents, agent) {
  * @param {number} [opts.depth]
  * @param {Record<string, (input: object) => Promise<string>>} [opts.actionHandlers]
  * @param {string} [opts.extraContext] - extra text appended to every agent's system prompt for this run
- * @param {{inputTokens: number, outputTokens: number}} [opts.usage] - shared accumulator, mutated across the whole run (including every delegated sub-agent)
- * @returns {Promise<{text: string, trace: object[], usage: {inputTokens: number, outputTokens: number}}>}
+ * @param {{inputTokens: number, outputTokens: number, costUsd: number}} [opts.usage] - shared accumulator, mutated across the whole run (including every delegated sub-agent)
+ * @returns {Promise<{text: string, trace: object[], usage: {inputTokens: number, outputTokens: number, costUsd: number}}>}
  */
 export async function runAgent({
   anthropic,
@@ -138,18 +154,20 @@ export async function runAgent({
   depth = 0,
   actionHandlers = {},
   extraContext = '',
-  usage = { inputTokens: 0, outputTokens: 0 },
+  usage = emptyUsage(),
 }) {
   const agent = getAgent(agents, agentId);
   const tools = buildTools(agents, agent);
+  // Resolved per agent, not per run: a fan-out can legitimately mix a
+  // frontier orchestrator with cheap leaves in the same conversation.
+  const modelSpec = resolveModelForAgent(agent, isOpenRouterConfigured());
   const system = extraContext ? `${agent.systemPrompt}\n\n${extraContext}` : agent.systemPrompt;
   const working = [...messages];
 
   let finalText = '';
 
   for (let round = 0; round < MAX_ROUNDS; round++) {
-    const response = await createMessage(anthropic, {
-      model: MODEL,
+    const response = await createMessage(anthropic, modelSpec, {
       max_tokens: MAX_TOKENS,
       system,
       messages: working,
@@ -159,6 +177,7 @@ export async function runAgent({
     if (response.usage) {
       usage.inputTokens += response.usage.input_tokens || 0;
       usage.outputTokens += response.usage.output_tokens || 0;
+      usage.costUsd = (usage.costUsd || 0) + (response.costUsd || 0);
     }
 
     const toolUses = response.content.filter((block) => block.type === 'tool_use');

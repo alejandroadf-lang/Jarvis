@@ -1,4 +1,24 @@
-export default function MessageBubble({ role, content, trace }) {
+// Shown while a non-streaming team turn is in flight. These runs fan out
+// across several agents and can take a minute, so the wait needs to look
+// like work rather than a dead screen.
+function Working({ label }) {
+  return (
+    <span className="inline-flex items-center gap-2 text-cyan-400/70">
+      <span className="flex gap-1" aria-hidden="true">
+        {[0, 150, 300].map((delay) => (
+          <span
+            key={delay}
+            className="w-1.5 h-1.5 rounded-full bg-cyan-400/70 animate-pulse motion-reduce:animate-none"
+            style={{ animationDelay: `${delay}ms` }}
+          />
+        ))}
+      </span>
+      {label}
+    </span>
+  );
+}
+
+export default function MessageBubble({ role, content, trace, pending, pendingLabel }) {
   const isUser = role === 'user';
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
@@ -22,8 +42,9 @@ export default function MessageBubble({ role, content, trace }) {
               ? 'bg-cyan-600 text-white rounded-br-sm'
               : 'bg-white/5 text-cyan-50 border border-cyan-500/20 rounded-bl-sm'
           }`}
+          aria-live={pending ? 'polite' : undefined}
         >
-          {content}
+          {pending ? <Working label={pendingLabel || 'Working…'} /> : content}
         </div>
       </div>
     </div>

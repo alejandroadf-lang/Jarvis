@@ -13,15 +13,14 @@
 
 import { runAgent } from './agents/agentRunner.js';
 import { AGENTS as COMPANY_AGENTS, ROOT_AGENT_ID as COMPANY_ROOT } from './agents/orgChart.js';
-import { buildTreasuryContext } from './finance/context.js';
+import { buildBusinessContext } from './finance/context.js';
 import { listVentures } from './finance/ventures.js';
 import { getLedger } from './finance/ledger.js';
 import { listDailyReports } from './dailyReports.js';
 import { weekKey, saveWeeklyReflection } from './weeklyReflections.js';
 import { sendWeeklyReflectionEmail } from './email.js';
-import { estimateCostUsd } from './usage.js';
+import { estimateCostUsd, emptyUsage } from './usage.js';
 
-const ZERO_USAGE = { inputTokens: 0, outputTokens: 0 };
 
 function reportsInWeek(allReports, weekEndingKey) {
   const weekEnding = new Date(`${weekEndingKey}T23:59:59.999Z`);
@@ -87,7 +86,7 @@ export async function runWeeklyReflection({ anthropic }) {
 
   let text;
   let trace = [];
-  let usage = { ...ZERO_USAGE };
+  let usage = emptyUsage();
 
   if (weekReports.length === 0) {
     text = 'No daily reports were generated this week — nothing to reflect on yet.';
@@ -99,7 +98,7 @@ export async function runWeeklyReflection({ anthropic }) {
         agentId: COMPANY_ROOT,
         messages: [{ role: 'user', content: buildReflectionKickoff(weekEnding, weekReports) }],
         actionHandlers: {}, // read-only analysis — see file header
-        extraContext: buildTreasuryContext(),
+        extraContext: buildBusinessContext(),
       });
       text = result.text;
       trace = result.trace;

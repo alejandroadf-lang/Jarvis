@@ -1,7 +1,7 @@
 // Proves the specific, deliberate boundary described in dailyMeeting.js's
 // file header: deploy_code and send_customer_email actually fire during the
 // unattended leadership sync when a venture's scope is granted and enabled,
-// while every other treasury/venture action (log_revenue, etc.) still
+// while every other book-keeping/venture action (log_revenue, etc.) still
 // isn't wired in at all. Uses a scripted fake Anthropic client (same
 // pattern as agentRunner.test.js) so this never makes a real model call,
 // plus a mocked global.fetch (deploy/github.js) so a "real" deploy never
@@ -58,7 +58,7 @@ function scriptedClient(responses) {
 }
 
 function makeActiveVenture(overrides = {}) {
-  const v = ventures.createVenture({
+  return ventures.createVenture({
     title: 'Widget Landing Co',
     oneLiner: 'x',
     problem: 'p',
@@ -66,12 +66,9 @@ function makeActiveVenture(overrides = {}) {
     businessModel: 'm',
     marketSize: 's',
     pathToMillions: 'path',
-    budgetRequested: 10,
     milestones: ['ship it'],
     ...overrides,
   });
-  ventures.activateVenture(v.id);
-  return v;
 }
 
 test('deploy_code actually fires during the unattended leadership sync for a venture with deployment enabled', async () => {

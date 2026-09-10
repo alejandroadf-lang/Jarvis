@@ -172,8 +172,9 @@ export default function DailyReportView() {
         ) : (
           <div className="space-y-4 mt-4">
             <p className="text-xs text-cyan-500/60">
-              {fmtDate(selected.date)} · generated {new Date(selected.generatedAt).toLocaleTimeString()} · treasury $
-              {selected.treasury.balance.toFixed(2)} / ${selected.treasury.startingCapital}
+              {fmtDate(selected.date)} · generated {new Date(selected.generatedAt).toLocaleTimeString()} · net{' '}
+              {fmtUsd(selected.business.net)} ({fmtUsd(selected.business.revenue)} earned,{' '}
+              {fmtUsd(selected.business.expenses)} spent)
               {selected.usage && typeof selected.costUsd === 'number' && (
                 <>
                   {' '}
@@ -198,9 +199,9 @@ export default function DailyReportView() {
 
             {selected.proposedVentureIds.length > 0 && (
               <p className="text-xs text-emerald-300/80 border border-emerald-500/30 rounded-lg p-3">
-                Logged {selected.proposedVentureIds.length} new venture proposal
-                {selected.proposedVentureIds.length > 1 ? 's' : ''} from this session — check the Ventures panel
-                (Executive Team or Venture Studio tab) to review and greenlight.
+                Started {selected.proposedVentureIds.length} new venture
+                {selected.proposedVentureIds.length > 1 ? 's' : ''} in this session — check the Ventures panel
+                (Executive Team or Venture Studio tab) to review.
               </p>
             )}
           </div>

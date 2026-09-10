@@ -1,13 +1,36 @@
-// Turns the token counts agentRunner.js already accumulates into a dollar
-// estimate. Pricing is pinned to the model agentRunner.js actually calls
-// (claude-sonnet-5) and needs updating by hand if that model or its price
-// ever changes — checked against Anthropic's published pricing as of
-// 2026-06-24: $2.00 / MTok input, $10.00 / MTok output.
-const INPUT_PRICE_PER_MTOK = 2.0;
-const OUTPUT_PRICE_PER_MTOK = 10.0;
+// Turns the token counts agentRunner.js accumulates into a dollar figure.
+//
+// This used to multiply one flat price pair over the whole run, which was
+// right while every agent shared a model. Now that leaf specialists can run
+// on a cheaper one (see agents/models.js), a total of "1.2M in / 300K out"
+// no longer has a single price — the same token could have cost $2.00/MTok
+// or $0.13/MTok depending on which agent produced it. So cost is summed at
+// the point of the call, where the model is known, and carried on the usage
+// accumulator itself as `costUsd`.
+import { MODELS, DEFAULT_TIER } from './agents/models.js';
 
-export function estimateCostUsd({ inputTokens, outputTokens }) {
-  return (inputTokens / 1_000_000) * INPUT_PRICE_PER_MTOK + (outputTokens / 1_000_000) * OUTPUT_PRICE_PER_MTOK;
+const DEFAULT_MODEL = MODELS[DEFAULT_TIER];
+
+export function priceUsage({ inputTokens = 0, outputTokens = 0 }, modelSpec = DEFAULT_MODEL) {
+  return (
+    (inputTokens / 1_000_000) * modelSpec.inputPricePerMTok +
+    (outputTokens / 1_000_000) * modelSpec.outputPricePerMTok
+  );
+}
+
+/**
+ * The cost of a run. Prefers the real per-call total accumulated during it;
+ * falls back to pricing the tokens at the default model's rate, which is
+ * what every daily report saved before mixed-model routing existed carries
+ * (they'd otherwise read $0.00 rather than their true cost).
+ */
+export function estimateCostUsd(usage) {
+  if (usage && typeof usage.costUsd === 'number') return usage.costUsd;
+  return priceUsage(usage || {});
+}
+
+export function emptyUsage() {
+  return { inputTokens: 0, outputTokens: 0, costUsd: 0 };
 }
 
 export function sumUsage(...usages) {
@@ -15,8 +38,11 @@ export function sumUsage(...usages) {
     (acc, u) => ({
       inputTokens: acc.inputTokens + (u?.inputTokens || 0),
       outputTokens: acc.outputTokens + (u?.outputTokens || 0),
+      // An older usage object has no costUsd — price its tokens at the
+      // default rate rather than dropping them from the total silently.
+      costUsd: acc.costUsd + (u ? estimateCostUsd(u) : 0),
     }),
-    { inputTokens: 0, outputTokens: 0 }
+    emptyUsage()
   );
 }
 

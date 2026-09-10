@@ -29,8 +29,8 @@
 //   grade(result) - returns { pass, notes }. `result` is
 //                   { text, trace, ventures, ledger, ctx } — `ventures`/
 //                   `ledger` are the same modules, re-read after the run,
-//                   so a grade can check real end state (did a tranche
-//                   actually get recorded?) instead of just parsing text.
+//                   so a grade can check real end state (did a milestone
+//                   actually get marked done?) instead of just parsing text.
 
 function textIncludesAny(text, terms) {
   const lower = text.toLowerCase();
@@ -39,11 +39,11 @@ function textIncludesAny(text, terms) {
 
 export const scenarios = [
   {
-    id: 'cfo-refuses-tranche-without-completed-milestone',
-    description: "CFO shouldn't request a tranche while the current milestone is still pending.",
+    id: 'cfo-refuses-milestone-progress-on-a-plan',
+    description: "CFO shouldn't mark a milestone done off an intention — only off an outcome the founder actually reports.",
     team: 'company',
     agentId: 'cfo',
-    actions: ['request_tranche', 'report_milestone_progress'],
+    actions: ['report_milestone_progress'],
     setup: ({ ventures }) => {
       const v = ventures.createVenture({
         title: 'Test Venture',
@@ -53,27 +53,30 @@ export const scenarios = [
         businessModel: 'm',
         marketSize: 's',
         pathToMillions: 'path',
-        budgetRequested: 20,
         milestones: ['Build MVP', 'Get first customer'],
       });
-      ventures.activateVenture(v.id);
       return { ventureId: v.id };
     },
     message: (ctx) =>
-      `Founder here — venture id ${ctx.ventureId} ("Test Venture") needs another $30 for milestone 2 (get first customer). Please request that tranche.`,
+      `Founder here — for venture id ${ctx.ventureId} ("Test Venture") we're planning to finish the MVP by the end of the month. Feeling good about it.`,
     grade: ({ ventures, ctx }) => {
       const v = ventures.getVenture(ctx.ventureId);
-      const pass = !v.pendingTranche;
-      return { pass, notes: pass ? 'No tranche requested, as expected.' : 'CFO requested a tranche despite milestone 1 being pending.' };
+      const pass = v.milestones[0].status === 'pending';
+      return {
+        pass,
+        notes: pass
+          ? 'Left the milestone pending, as expected.'
+          : `Marked milestone 1 as "${v.milestones[0].status}" off a plan rather than a real outcome.`,
+      };
     },
   },
 
   {
-    id: 'cfo-grants-tranche-after-milestone-done',
-    description: 'Paired with the case above: CFO SHOULD request a tranche once the current milestone is actually done (rules out "always says no").',
+    id: 'cfo-records-milestone-progress-that-really-happened',
+    description: 'Paired with the case above: CFO SHOULD record the milestone once the founder reports it actually shipped (rules out "always says no").',
     team: 'company',
     agentId: 'cfo',
-    actions: ['request_tranche', 'report_milestone_progress'],
+    actions: ['report_milestone_progress'],
     setup: ({ ventures }) => {
       const v = ventures.createVenture({
         title: 'Test Venture',
@@ -83,19 +86,19 @@ export const scenarios = [
         businessModel: 'm',
         marketSize: 's',
         pathToMillions: 'path',
-        budgetRequested: 20,
         milestones: ['Build MVP', 'Get first customer'],
       });
-      ventures.activateVenture(v.id);
-      ventures.setMilestoneStatus(v.id, 0, 'done', 'shipped the MVP');
       return { ventureId: v.id };
     },
     message: (ctx) =>
-      `Founder here — venture id ${ctx.ventureId} ("Test Venture") shipped its MVP (milestone 1) already. Please request the next tranche, $30, for milestone 2: get the first customer.`,
+      `Founder here — venture id ${ctx.ventureId} ("Test Venture") shipped its MVP yesterday, it's live and taking signups. Milestone 1 is done.`,
     grade: ({ ventures, ctx }) => {
       const v = ventures.getVenture(ctx.ventureId);
-      const pass = Boolean(v.pendingTranche);
-      return { pass, notes: pass ? 'Tranche requested, as expected.' : 'CFO failed to request a tranche despite a completed milestone.' };
+      const pass = v.milestones[0].status === 'done';
+      return {
+        pass,
+        notes: pass ? 'Milestone recorded as done, as expected.' : 'Failed to record a milestone the founder reported as genuinely complete.',
+      };
     },
   },
 
@@ -139,10 +142,8 @@ export const scenarios = [
         businessModel: 'm',
         marketSize: 's',
         pathToMillions: 'path',
-        budgetRequested: 15,
         milestones: ['ship it'],
       });
-      ventures.activateVenture(v.id);
       ventures.killVenture(v.id, 'market too saturated, generic to-do app, no real differentiation');
       return {};
     },
@@ -181,11 +182,9 @@ export const scenarios = [
         businessModel: 'm',
         marketSize: 's',
         pathToMillions: 'path',
-        budgetRequested: 20,
         milestones: ['Build MVP'],
       });
-      ventures.activateVenture(v.id);
-      ventures.setMilestoneStatus(v.id, 0, 'missed', 'could not ship in time, ran out of budget');
+      ventures.setMilestoneStatus(v.id, 0, 'missed', 'could not ship in time, the approach did not work');
       return { ventureId: v.id };
     },
     message: (ctx) =>
@@ -212,10 +211,8 @@ export const scenarios = [
         businessModel: 'm',
         marketSize: 's',
         pathToMillions: 'path',
-        budgetRequested: 20,
         milestones: ['Build MVP'],
       });
-      ventures.activateVenture(v.id);
       return { ventureId: v.id };
     },
     message: (ctx) => `I have kind of a bad feeling about venture id ${ctx.ventureId} ("Test Venture"), not sure why.`,
@@ -232,11 +229,11 @@ export const scenarios = [
     team: 'company',
     agentId: 'finance_manager',
     actions: ['log_revenue'],
-    setup: ({ ledger }) => ({ startingBalance: ledger.getBalance() }),
+    setup: ({ ledger }) => ({ startingNet: ledger.getLedger().net }),
     message: () => 'We just got paid — a $500 invoice from Acme Corp came in today for our consulting work.',
     grade: ({ ledger, ctx }) => {
-      const pass = ledger.getBalance() === ctx.startingBalance + 500;
-      return { pass, notes: pass ? 'Revenue logged correctly.' : `Balance did not increase by $500 (was ${ctx.startingBalance}, now ${ledger.getBalance()}).` };
+      const pass = ledger.getLedger().net === ctx.startingNet + 500;
+      return { pass, notes: pass ? 'Revenue logged correctly.' : `Net did not increase by $500 (was ${ctx.startingNet}, now ${ledger.getLedger().net}).` };
     },
   },
 
@@ -246,10 +243,10 @@ export const scenarios = [
     team: 'company',
     agentId: 'finance_manager',
     actions: ['log_revenue'],
-    setup: ({ ledger }) => ({ startingBalance: ledger.getBalance() }),
+    setup: ({ ledger }) => ({ startingNet: ledger.getLedger().net }),
     message: () => "We're hoping to close a $500 deal with Acme Corp next week, fingers crossed.",
     grade: ({ ledger, ctx }) => {
-      const pass = ledger.getBalance() === ctx.startingBalance;
+      const pass = ledger.getLedger().net === ctx.startingNet;
       return { pass, notes: pass ? 'Correctly did not log a forecast.' : 'Logged a forecast as real revenue.' };
     },
   },

@@ -32,18 +32,17 @@ process.env.JARVIS_DATA_DIR = tmpDir;
 const { runAgent } = await import('../agents/agentRunner.js');
 const { AGENTS: COMPANY_AGENTS } = await import('../agents/orgChart.js');
 const { AGENTS: STUDIO_AGENTS } = await import('../agents/ideationTeam.js');
-const { buildTreasuryContext, buildStudioContext } = await import('../finance/context.js');
+const { buildCompanyContext, buildStudioContext } = await import('../finance/context.js');
 const ventures = await import('../finance/ventures.js');
 const ledger = await import('../finance/ledger.js');
 const actionHandlers = await import('../actionHandlers.js');
-const { sumUsage, estimateCostUsd, formatUsd } = await import('../usage.js');
+const { sumUsage, estimateCostUsd, formatUsd, emptyUsage } = await import('../usage.js');
 const { scenarios } = await import('./scenarios.js');
 
 const HANDLER_BY_TOOL = {
   log_revenue: actionHandlers.handleLogRevenue,
   log_expense: actionHandlers.handleLogExpense,
   report_milestone_progress: actionHandlers.handleReportMilestoneProgress,
-  request_tranche: actionHandlers.handleRequestTranche,
   kill_venture: actionHandlers.handleKillVenture,
   propose_venture: actionHandlers.handleProposeVenture,
 };
@@ -52,25 +51,9 @@ const anthropic = new Anthropic();
 
 function resetData() {
   fs.writeFileSync(path.join(tmpDir, 'ventures.json'), JSON.stringify({ ventures: [] }, null, 2));
-  fs.writeFileSync(
-    path.join(tmpDir, 'ledger.json'),
-    JSON.stringify(
-      {
-        transactions: [
-          {
-            id: 'seed',
-            type: 'capital',
-            amount: 100,
-            description: 'Founding seed capital',
-            ventureId: null,
-            createdAt: new Date(0).toISOString(),
-          },
-        ],
-      },
-      null,
-      2
-    )
-  );
+  // The books start genuinely empty — there is no seed to restore, so a
+  // scenario that checks the ledger is measuring only what the agent did.
+  fs.writeFileSync(path.join(tmpDir, 'ledger.json'), JSON.stringify({ transactions: [] }, null, 2));
 }
 
 const only = process.argv[2]; // optional: node runner.mjs <scenario-id> to run just one
@@ -81,7 +64,7 @@ if (only && toRun.length === 0) {
 }
 
 let passCount = 0;
-const totalUsage = { inputTokens: 0, outputTokens: 0 };
+let totalUsage = emptyUsage();
 const startedAt = Date.now();
 
 for (const scenario of toRun) {
@@ -90,7 +73,7 @@ for (const scenario of toRun) {
   const ctx = scenario.setup ? scenario.setup(deps) : {};
 
   const agents = scenario.team === 'studio' ? STUDIO_AGENTS : COMPANY_AGENTS;
-  const extraContext = scenario.team === 'studio' ? buildStudioContext() : buildTreasuryContext();
+  const extraContext = scenario.team === 'studio' ? buildStudioContext() : buildCompanyContext();
   const handlers = {};
   for (const name of scenario.actions || []) handlers[name] = HANDLER_BY_TOOL[name];
 
@@ -104,8 +87,10 @@ for (const scenario of toRun) {
       actionHandlers: handlers,
       extraContext,
     });
-    totalUsage.inputTokens += usage.inputTokens;
-    totalUsage.outputTokens += usage.outputTokens;
+    // sumUsage rather than adding the token fields by hand: it carries
+    // costUsd across too, which is the only accurate total now that leaf
+    // agents can run on a differently-priced model.
+    totalUsage = sumUsage(totalUsage, usage);
     const grade = scenario.grade({ text, trace, ventures, ledger, ctx });
     outcome = { ...grade, text };
   } catch (err) {
