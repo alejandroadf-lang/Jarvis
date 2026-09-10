@@ -570,6 +570,65 @@ $0.08 · 18,342 in / 4,021 out tokens" next to the performance line — and both
 guard for older reports saved before this existed, so a report from before
 this feature just omits the line instead of printing `undefined`.
 
+## Mixed-model routing: paying frontier prices only where they buy something
+
+With the capital model gone, model spend is the company's only real
+recurring cost — so it's worth looking at where it actually goes. In a
+fan-out it isn't the CEO: one CEO turn triggers four C-suite turns, which
+trigger their own reports, and the **leaves** end up dominating the call
+count. Those leaves are also doing the most bounded work in the company —
+review this copy, poke holes in this idea, is this spec testable — which is
+the kind of judgment a smaller model handles well.
+
+So an agent can name a **tier**, and `server/agents/models.js` resolves that
+to a concrete model and its price:
+
+| Tier | Model | Input | Output |
+| --- | --- | --- | --- |
+| `frontier` (default) | `claude-sonnet-5` | $2.00/MTok | $10.00/MTok |
+| `specialist` | `nousresearch/hermes-4-70b` (Nous Research, via OpenRouter) | $0.13/MTok | $0.40/MTok |
+
+Eleven agents carry the `specialist` tier today — the Product Manager,
+Marketing Manager, Customer Support Manager, Implementation Manager, HR
+Manager, Brand Strategist, Security Reviewer and QA Engineer in the company,
+and the Ideation Facilitator, Business Case Analyst and Validation Critic in
+the studio.
+
+### Two rules keep this from becoming a quality cliff
+
+**It's opt-in.** With no `OPENROUTER_API_KEY` set, every tier collapses back
+to the default and the company runs exactly as it did before. Nothing else
+changes — no fallback behaviour to reason about, no half-configured state.
+
+**Only leaves qualify, and that's enforced rather than trusted.** The
+alternative path (`server/agents/openrouter.js`) is deliberately a plain
+completion call — system prompt in, text out, no tool-use loop. That's what
+lets it stay ~80 lines of `fetch` instead of a second dispatch loop to keep
+in step with the Anthropic one. But it means an agent with reports, actions,
+or web search would *silently lose them* if routed there — failing as a
+vague answer rather than an error, which is the worst possible failure
+shape. So `resolveModelForAgent()` overrides the tier for any agent that
+orchestrates, acts, or searches. A future edit that adds an action to a
+tiered agent can't quietly break it; the agent just goes back to Claude.
+
+### The guardrails still cover it
+
+Both providers are called through the same `createMessage()` in
+`agentRunner.js`, which means the daily spend cap is checked *before* every
+request regardless of provider, and every response's real token cost is
+recorded against the same ledger. `openrouter.js` sets `.status` on its
+errors exactly as the Anthropic SDK does, so a 429 from either retries
+identically. Two tests assert the cap specifically — that it stops an
+OpenRouter call before it goes out, and that spend from one counts against
+the day's total.
+
+One consequence worth naming: a run's total token count no longer has a
+single price. `usage.js` therefore accumulates `costUsd` **at the point of
+each call**, where the model is known, rather than multiplying one rate over
+the total afterward. Daily reports saved before this existed carry tokens but
+no `costUsd`; those are still priced at the default rate rather than dropped,
+so historical costs don't silently read $0.00.
+
 ## A behavioral eval, not just data-layer tests
 
 `server/test/` checks the data layer (ledger math, venture state

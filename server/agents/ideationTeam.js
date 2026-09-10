@@ -11,6 +11,18 @@
 // or an outreach allowlist is granted per venture by the founder from the
 // Ventures panel.
 
+import { CHEAP_TIER } from './models.js';
+
+// A handful of roles below carry `modelTier: CHEAP_TIER`. Those are the
+// leaves of this chart — no reports, no action tools, no web search — whose
+// turn is one bounded piece of judgment, and they're also where a fan-out
+// spends most of its calls. Running them on a cheaper model is the single
+// biggest lever on the company's only real recurring cost. It's opt-in
+// (nothing changes without OPENROUTER_API_KEY) and it's enforced rather
+// than trusted: models.js ignores the tier for any agent that orchestrates,
+// acts, or searches, so adding an action to one of these can't silently
+// strip it of the ability to use it.
+
 export const ROOT_AGENT_ID = 'venture_partner';
 
 const BASE_STYLE = `Be direct and concrete. Write like someone who has actually built things, not
@@ -194,6 +206,7 @@ ${BASE_STYLE}`,
     department: 'Studio',
     reportsTo: 'venture_partner',
     reports: [],
+    modelTier: CHEAP_TIER,
     mission: 'Generates a wide, distinct set of ambitious raw ideas for a given prompt or constraint.',
     toolDescription:
       'Consult the Ideation Facilitator to generate a batch of distinct raw ideas for a prompt, problem space, or constraint.',
@@ -222,6 +235,7 @@ ${BASE_STYLE}`,
     department: 'Studio',
     reportsTo: 'venture_partner',
     reports: [],
+    modelTier: CHEAP_TIER,
     mission: 'Turns an idea into numbers: pricing, unit economics, and a credible path to $1M+ revenue.',
     toolDescription:
       'Consult the Business Case Analyst to turn an idea into a business case: pricing, unit economics, path to $1M+ revenue, and the first milestones.',
@@ -290,6 +304,7 @@ ${BASE_STYLE}`,
     department: 'Studio',
     reportsTo: 'venture_partner',
     reports: [],
+    modelTier: CHEAP_TIER,
     mission: 'Deliberately stress-tests an idea or business case and surfaces the strongest reasons it could fail or fall short of a real venture outcome.',
     toolDescription:
       'Consult the Validation Critic to stress-test an idea or business case and surface the strongest reasons it could fail — including whether it is ambitious enough.',

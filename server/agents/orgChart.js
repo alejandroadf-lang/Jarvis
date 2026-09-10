@@ -21,6 +21,18 @@
 // brand-voice, security-reviewer, and code-reviewer agents/skills, rewritten
 // as personas for this org chart rather than copied verbatim.
 
+import { CHEAP_TIER } from './models.js';
+
+// A handful of roles below carry `modelTier: CHEAP_TIER`. Those are the
+// leaves of this chart — no reports, no action tools, no web search — whose
+// turn is one bounded piece of judgment, and they're also where a fan-out
+// spends most of its calls. Running them on a cheaper model is the single
+// biggest lever on the company's only real recurring cost. It's opt-in
+// (nothing changes without OPENROUTER_API_KEY) and it's enforced rather
+// than trusted: models.js ignores the tier for any agent that orchestrates,
+// acts, or searches, so adding an action to one of these can't silently
+// strip it of the ability to use it.
+
 export const ROOT_AGENT_ID = 'ceo';
 
 const BASE_STYLE = `Be direct and decisive. Write like a busy executive: short paragraphs
@@ -294,6 +306,7 @@ ${BASE_STYLE}`,
     department: 'Technology',
     reportsTo: 'cto',
     reports: [],
+    modelTier: CHEAP_TIER,
     mission: 'Owns what gets built and why: requirements, prioritization, and customer-facing product tradeoffs.',
     toolDescription:
       'Consult the Product Manager for feature prioritization, requirements/specs, roadmap sequencing, or product-market tradeoffs.',
@@ -417,6 +430,7 @@ ${BASE_STYLE}`,
     department: 'Marketing',
     reportsTo: 'cmo',
     reports: [],
+    modelTier: CHEAP_TIER,
     mission: 'Executes campaigns, content, and channel marketing day to day.',
     toolDescription:
       'Consult the Marketing Manager for campaign execution, content drafts (blog posts, social, email), channel tactics, or marketing calendar/operations questions.',
@@ -505,6 +519,7 @@ ${BASE_STYLE}`,
     department: 'Operations',
     reportsTo: 'coo',
     reports: [],
+    modelTier: CHEAP_TIER,
     mission: 'Owns post-sale support, ticket resolution, and customer health.',
     toolDescription:
       'Consult the Customer Support Manager for support ticket triage, customer-facing responses, escalation handling, or customer health/churn-risk questions.',
@@ -524,6 +539,7 @@ ${BASE_STYLE}`,
     department: 'Operations',
     reportsTo: 'coo',
     reports: [],
+    modelTier: CHEAP_TIER,
     mission: 'Owns onboarding and delivery of signed projects, from kickoff to go-live.',
     toolDescription:
       'Consult the Implementation Manager for onboarding plans, project delivery timelines, rollout/go-live planning, or scope-vs-timeline tradeoffs on a signed project.',
@@ -544,6 +560,7 @@ ${BASE_STYLE}`,
     department: 'Operations',
     reportsTo: 'coo',
     reports: [],
+    modelTier: CHEAP_TIER,
     mission: 'Owns hiring, onboarding, culture, and people policy.',
     toolDescription:
       'Consult the HR & People Manager for hiring plans, job descriptions, interview process, onboarding, culture/policy questions, or people-management issues.',
@@ -597,6 +614,7 @@ ${BASE_STYLE}`,
     department: 'Marketing',
     reportsTo: 'cmo',
     reports: [],
+    modelTier: CHEAP_TIER,
     mission: 'Owns brand voice consistency and competitive positioning research.',
     toolDescription:
       'Consult the Brand Strategist for brand voice/tone consistency, positioning research, or figuring out who the company is actually competing against.',
@@ -629,6 +647,7 @@ ${BASE_STYLE}`,
     department: 'Technology',
     reportsTo: 'cto',
     reports: [],
+    modelTier: CHEAP_TIER,
     mission: 'Finds and remediates security vulnerabilities before they reach production.',
     toolDescription:
       'Consult the Security Reviewer for vulnerability review of new endpoints, auth changes, user input handling, or anything touching secrets or payments.',
@@ -658,6 +677,7 @@ ${BASE_STYLE}`,
     department: 'Technology',
     reportsTo: 'cto',
     reports: [],
+    modelTier: CHEAP_TIER,
     mission: 'Reviews changes for correctness and test coverage — catches real bugs before merge without flooding review with noise.',
     toolDescription:
       'Consult the QA & Test Engineer for a rigorous code review pass, test coverage gaps, or whether a change is actually safe to ship.',

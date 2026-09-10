@@ -36,7 +36,7 @@ const { buildCompanyContext, buildStudioContext } = await import('../finance/con
 const ventures = await import('../finance/ventures.js');
 const ledger = await import('../finance/ledger.js');
 const actionHandlers = await import('../actionHandlers.js');
-const { sumUsage, estimateCostUsd, formatUsd } = await import('../usage.js');
+const { sumUsage, estimateCostUsd, formatUsd, emptyUsage } = await import('../usage.js');
 const { scenarios } = await import('./scenarios.js');
 
 const HANDLER_BY_TOOL = {
@@ -64,7 +64,7 @@ if (only && toRun.length === 0) {
 }
 
 let passCount = 0;
-const totalUsage = { inputTokens: 0, outputTokens: 0 };
+let totalUsage = emptyUsage();
 const startedAt = Date.now();
 
 for (const scenario of toRun) {
@@ -87,8 +87,10 @@ for (const scenario of toRun) {
       actionHandlers: handlers,
       extraContext,
     });
-    totalUsage.inputTokens += usage.inputTokens;
-    totalUsage.outputTokens += usage.outputTokens;
+    // sumUsage rather than adding the token fields by hand: it carries
+    // costUsd across too, which is the only accurate total now that leaf
+    // agents can run on a differently-priced model.
+    totalUsage = sumUsage(totalUsage, usage);
     const grade = scenario.grade({ text, trace, ventures, ledger, ctx });
     outcome = { ...grade, text };
   } catch (err) {

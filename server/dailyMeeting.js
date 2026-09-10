@@ -38,9 +38,8 @@ import {
 } from './actionHandlers.js';
 import { todayKey, saveDailyReport } from './dailyReports.js';
 import { sendDailyReportEmail } from './email.js';
-import { estimateCostUsd, sumUsage } from './usage.js';
+import { estimateCostUsd, sumUsage, emptyUsage } from './usage.js';
 
-const ZERO_USAGE = { inputTokens: 0, outputTokens: 0 };
 
 function leadershipKickoff(date) {
   return `It's ${date}. Time for today's daily leadership sync.
@@ -143,7 +142,7 @@ export async function runDailyMeeting({ anthropic }) {
     });
   } catch (err) {
     leadershipFailed = true;
-    leadership = { text: `(Leadership sync failed: ${err.message})`, trace: [], usage: { ...ZERO_USAGE } };
+    leadership = { text: `(Leadership sync failed: ${err.message})`, trace: [], usage: emptyUsage() };
   }
 
   let studio;
@@ -151,7 +150,7 @@ export async function runDailyMeeting({ anthropic }) {
     studio = {
       text: "(Skipped: today's leadership sync failed, so there's nothing fresh to review.)",
       trace: [],
-      usage: { ...ZERO_USAGE },
+      usage: emptyUsage(),
     };
   } else {
     try {
@@ -164,7 +163,7 @@ export async function runDailyMeeting({ anthropic }) {
         extraContext: buildStudioContext(),
       });
     } catch (err) {
-      studio = { text: `(Venture Studio ideation pass failed: ${err.message})`, trace: [], usage: { ...ZERO_USAGE } };
+      studio = { text: `(Venture Studio ideation pass failed: ${err.message})`, trace: [], usage: emptyUsage() };
     }
   }
 
