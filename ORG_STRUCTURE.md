@@ -9,7 +9,7 @@ answer it, consults them, and gives you back one synthesized answer.
 There's also a **Venture Studio** mode upstream of the company — a small
 brainstorming team that turns a raw idea into a funded venture and hands it
 to the CEO to execute, against a real (small!) cash balance. See
-[Venture Studio: ideation and capital](#venture-studio-ideation-and-capital)
+[Venture Studio: where ideas come from](#venture-studio-where-ideas-come-from)
 below.
 
 ## Architecture: orchestrator-workers
@@ -165,12 +165,12 @@ Switch to the **Executive Team** tab in the header, and ask it something
 that spans departments — e.g. "we want to launch a new product line, what
 do we need to get there?" — to see it delegate across the org chart.
 
-## Venture Studio: ideation and capital
+## Venture Studio: where ideas come from
 
 The Executive Team is good at *executing* — it assumes you already know
 what to build. The Studio is upstream of that: a small brainstorming team
-that helps find the next idea, pressure-tests it, and turns it into a
-venture proposal sized against the company's actual cash.
+that helps find the next idea, pressure-tests it, and turns it into a real
+venture the Executive Team can pick up.
 
 ```
 Venture Partner
@@ -192,9 +192,10 @@ strong idea rather than assuming the first idea is the right one.
 Early versions of this team converged on trivially small ideas (a resume
 app, a to-do list) because every prompt kept reminding agents how little
 money was in the treasury — a classic failure mode where "budget is small"
-quietly becomes "so pick something small." That's fixed at the prompt
-level: every agent is told the treasury funds the *first cheap experiment*,
-never the ceiling on the business itself, and the ambition bar is explicit
+quietly becomes "so pick something small." The treasury is gone now (see
+[The economic model](#the-economic-model-no-capital-required) below), which
+removes the cause rather than the symptom: there is no cash-on-hand figure
+left to anchor on. The ambition bar is explicit on top of that
 — a believable path to **$1M+ in annual revenue within a few years**, in a
 market big enough to support that. The Ideation Facilitator has a standing
 list of oversaturated, low-ambition categories (generic resume/CV builders,
@@ -222,77 +223,95 @@ own estimate. Web search is billed per search by Anthropic, separately
 from token usage — a Studio conversation that leans on these two agents
 will cost a bit more than one that doesn't.
 
-### The treasury
+### The economic model: no capital required
 
-The company starts with **$100 in seed capital** — a small, real (if
-fictional) constraint meant to force actual prioritization instead of
-infinite-budget brainstorming. It's tracked as an append-only transaction
-log in `server/finance/ledger.js` (`server/data/ledger.json` on disk, not
-committed to git — see `.gitignore`), so the balance is always just a fold
-over history:
+This company runs on **no seed capital at all**, and that's the deliberate
+design, not a missing feature.
 
-- `capital` — money added to the treasury (the initial $100 seed)
-- `investment` — budget allocated to a greenlit venture (reduces balance)
-- `expense` — money spent that isn't tied to a specific venture allocation
-- `revenue` — money a venture brings in (increases balance)
+The reasoning is simple. The dominant cost in a normal business is people —
+salaries are what makes a runway finite and what forces a business to raise
+money before it can start. This company's people are agents. Their marginal
+cost is model spend: cents per meeting, not thousands per month. Remove
+the biggest line item from the cost side and the case for holding capital
+before starting mostly evaporates with it.
 
-`GET /api/ventures/ledger` returns the current balance and full transaction
-history; the Studio sidebar shows the balance live.
+An earlier version of this project modelled a **$100 seed** released to
+ventures in staged tranches, and it actively made the company worse. Every
+prompt carried a shrinking balance, and agents dutifully reasoned about
+affordability on a business whose real costs were a rounding error. It
+priced a constraint that doesn't exist and, worse, it put a human approval
+gate in front of *starting* something that costs nothing to start.
 
-### Progressive capital: staged funding, not one check
+What replaced it:
 
-A venture's initial `budgetRequested` at greenlight only funds its first
-milestone — capital into a venture grows in tranches as it actually proves
-itself, not all at once. The CFO (`server/agents/orgChart.js`) owns this:
+- **No seed, no balance, no budget ceiling.** Nothing is blocked for lack
+  of money. `server/finance/ledger.js` no longer has a `capital` or
+  `investment` transaction type, no starting balance, and no `getBalance()`.
+- **A venture is `active` the moment the studio starts it.** There is no
+  `proposed` waiting room and no greenlight step, because there was no
+  money to release. `propose_venture` starts it outright.
+- **Milestones survive; tranches don't.** How a venture proves itself is by
+  hitting milestones, not by unlocking money. `report_milestone_progress`
+  stays, `request_tranche` is gone entirely.
 
-- `report_milestone_progress` — records whether a specific milestone (by
-  index) was actually hit or missed, with a note. Call this when the
-  founder reports a real outcome, not a plan.
-- `request_tranche` — once a venture's current milestone is marked `done`
-  and there's a concrete next step, asks the founder to fund it. Only one
-  tranche request can be pending per venture at a time.
+#### What the books still track
 
-Every venture the CFO can see comes with its id, its milestones (with
-index and status), and any pending tranche request injected into context
-by `buildTreasuryContext()` in `index.js` — that's what lets the CFO call
-these tools with the right ids without guessing.
+The ledger is now only the money that's genuinely real, as an append-only
+transaction log (`server/data/ledger.json`, not committed — see
+`.gitignore`), so every figure is a fold over auditable history:
 
-A requested tranche doesn't touch the treasury until the founder approves
-it — `POST /api/ventures/:id/tranche/approve` checks the ask against the
-current balance (same insufficient-funds guard as the initial greenlight),
-records an `investment` transaction, and pushes a briefing into the
-Executive Team conversation the same way greenlighting does.
-`POST /api/ventures/:id/tranche/deny` clears the request without spending
-anything. Both the pending request and every milestone's status show up on
-the venture's card in the Ventures panel, with Approve/Deny buttons when
-there's something to act on.
+- `revenue` — money a venture actually brought in
+- `expense` — money actually paid out (a domain, an ad test, a subscription)
+
+`GET /api/ventures/ledger` returns `{ revenue, expenses, net, transactions }`.
+Net going negative is a legitimate state, not an error — there's no balance
+to overdraw, so spending ahead of revenue simply reads as a loss.
+
+#### What actually constrains the company
+
+Removing a fake constraint doesn't make the company unconstrained, and
+`buildBusinessContext()` in `server/finance/context.js` tells every agent
+what the real ones are, in the same breath as telling it not to reason
+about affordability or runway:
+
+- **The founder's attention.** The genuinely scarce input. One thing can be
+  the priority at a time.
+- **Daily model spend.** Every agent turn draws on it, it's metered per UTC
+  day in `server/spend.js`, and it's capped (`DAILY_SPEND_CAP_USD`, default
+  $5) at the API gateway itself — so this is a hard limit enforced in code,
+  unlike the seed it replaced.
+- **Real-world reach.** Being active grants a venture nothing outside the
+  app. Deploying code or emailing a customer needs a scope the founder
+  grants that specific venture, with its own caps (see [Real code
+  deployment](#real-code-deployment) and [Real customer
+  email](#real-customer-email)).
+
+So the question the agents are told to ask is never "can we afford this" —
+it's "is this the most valuable thing to be working on."
 
 ### From brainstorm to venture to execution
 
 1. You brainstorm with the Venture Partner and its team in **Venture
-   Studio** mode. Every request also gets the current treasury balance and
-   existing ventures injected into context, so the Business Case Analyst
-   sizes its numbers against what's actually left, not a hypothetical
-   budget.
+   Studio** mode. Every request also gets the current business picture
+   (revenue, expenses, net, the active ventures and their milestones)
+   injected into context.
 2. Once you've converged on something real — and it clears the ambition
    bar — the Venture Partner calls its `propose_venture` action — a tool
-   that isn't delegation but a genuine side effect: it logs a venture
+   that isn't delegation but a genuine side effect: it starts a venture
    (title, problem, target customer, business model, market size, the path
-   to $1M+ revenue, a budget ask, and milestones) via
-   `server/finance/ventures.js`, with status `proposed`. This shows up
-   immediately in the **Ventures** panel in the sidebar.
-3. You **greenlight** a proposed venture from that panel
-   (`POST /api/ventures/:id/greenlight`). The server checks the ask against
-   the current balance (rejecting it if the treasury can't cover it),
-   records an `investment` transaction for the budget, and flips the
-   venture to `active`.
-4. Greenlighting also **pushes the venture straight into the Executive
-   Team's conversation**: the server synthesizes a briefing (the venture's
-   one-liner, business model, approved budget, and milestones) and runs it
-   through the CEO agent immediately, the same way a normal Executive Team
-   chat turn works. The CEO's kickoff response is appended to your
-   Executive Team conversation, and the UI switches you to that tab so you
-   can see the company start planning execution right away.
+   to $1M+ revenue, and milestones) via `server/finance/ventures.js`,
+   already `active`. This shows up immediately in the **Ventures** panel in
+   the sidebar, and sends you a notification email.
+3. That's it — there's no approval step, because starting costs nothing.
+   The Executive Team sees the venture in its context on the next turn and
+   can begin executing against its milestones.
+
+Auto-activation is safer than it sounds, and worth being precise about: an
+active venture can't touch anything real. `authorizeDeployment()` and
+`authorizeOutreach()` both still require a founder-linked repo or recipient
+allowlist *plus* an explicit enable before a single commit or email is
+possible. The greenlight gate protected a budget that no longer exists; the
+scope grants that protect real-world actions are untouched.
 
 ### Money flowing in and out
 
@@ -304,34 +323,35 @@ trackable through the Executive Team. The Finance & Accounting Manager
 
 - `log_revenue` — tell the CFO or Finance Manager that real money came in
   (e.g. "we got $200 from the newsletter's first paying subscribers"), and
-  it records a `revenue` transaction against the treasury.
+  it records a `revenue` transaction.
 - `log_expense` — tell them about real money you actually spent (e.g. "I
   just paid $12 for the domain"), and it records an `expense` transaction.
 
 Both accept an optional venture id to attribute the transaction to a
 specific venture, and both are instructed to only log money that's
 actually moved — not a forecast, a verbal promise, or a planned purchase —
-so the treasury stays an honest running total rather than a wish list.
+so the books stay an honest record rather than a wish list.
 
-This is deliberately a **manual, human-in-the-loop** ledger, not an
-autonomous one: nothing in this codebase can move real money on its own.
-The intended workflow is to fund a venture with real capital yourself
-(e.g. a $100-capped virtual card, so nothing can ever go over budget no
-matter what happens on the software side), have the agents recommend what
-to spend it on, make each purchase yourself, and then tell Finance what
-actually happened so the app's numbers track reality.
+This is deliberately a **manual, human-in-the-loop** ledger: nothing in this
+codebase can move real money on its own. Agents recommend what's worth
+paying for, you make the purchase, then you tell Finance what actually
+happened so the app's numbers track reality.
 
-Both the Executive Team and Venture Studio sidebars show the Treasury
-panel, and it refreshes after every chat turn in either mode, so a logged
-transaction shows up immediately regardless of which tab you're in.
+Both the Executive Team and Venture Studio sidebars show the Ventures
+panel with the performance figures, and it refreshes after every chat turn
+in either mode, so a logged transaction shows up immediately regardless of
+which tab you're in.
 
 ## Killing a venture
 
-Not every venture earns its next tranche. The CEO owns the call to end one
-via a `kill_venture` action — sets status to `killed`, records `killedAt`
-and a `killReason`, and clears any pending tranche request. Unlike
-greenlighting or approving a tranche, killing doesn't move any money, so
-it's also exposed as a direct, human-in-the-loop route
+Not every venture deserves to keep running. Killing matters *more* without
+a funding gate, not less: when starting is free and nothing runs out on its
+own, ending something deliberately is the only way a venture ever stops
+competing for attention. The CEO owns the call via a `kill_venture` action
+— sets status to `killed`, records `killedAt` and a `killReason`, and
+revokes its real-world reach (a killed venture fails `authorizeDeployment`
+and `authorizeOutreach` outright). It's also exposed as a direct,
+human-in-the-loop route
 (`POST /api/ventures/:id/kill`) with a "Kill venture" button on active
 venture cards in the Ventures panel — no need to go through a conversation
 if you've already decided. The CEO is instructed not to use it to hedge or
@@ -343,12 +363,12 @@ something that genuinely isn't working.
 The per-mode Ventures panel is deliberately narrow — a sidebar showing
 "what's relevant to this conversation." The **Portfolio** tab
 (`GET /api/ventures/portfolio`, `client/src/components/PortfolioView.jsx`)
-is the company-wide view instead: every venture ever created — proposed,
-active, or killed — sorted active-first, each enriched with its own slice
-of the ledger (`allocated`, `revenue`, `expense`, `net`, computed by
-filtering the ledger's transactions by `ventureId`) and a milestone
-summary (`done`/`missed`/`total`). Stat tiles at the top roll all of that
-up across the whole portfolio, alongside the current treasury balance.
+is the company-wide view instead: every venture ever created — active or
+killed — sorted active-first, each enriched with its own slice of the
+ledger (`revenue`, `expense`, `net`, computed by filtering the ledger's
+transactions by `ventureId`) and a milestone summary
+(`done`/`missed`/`total`). Stat tiles at the top roll all of that up
+across the whole portfolio.
 This is the place to compare ventures side by side once there's more than
 one running, rather than reacting to them one at a time in chat.
 
@@ -359,7 +379,7 @@ which is fine for a quick demo but not for something meant to run as an
 ongoing company — a server restart (a crash, a deploy, an accidental
 `Ctrl+C`) would silently wipe every conversation. `server/sessionStore.js`
 persists all three modes' histories to `server/data/sessions.json` (same
-`store.js` helper the treasury and ventures use, now relocated to
+`store.js` helper the ledger and ventures use, now relocated to
 `server/store.js` since it was never actually finance-specific): each Map
 is seeded from disk at startup, and every write (`.set`) or reset
 (`.delete`) is mirrored to disk in the same call. Nothing else about the
@@ -400,11 +420,11 @@ runs on its own, once a day, with nobody prompting it:
 2. **Opportunity review.** The Venture Studio then gets the leadership
    report as context and runs a quick pass: does anything in it (or
    anything the team notices on its own) clear the venture-scale ambition
-   bar? If so, it logs a proposal with the same `propose_venture` action
-   used in an interactive brainstorm; if not, it says so plainly rather
-   than forcing one.
+   bar? If so, it starts one with the same `propose_venture` action used
+   in an interactive brainstorm; if not, it says so plainly rather than
+   forcing one.
 3. **The report is saved, then emailed.** Both replies, their full
-   delegation traces, any new venture ids, and a treasury snapshot are
+   delegation traces, any new venture ids, and a snapshot of the books are
    written to `server/dailyReports.json` (via `server/dailyReports.js`),
    keyed by date. A **Daily Report** tab
    (`client/src/components/DailyReportView.jsx`) lists every past report
@@ -417,21 +437,20 @@ runs on its own, once a day, with nobody prompting it:
    already saved and viewable either way.
 
 **This cycle still cannot move money or kill a venture on its own.** The
-leadership sync isn't given the treasury/venture action handlers that
+leadership sync isn't given the book-keeping/venture action handlers that
 depend on a real founder-reported outcome (`log_revenue`, `log_expense`,
-`report_milestone_progress`, `request_tranche`, `kill_venture`) — it's
+`report_milestone_progress`, `kill_venture`) — it's
 explicitly told this is an internal status meeting, not that kind of
 event, and even a stray tool call would resolve as an unknown tool rather
 than a silent no-op. It *does* now carry `deploy_code` and
 `send_customer_email` — see "Full autonomy" further down for why those
 two specifically were judged safe to run unattended, and why the rest
-weren't. The Studio phase can still also cause a new venture *proposal*,
-which spends nothing and still needs the founder's greenlight
-(`POST /api/ventures/:id/greenlight`) before any budget is allocated —
-the same human-in-the-loop guarantee every other capital-moving action in
-this app still has. Autonomy here means the *information gathering and
-recommending* runs itself, plus — now — two narrowly-scoped real actions;
-spending real (simulated) money never does.
+weren't. The Studio phase can also start a new venture on its own, which
+costs nothing and grants it nothing: a new venture has no repo and no
+outreach list until the founder gives it one, so the real-world reach
+stays behind the same scope grants as ever. Autonomy here means the
+*information gathering and recommending* runs itself, plus two
+narrowly-scoped real actions the founder pre-authorized per venture.
 
 `server/scheduler.js` targets a specific wall-clock time — **8:00 AM
 Bangkok time**, which is always 01:00 UTC (`Asia/Bangkok` is a fixed
@@ -462,7 +481,7 @@ same idea (or a thin reskin of it) indefinitely. `buildPastLessonsContext()`
 (`server/finance/context.js`) lists every killed venture's title, one-liner,
 and `killReason`, scoped to what's actually on record rather than invented
 "lessons learned." `buildStudioContext()` joins that with the existing
-treasury context into what `venture_partner` and its whole team (including
+business context into what `venture_partner` and its whole team (including
 `validation_critic`) see — used everywhere the Studio runs: the interactive
 `/api/studio/chat` route and the daily meeting's opportunity-review phase.
 Both prompts are updated to actually use it: the Venture Partner is told to
@@ -505,25 +524,25 @@ without changing what any agent is allowed to do:
 
 The daily report was the only email this app sent — useful for a summary,
 useless the moment a real decision shows up mid-day and sits unseen in the
-UI until the founder happens to check. `server/email.js` now sends two more,
-narrower emails the instant the thing they're about actually happens:
+UI until the founder happens to check. `server/email.js` now sends narrower
+emails the instant the thing they're about actually happens:
 
-- **A new venture proposal** (`sendVentureProposedEmail`) — fires from
+- **A new venture** (`sendVentureProposedEmail`) — fires from
   `handleProposeVenture` in `server/actionHandlers.js`, so it fires the same
-  way whether the proposal came from an interactive Venture Studio
+  way whether the venture came from an interactive Venture Studio
   conversation or the autonomous daily cycle's opportunity-review phase.
-- **A tranche request** (`sendTrancheRequestEmail`) — fires from
-  `handleRequestTranche`, which matters most exactly when nobody's
-  watching: greenlighting a venture or approving a tranche triggers a
-  company briefing conversation (see the `/api/ventures/:id/greenlight` and
-  `/api/ventures/:id/tranche/approve` routes in `index.js`), and the CFO
-  can ask for the *next* tranche as part of that same briefing, seconds
-  after the founder clicked approve and moved on.
+  Since a venture is active on creation, this informs rather than asks: it
+  names the venture and its first milestone, and says plainly that being
+  active buys it no reach outside the app.
+- **A real deployment** (`sendDeploymentEmail`) and **a real customer
+  email** (`sendOutreachAlertEmail`) — the two actions that genuinely
+  affect the outside world, so the founder hears about each one as it
+  happens, including from an unattended daily cycle.
 
-Both share the same opt-in gate as the daily report (`SMTP_HOST` +
+These share the same opt-in gate as the daily report (`SMTP_HOST` +
 `REPORT_EMAIL_TO`) and the same failure isolation: a `notify()` wrapper in
 `actionHandlers.js` logs a failed send but never lets it break the action
-itself — the venture or tranche request is already real either way, so a
+itself — the venture or the commit is already real either way, so a
 bad SMTP config should show up as a log line, not a broken conversation.
 
 ## Cost and latency, not just "it ran"
@@ -547,7 +566,7 @@ times the whole cycle wall-clock (`Date.now()` at start and end), and
 stores `usage`/`costUsd`/`durationMs` on the saved report alongside
 everything else. The daily email (`server/email.js`) and the Daily Report
 tab (`client/src/components/DailyReportView.jsx`) both show it — "47.3s ·
-$0.08 · 18,342 in / 4,021 out tokens" next to the treasury line — and both
+$0.08 · 18,342 in / 4,021 out tokens" next to the performance line — and both
 guard for older reports saved before this existed, so a report from before
 this feature just omits the line instead of printing `undefined`.
 
@@ -556,19 +575,20 @@ this feature just omits the line instead of printing `undefined`.
 `server/test/` checks the data layer (ledger math, venture state
 transitions) — none of it checks whether an agent's actual *judgment* is
 any good, so a prompt change could quietly make the CFO worse at refusing
-a bad tranche ask and nothing would catch it. `server/eval/` is a starter
-behavioral eval: 10 scenarios (`scenarios.js`) run against the real org
-chart and real action handlers via `server/eval/runner.mjs`, each
-targeting one judgment call — does the CFO request a tranche when a
-milestone is actually done, and correctly refuse when it isn't; does the
+to record a milestone that hasn't happened and nothing would catch it.
+`server/eval/` is a starter behavioral eval: 10 scenarios
+(`scenarios.js`) run against the real org chart and real action handlers
+via `server/eval/runner.mjs`, each targeting one judgment call — does the
+CFO record a milestone the founder reports as genuinely shipped, and
+correctly refuse to record one that's still just a plan; does the
 Validation Critic flag a lifestyle idea as too small without also
 flagging a genuinely large one; does the Venture Partner notice a pitch
 resembles something already killed (exercising the `pastLessons` context
 from earlier in this doc); does the CEO kill a venture on a clear reason
 but not on vague doubt alone.
 
-Most grades read real end state (did `pendingTranche` actually get set,
-did the ledger balance actually move) rather than parsing the reply text,
+Most grades read real end state (did the milestone's status actually
+change, did the ledger's net actually move) rather than parsing the reply text,
 following the same principle as the Daily Cycle's own action handlers:
 trust what actually happened over what was said. It reuses the
 `JARVIS_DATA_DIR` isolation the unit tests already use, so it never
@@ -598,7 +618,7 @@ week versus which were mentioned once and dropped, and how the proposals
 that did get made are actually doing. It's read-only by construction —
 `actionHandlers: {}` — the same guarantee the daily cycle's own studio
 phase relies on: a weekly reflection can look at everything and say
-anything, but it can't move money, greenlight a venture, or touch the
+anything, but it can't move money, start or kill a venture, or touch the
 ledger. `server/weeklyReflections.js` stores the result the same way
 `dailyReports.js` stores daily ones, keyed by `weekEnding` so re-running
 mid-week overwrites rather than duplicates.
@@ -607,7 +627,7 @@ The reflection then feeds back into the same context every ideation
 session already reads: `buildWeeklyReflectionContext()` in
 `server/finance/context.js` surfaces the latest reflection (or says
 plainly that none has run yet), and `buildStudioContext()` now joins it
-alongside the treasury and past-lessons context. The `venture_partner`
+alongside the business and past-lessons context. The `venture_partner`
 prompt in `server/agents/ideationTeam.js` is updated to actually treat it
 as an input rather than a formality — told explicitly to let a named
 pattern change what it pitches today rather than starting cold every
@@ -636,7 +656,7 @@ of reports back to back to notice it themselves.
 
 ## Real code deployment: the first action that leaves the simulation
 
-Everything above — revenue, expenses, tranches, kills, even the weekly
+Everything above — revenue, expenses, milestones, kills, even the weekly
 reflection — happens entirely inside this app's own data files. Nothing
 touched a real, external system, so the worst-case blast radius of any
 mistake was always "the numbers in `server/data/` are wrong." Real code
@@ -645,9 +665,9 @@ Engineering Lead can now make an actual, permanent, publicly-visible commit
 to a real GitHub repo. Getting that guardrail right mattered more than
 getting it done fast.
 
-The model isn't a per-deploy approval gate like a tranche request — that
-would just be a slower version of what already exists, not a new
-capability. Instead, the founder grants a bounded **scope** once per
+The model isn't a per-deploy approval gate — asking the founder to sign off
+on every commit would just be a slower way to do what the founder could do
+themselves, not a new capability. Instead, the founder grants a bounded **scope** once per
 venture, and every deploy inside that scope runs without asking again:
 
 - **`linkRepo(id, { owner, name, branch, allowedPaths, maxPerWeek })`**
@@ -692,7 +712,7 @@ the fact.
 (`runCompanyTurn` in `server/index.js`) and into the autonomous daily
 leadership sync (`dailyMeeting.js`) — see "Full autonomy" below for why
 the daily cycle earned that trust while the weekly reflection and every
-other treasury/venture action still haven't.
+other book-keeping/venture action still haven't.
 
 The Ventures panel (`client/src/components/VenturesPanel.jsx`) is where
 the scope is actually granted: a form to link a repo (owner, name, branch,
@@ -726,8 +746,8 @@ an inbox.
   specific reason rather than silently dropping the message.
 
 No new external service is needed — `server/email.js` already has a
-working SMTP transport for founder notifications (the daily report,
-tranche/proposal alerts). `sendCustomerEmail(to, subject, body)` is the
+working SMTP transport for founder notifications (the daily report, new
+venture and real-action alerts). `sendCustomerEmail(to, subject, body)` is the
 same `sendEmail()` used everywhere else, just given a real recipient
 address instead of defaulting to `REPORT_EMAIL_TO`; `isEmailConfigured()`
 exposes the same `SMTP_HOST` + `REPORT_EMAIL_TO` gate every other email in
@@ -768,15 +788,15 @@ leadership sync can now call `deploy_code` and `send_customer_email` too**
 (`dailyMeeting.js`), with nobody watching it happen. The weekly reflection
 still can't — it stays a pure retrospective, `actionHandlers: {}`, on
 purpose (see `weeklyReflection.js`'s file header) — and every other
-treasury/venture action (`log_revenue`, `log_expense`,
-`report_milestone_progress`, `request_tranche`, `kill_venture`) is still
+book-keeping/venture action (`log_revenue`, `log_expense`,
+`report_milestone_progress`, `kill_venture`) is still
 not wired into either autonomous cycle, because those specifically depend
 on the founder having personally reported a real-world outcome; nobody
 reports anything to an unattended run, so there's nothing genuine for them
 to log.
 
-The reasoning for singling out these two: unlike a tranche request or a
-logged expense, `deploy_code` and `send_customer_email` don't need the
+The reasoning for singling out these two: unlike a logged expense or a
+milestone update, `deploy_code` and `send_customer_email` don't need the
 founder to say what happened — they act inside a scope (a linked repo, an
 outreach allowlist) the founder already granted *in advance*, specifically
 so an agent could act without asking again. That grant doesn't distinguish
@@ -881,8 +901,10 @@ through — checks it *before* each request and records the response's real
 token cost immediately after. Over the cap, agent runs stop with a plain,
 actionable message (surfaced as a 429 rather than a generic 502, since "you
 hit your own ceiling" is not "the model is unreachable"). The default is
-$5/day, overridable with `DAILY_SPEND_CAP_USD`, and today's balance shows
-under the treasury in the Ventures panel.
+$5/day, overridable with `DAILY_SPEND_CAP_USD`, and today's spend shows
+under the performance figures in the Ventures panel. This is the company's
+one genuine budget ceiling — and unlike the seed capital it outlived, it's
+enforced in code at the gateway rather than described in a prompt.
 
 **Caps that a single run can't spend all at once.** The weekly cap alone let
 one unattended run use a whole week's allowance in a single pass, so both
@@ -927,7 +949,7 @@ Two halves, matching the two kinds of thing worth remembering:
 `buildOutreachContext()` (`server/finance/context.js`) puts both in front of
 the agent *before* it drafts, which is the only moment where knowing changes
 what happens, and `buildCompanyContext()` is what the Executive Team now
-gets — treasury plus contact history. The Venture Studio deliberately still
+gets — the business picture plus contact history. The Venture Studio deliberately still
 gets `buildStudioContext()` without it: ideation doesn't send email, and the
 contact list would be noise in a brainstorm.
 

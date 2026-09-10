@@ -13,7 +13,7 @@
 
 import { runAgent } from './agents/agentRunner.js';
 import { AGENTS as COMPANY_AGENTS, ROOT_AGENT_ID as COMPANY_ROOT } from './agents/orgChart.js';
-import { buildTreasuryContext } from './finance/context.js';
+import { buildBusinessContext } from './finance/context.js';
 import { listVentures } from './finance/ventures.js';
 import { getLedger } from './finance/ledger.js';
 import { listDailyReports } from './dailyReports.js';
@@ -99,7 +99,7 @@ export async function runWeeklyReflection({ anthropic }) {
         agentId: COMPANY_ROOT,
         messages: [{ role: 'user', content: buildReflectionKickoff(weekEnding, weekReports) }],
         actionHandlers: {}, // read-only analysis — see file header
-        extraContext: buildTreasuryContext(),
+        extraContext: buildBusinessContext(),
       });
       text = result.text;
       trace = result.trace;

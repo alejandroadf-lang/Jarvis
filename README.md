@@ -12,29 +12,41 @@ agents that delegate to each other via tool use:
 - **Venture Studio**: a brainstorming team (Venture Partner, Market
   Researcher, Ideation Facilitator, Business Case Analyst, Scale
   Strategist, Validation Critic) that helps find and pressure-test the
-  next idea, then turns it into a funded venture — tracked against a real
-  $100 seed-capital ledger, funded in milestone-based tranches rather than
-  all at once — and hands it to the Executive Team to build.
+  next idea, then starts it as a real venture and hands it to the
+  Executive Team to build.
 
-A **Portfolio** tab rounds it out: every venture ever created (proposed,
-active, or killed) with its own slice of the ledger and milestone
-progress, so you can compare the whole company at a glance instead of one
-venture at a time.
+**It runs on no capital.** That's the deliberate design: the biggest cost
+in a normal business is people, and this company's people are agents, so
+there's no seed, no budget ceiling, and no funding approval standing
+between an idea and starting it. What's tracked instead is only the money
+that's genuinely real — revenue actually earned and expenses actually paid
+— plus the constraints that actually bind: the founder's attention, a hard
+daily model-spend cap, and per-venture scopes for anything that reaches the
+outside world. See
+[the economic model](./ORG_STRUCTURE.md#the-economic-model-no-capital-required)
+for why the earlier $100-seed version was making the company worse.
+
+A **Portfolio** tab rounds it out: every venture ever created (active or
+killed) with its own slice of the ledger and milestone progress, so you
+can compare the whole company at a glance instead of one venture at a
+time.
 
 The management team also runs itself day to day: once every 24 hours, at
 8:00 AM Bangkok time (no one needs to start the conversation), the
 Executive Team holds a leadership sync — the CEO checks in with the
 C-suite, who check in with their own teams — and the Venture Studio
 reviews whatever opportunities came out of it for a possible new
-proposal. The result is saved as a **Daily Report** you can read at any
+venture. The result is saved as a **Daily Report** you can read at any
 time, or trigger on demand with a "run now" button, and — if you set
 `SMTP_HOST`/`REPORT_EMAIL_TO` in `server/.env` — emailed to you as soon
-as it's ready. It's read-only by design: this cycle can log a new venture
-*proposal*, but it can never move treasury money or kill a venture on its
-own — a human still greenlights anything that spends.
+as it's ready. It can start a venture on its own (that costs nothing and
+grants it nothing), and it can deploy code or email a customer for a
+venture you've already granted that specific scope to — but it can never
+touch the books or kill a venture, since those depend on you reporting a
+real outcome.
 
 See [ORG_STRUCTURE.md](./ORG_STRUCTURE.md) for the full architecture,
-roster, and how capital flows from idea to execution.
+roster, and how an idea becomes execution.
 
 ## Stack
 
@@ -63,7 +75,8 @@ npm run lint  # lints the client
 ```
 
 The server tests cover the pure data-layer logic — the ledger, ventures
-(including milestones, tranches, and kill), and session persistence — by
+(including milestones, real-action scopes, and kill), and session
+persistence — by
 pointing `server/store.js` at a throwaway temp directory (`JARVIS_DATA_DIR`)
 instead of the real `server/data/`. They don't touch the Claude API. A
 GitHub Actions workflow (`.github/workflows/ci.yml`) runs both on every push
@@ -94,7 +107,7 @@ be. [Railway](https://railway.app) is a simple way to keep it running
    builder explicitly, so it won't try to guess otherwise) — no other
    config needed to get it building.
 2. **Add a Volume**, mounted at `/data`. The app stores everything it
-   shouldn't lose — the treasury, ventures, session history, daily
+   shouldn't lose — the ledger, ventures, session history, daily
    reports — as JSON files (see `server/store.js`) under whatever
    `JARVIS_DATA_DIR` points at. Without a volume, that state lives in the
    container's writable layer and is wiped on every redeploy; with one,

@@ -11,7 +11,6 @@ function StatTile({ label, value, tone = 'text-cyan-100' }) {
 }
 
 const STATUS_STYLE = {
-  proposed: 'text-amber-400/80 border-amber-500/30',
   active: 'text-emerald-400/80 border-emerald-500/30',
   killed: 'text-red-400/70 border-red-500/30',
 };
@@ -38,17 +37,15 @@ export default function PortfolioView({ reloadKey }) {
     return <p className="text-xs text-cyan-500/50 p-6">Loading portfolio…</p>;
   }
 
-  const { ventures, totals, treasury } = data;
-  const order = { active: 0, proposed: 1, killed: 2 };
+  const { ventures, totals } = data;
+  const order = { active: 0, killed: 1 };
   const sorted = [...ventures].sort((a, b) => (order[a.status] ?? 3) - (order[b.status] ?? 3));
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
       <h1 className="text-sm font-semibold uppercase tracking-wide text-cyan-300 mb-4">Portfolio</h1>
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
-        <StatTile label="Treasury" value={`${fmtMoney(treasury.balance)} / $${treasury.startingCapital}`} />
-        <StatTile label="Allocated" value={fmtMoney(totals.allocated)} />
+      <div className="grid grid-cols-3 gap-3 mb-6">
         <StatTile label="Revenue" value={fmtMoney(totals.revenue)} tone="text-emerald-300" />
         <StatTile label="Expenses" value={fmtMoney(totals.expense)} tone="text-red-300" />
         <StatTile label="Net" value={fmtMoney(totals.net)} tone={totals.net >= 0 ? 'text-emerald-300' : 'text-red-300'} />
@@ -56,7 +53,7 @@ export default function PortfolioView({ reloadKey }) {
 
       {sorted.length === 0 ? (
         <p className="text-xs text-cyan-500/50">
-          No ventures yet — propose one in Venture Studio and greenlight it to see it here.
+          No ventures yet — brainstorm in Venture Studio until an idea clears the bar.
         </p>
       ) : (
         <div className="overflow-x-auto border border-cyan-500/20 rounded-lg">
@@ -66,7 +63,6 @@ export default function PortfolioView({ reloadKey }) {
                 <th className="px-3 py-2">Venture</th>
                 <th className="px-3 py-2">Status</th>
                 <th className="px-3 py-2">Milestones</th>
-                <th className="px-3 py-2 text-right">Allocated</th>
                 <th className="px-3 py-2 text-right">Revenue</th>
                 <th className="px-3 py-2 text-right">Expense</th>
                 <th className="px-3 py-2 text-right">Net</th>
@@ -95,7 +91,6 @@ export default function PortfolioView({ reloadKey }) {
                     {v.milestoneSummary.done}/{v.milestoneSummary.total} done
                     {v.milestoneSummary.missed > 0 && `, ${v.milestoneSummary.missed} missed`}
                   </td>
-                  <td className="px-3 py-2 text-right text-cyan-100">{fmtMoney(v.financials.allocated)}</td>
                   <td className="px-3 py-2 text-right text-emerald-300">{fmtMoney(v.financials.revenue)}</td>
                   <td className="px-3 py-2 text-right text-red-300">{fmtMoney(v.financials.expense)}</td>
                   <td

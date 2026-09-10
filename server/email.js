@@ -1,7 +1,8 @@
-// Emails the daily report (see dailyMeeting.js) and, separately, a
-// decision-needed nudge the moment one comes up (see actionHandlers.js) —
-// a new tranche request or venture proposal, rather than only surfacing in
-// the next daily digest. Opt-in via env vars: without SMTP_HOST and
+// Emails the daily report (see dailyMeeting.js) and, separately, a nudge
+// the moment something worth knowing happens (see actionHandlers.js) — a
+// venture starting, a real commit, a real customer email — rather than
+// only surfacing in the next daily digest. Opt-in via env vars: without
+// SMTP_HOST and
 // REPORT_EMAIL_TO both set, every send here is a silent no-op — not
 // everyone running this app wants, or has configured, outbound email.
 // Nothing here decides *whether* something happened or *what* it says;
@@ -50,7 +51,9 @@ async function sendEmail(subject, text, to = process.env.REPORT_EMAIL_TO) {
 
 export function formatReportEmail(report) {
   const subject = `Daily Company Report — ${report.date}`;
-  const lines = [`Treasury: $${report.treasury.balance.toFixed(2)} / $${report.treasury.startingCapital} starting seed`];
+  const lines = [
+    `Revenue to date: $${report.business.revenue.toFixed(2)} · expenses: $${report.business.expenses.toFixed(2)} · net: $${report.business.net.toFixed(2)}`,
+  ];
   // Older/synthetic reports may predate usage tracking — skip the line
   // rather than printing "undefined".
   if (report.usage && typeof report.costUsd === 'number' && typeof report.durationMs === 'number') {
@@ -69,7 +72,7 @@ export function formatReportEmail(report) {
   if (report.proposedVentureIds.length > 0) {
     lines.push(
       '',
-      `New venture proposal${report.proposedVentureIds.length > 1 ? 's' : ''} logged today: ${report.proposedVentureIds.join(', ')} — review and greenlight from the Ventures panel.`
+      `New venture${report.proposedVentureIds.length > 1 ? 's' : ''} started today: ${report.proposedVentureIds.join(', ')} — review from the Ventures panel.`
     );
   }
   return { subject, text: lines.join('\n') };
@@ -80,34 +83,16 @@ export async function sendDailyReportEmail(report) {
   return sendEmail(subject, text);
 }
 
-export function formatTrancheRequestEmail(venture) {
-  const pending = venture.pendingTranche;
-  const subject = `Action needed: tranche request for "${venture.title}"`;
-  const text = [
-    `The CFO requested a follow-on tranche for "${venture.title}".`,
-    '',
-    `Amount: $${pending.amount}`,
-    `For: ${pending.description || '(no description given)'}`,
-    '',
-    'Approve or deny it from the Ventures panel.',
-  ].join('\n');
-  return { subject, text };
-}
-
-export async function sendTrancheRequestEmail(venture) {
-  const { subject, text } = formatTrancheRequestEmail(venture);
-  return sendEmail(subject, text);
-}
-
 export function formatVentureProposedEmail(venture) {
-  const subject = `New venture proposal: "${venture.title}"`;
+  const subject = `New venture started: "${venture.title}"`;
+  const firstMilestone = venture.milestones?.[0]?.title;
   const text = [
-    `A new venture was proposed: "${venture.title}".`,
+    `The studio started a new venture: "${venture.title}".`,
     venture.oneLiner ? venture.oneLiner : null,
     '',
-    `Asking $${venture.budgetRequested} to fund the first milestone.`,
+    firstMilestone ? `First milestone: ${firstMilestone}` : 'No milestones listed yet.',
     '',
-    'Review and greenlight it from the Ventures panel if it looks worth funding.',
+    "It's active now, but has no reach outside the app: linking a repo or an outreach list is something you grant it from the Ventures panel.",
   ]
     .filter((line) => line !== null)
     .join('\n');

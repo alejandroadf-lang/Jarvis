@@ -25,7 +25,7 @@ function makeReport(date, overrides = {}) {
     leadership: { reply: 'status update', trace: [] },
     studio: { reply: 'nothing to propose today', trace: [] },
     proposedVentureIds: [],
-    treasury: { balance: 100, startingCapital: 100 },
+    business: { revenue: 0, expenses: 0, net: 0 },
     ...overrides,
   };
 }

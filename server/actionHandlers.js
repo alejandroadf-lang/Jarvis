@@ -11,7 +11,6 @@ import {
   getVenture,
   createVenture,
   setMilestoneStatus,
-  requestTranche,
   killVenture,
   authorizeDeployment,
   recordDeployment,
@@ -21,7 +20,6 @@ import {
 } from './finance/ventures.js';
 import {
   sendVentureProposedEmail,
-  sendTrancheRequestEmail,
   sendDeploymentEmail,
   sendCustomerEmail,
   sendOutreachAlertEmail,
@@ -29,13 +27,10 @@ import {
 } from './email.js';
 import { commitFile, isGithubConfigured } from './deploy/github.js';
 
-// A founder who greenlit a venture or approved a tranche and walked away
-// won't see the CFO's next move until they happen to check back — these
-// two are the actual decision points worth interrupting for (money about
-// to be asked for, or a new idea worth a look), so they email immediately
-// rather than waiting for the next daily digest. Never lets an email
-// failure break the action itself: the venture is already logged either
-// way, so a bad SMTP config should show up as a log line, not a broken
+// Some things shouldn't wait for the next daily digest: a venture starting
+// on its own, a real commit, a real email going out. Never lets a send
+// failure break the action itself — the thing already happened either way,
+// so a bad SMTP config should show up as a log line, not a broken
 // conversation.
 async function notify(sendFn, ...args) {
   try {
@@ -48,7 +43,7 @@ async function notify(sendFn, ...args) {
 export async function handleProposeVenture(input) {
   const venture = createVenture(input);
   await notify(sendVentureProposedEmail, venture);
-  return `Logged venture proposal ${venture.id} ("${venture.title}"), asking $${venture.budgetRequested}. Status: proposed. Tell the founder they can greenlight it from the Ventures panel to allocate budget and hand it to the executive team.`;
+  return `Started venture ${venture.id} ("${venture.title}") — it's active now and the executive team can pick it up. It has no real-world reach yet: linking a repo or an outreach list is something the founder grants it from the Ventures panel.`;
 }
 
 // Shared validation for log_revenue/log_expense: a positive amount and,
@@ -81,8 +76,8 @@ export async function handleLogRevenue(input) {
 
   const { amount, ventureId, description } = resolved;
   addTransaction({ type: 'revenue', amount, description, ventureId });
-  const { balance } = getLedger();
-  return `Logged $${amount} in revenue${ventureId ? ` for venture ${ventureId}` : ''} ("${description}"). Treasury balance is now $${balance.toFixed(2)}.`;
+  const { revenue, net } = getLedger();
+  return `Logged $${amount} in revenue${ventureId ? ` for venture ${ventureId}` : ''} ("${description}"). Revenue to date is now $${revenue.toFixed(2)}, net $${net.toFixed(2)}.`;
 }
 
 export async function handleLogExpense(input) {
@@ -91,8 +86,8 @@ export async function handleLogExpense(input) {
 
   const { amount, ventureId, description } = resolved;
   addTransaction({ type: 'expense', amount, description, ventureId });
-  const { balance } = getLedger();
-  return `Logged $${amount} in expenses${ventureId ? ` for venture ${ventureId}` : ''} ("${description}"). Treasury balance is now $${balance.toFixed(2)}.`;
+  const { expenses, net } = getLedger();
+  return `Logged $${amount} in expenses${ventureId ? ` for venture ${ventureId}` : ''} ("${description}"). Expenses to date are now $${expenses.toFixed(2)}, net $${net.toFixed(2)}.`;
 }
 
 export async function handleReportMilestoneProgress(input) {
@@ -109,20 +104,6 @@ export async function handleReportMilestoneProgress(input) {
     return `Marked milestone [${index}] "${milestone.title}" as ${input.status} for "${venture.title}".`;
   } catch (err) {
     return `Could not update milestone: ${err.message}`;
-  }
-}
-
-export async function handleRequestTranche(input) {
-  const amount = Number(input.amount);
-  if (!Number.isFinite(amount) || amount <= 0) {
-    return 'Could not request tranche: amount must be a positive number.';
-  }
-  try {
-    const venture = requestTranche(input.ventureId, { amount, description: input.description });
-    await notify(sendTrancheRequestEmail, venture);
-    return `Requested a $${amount} tranche for "${venture.title}" (${input.description}). Tell the founder they can approve it from the Ventures panel to add it to the treasury allocation.`;
-  } catch (err) {
-    return `Could not request tranche: ${err.message}`;
   }
 }
 

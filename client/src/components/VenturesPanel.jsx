@@ -2,9 +2,6 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   fetchVentures,
   fetchLedger,
-  greenlightVenture,
-  approveTranche,
-  denyTranche,
   killVenture,
   linkVentureRepo,
   enableVentureDeployment,
@@ -67,7 +64,6 @@ function KillSwitch({ state, onHalt, onResume, busy }) {
 
 function StatusBadge({ status }) {
   const styles = {
-    proposed: 'text-amber-400/80 border-amber-500/30',
     active: 'text-emerald-400/80 border-emerald-500/30',
     killed: 'text-red-400/70 border-red-500/30',
   };
@@ -368,8 +364,6 @@ function OutreachScope({ venture, onLinkOutreach, onEnable, onDisable, busy }) {
 function VentureCard({
   venture,
   action,
-  onApproveTranche,
-  onDenyTranche,
   onKill,
   onLinkRepo,
   onEnableDeployment,
@@ -396,33 +390,7 @@ function VentureCard({
           <span className="text-cyan-500/70">Path to $1M+:</span> {venture.pathToMillions}
         </p>
       )}
-      <p className="text-[11px] text-cyan-400/70 mt-1">
-        {venture.status === 'active' ? 'Funded so far' : 'Asking'} ${venture.budgetRequested}
-      </p>
       <MilestoneList milestones={venture.milestones} />
-      {venture.pendingTranche && (
-        <div className="mt-2 border border-amber-500/30 rounded p-2 space-y-1">
-          <p className="text-[11px] text-amber-400/80">
-            Tranche requested: ${venture.pendingTranche.amount} — {venture.pendingTranche.description}
-          </p>
-          <div className="flex gap-2">
-            <button
-              onClick={() => onApproveTranche(venture.id)}
-              disabled={busy}
-              className="text-xs bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-white rounded-full px-3 py-1"
-            >
-              {busy ? 'Approving…' : 'Approve tranche'}
-            </button>
-            <button
-              onClick={() => onDenyTranche(venture.id)}
-              disabled={busy}
-              className="text-xs border border-cyan-500/30 text-cyan-400/80 hover:text-cyan-300 disabled:opacity-40 rounded-full px-3 py-1"
-            >
-              Deny
-            </button>
-          </div>
-        </div>
-      )}
       {onLinkRepo && (
         <DeploymentScope
           venture={venture}
@@ -455,7 +423,7 @@ function VentureCard({
   );
 }
 
-export default function VenturesPanel({ sessionId, reloadKey, onGreenlit }) {
+export default function VenturesPanel({ reloadKey }) {
   const [ledger, setLedger] = useState(null);
   const [ventures, setVentures] = useState([]);
   const [killSwitch, setKillSwitch] = useState(null);
@@ -477,47 +445,6 @@ export default function VenturesPanel({ sessionId, reloadKey, onGreenlit }) {
   useEffect(() => {
     load();
   }, [load, reloadKey]);
-
-  const handleGreenlight = async (id) => {
-    setBusyId(id);
-    setError(null);
-    try {
-      const result = await greenlightVenture(id, sessionId);
-      load();
-      onGreenlit?.(result);
-    } catch (err) {
-      setError(err.response?.data?.error || err.message);
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  const handleApproveTranche = async (id) => {
-    setBusyId(id);
-    setError(null);
-    try {
-      const result = await approveTranche(id, sessionId);
-      load();
-      onGreenlit?.(result);
-    } catch (err) {
-      setError(err.response?.data?.error || err.message);
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  const handleDenyTranche = async (id) => {
-    setBusyId(id);
-    setError(null);
-    try {
-      await denyTranche(id);
-      load();
-    } catch (err) {
-      setError(err.response?.data?.error || err.message);
-    } finally {
-      setBusyId(null);
-    }
-  };
 
   const handleKill = async (id) => {
     const reason = window.prompt('Why is this venture being killed?');
@@ -642,10 +569,9 @@ export default function VenturesPanel({ sessionId, reloadKey, onGreenlit }) {
     return <p className="text-xs text-red-400 p-4">{error}</p>;
   }
   if (!ledger) {
-    return <p className="text-xs text-cyan-500/50 p-4">Loading treasury…</p>;
+    return <p className="text-xs text-cyan-500/50 p-4">Loading…</p>;
   }
 
-  const proposed = ventures.filter((v) => v.status === 'proposed');
   const active = ventures.filter((v) => v.status === 'active');
 
   return (
@@ -657,10 +583,13 @@ export default function VenturesPanel({ sessionId, reloadKey, onGreenlit }) {
         busy={busyId === 'kill-switch'}
       />
 
-      <h2 className="text-xs font-semibold uppercase tracking-wide text-cyan-300 mb-2">Treasury</h2>
+      <h2 className="text-xs font-semibold uppercase tracking-wide text-cyan-300 mb-2">Performance</h2>
       <p className="text-2xl font-semibold text-cyan-100">
-        ${ledger.balance.toFixed(0)}
-        <span className="text-xs text-cyan-500/50 font-normal"> / ${ledger.startingCapital} seed</span>
+        {formatUsd(ledger.net)}
+        <span className="text-xs text-cyan-500/50 font-normal"> net</span>
+      </p>
+      <p className="text-[11px] text-cyan-500/50 mt-0.5">
+        {formatUsd(ledger.revenue)} earned · {formatUsd(ledger.expenses)} spent
       </p>
       {spend && (
         <p className={`text-[11px] mt-1 ${spend.overCap ? 'text-red-400/80' : 'text-cyan-500/50'}`}>
@@ -669,31 +598,10 @@ export default function VenturesPanel({ sessionId, reloadKey, onGreenlit }) {
         </p>
       )}
 
-      {proposed.length === 0 && active.length === 0 && (
+      {active.length === 0 && (
         <p className="text-[11px] text-cyan-500/50 mt-3">
-          No ventures yet — brainstorm above until an idea is worth proposing.
+          No ventures yet — brainstorm above until an idea clears the bar.
         </p>
-      )}
-
-      {proposed.length > 0 && (
-        <div className="mt-4 space-y-2">
-          <h3 className="text-[11px] uppercase tracking-wide text-cyan-500/60">Proposed</h3>
-          {proposed.map((v) => (
-            <VentureCard
-              key={v.id}
-              venture={v}
-              action={
-                <button
-                  onClick={() => handleGreenlight(v.id)}
-                  disabled={busyId === v.id}
-                  className="mt-2 text-xs bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-white rounded-full px-3 py-1"
-                >
-                  {busyId === v.id ? 'Greenlighting…' : 'Greenlight → push to company'}
-                </button>
-              }
-            />
-          ))}
-        </div>
       )}
 
       {active.length > 0 && (
@@ -703,8 +611,6 @@ export default function VenturesPanel({ sessionId, reloadKey, onGreenlit }) {
             <VentureCard
               key={v.id}
               venture={v}
-              onApproveTranche={handleApproveTranche}
-              onDenyTranche={handleDenyTranche}
               onKill={handleKill}
               onLinkRepo={handleLinkRepo}
               onEnableDeployment={handleEnableDeployment}

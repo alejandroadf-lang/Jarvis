@@ -1,42 +1,38 @@
-// The company's treasury: starts from a fixed seed capital and tracks every
-// dollar allocated to a venture or earned back from one. Deliberately a
-// flat transaction log rather than a mutable balance field, so the balance
-// is always just a fold over history and every change is auditable.
+// The company's books: real money that has come in, and real money that has
+// gone out. Nothing else.
+//
+// This used to model a $100 seed the company allocated to ventures in
+// tranches, which turned out to be measuring a cost this company doesn't
+// have. The expensive input in a normal business is people, and here the
+// people are agents — their marginal cost is model spend, which is metered
+// and capped separately (see server/spend.js) rather than pretended to be
+// venture capital. So there's no seed, no allocation, and no balance to run
+// out of; a venture is never blocked for lack of capital.
+//
+// What remains is genuinely real: revenue a venture actually earned, and
+// expenses actually paid (a domain, an ad test, a subscription). Still a
+// flat transaction log rather than a mutable total, so every figure is a
+// fold over auditable history.
 
 import { readJson, writeJson } from '../store.js';
 
 const FILE = 'ledger.json';
-export const STARTING_CAPITAL = 100;
 
-const VALID_TYPES = ['capital', 'investment', 'expense', 'revenue'];
+const VALID_TYPES = ['expense', 'revenue'];
 
 function load() {
-  return readJson(FILE, {
-    transactions: [
-      {
-        id: 'seed',
-        type: 'capital',
-        amount: STARTING_CAPITAL,
-        description: 'Founding seed capital',
-        ventureId: null,
-        createdAt: new Date(0).toISOString(),
-      },
-    ],
-  });
+  return readJson(FILE, { transactions: [] });
 }
 
-function signedAmount(tx) {
-  return tx.type === 'investment' || tx.type === 'expense' ? -Math.abs(tx.amount) : Math.abs(tx.amount);
+function sumType(transactions, type) {
+  return transactions.filter((tx) => tx.type === type).reduce((sum, tx) => sum + Math.abs(tx.amount), 0);
 }
 
 export function getLedger() {
   const { transactions } = load();
-  const balance = transactions.reduce((sum, tx) => sum + signedAmount(tx), 0);
-  return { balance, startingCapital: STARTING_CAPITAL, transactions };
-}
-
-export function getBalance() {
-  return getLedger().balance;
+  const revenue = sumType(transactions, 'revenue');
+  const expenses = sumType(transactions, 'expense');
+  return { revenue, expenses, net: revenue - expenses, transactions };
 }
 
 export function addTransaction({ type, amount, description = '', ventureId = null }) {

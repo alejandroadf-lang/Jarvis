@@ -9,13 +9,10 @@ import { listAgents } from './agents/registry.js';
 import { AGENTS as COMPANY_AGENTS, ROOT_AGENT_ID as COMPANY_ROOT } from './agents/orgChart.js';
 import { AGENTS as STUDIO_AGENTS, ROOT_AGENT_ID as STUDIO_ROOT } from './agents/ideationTeam.js';
 import { loadSessions, saveSession, deleteSession } from './sessionStore.js';
-import { getLedger, addTransaction } from './finance/ledger.js';
+import { getLedger } from './finance/ledger.js';
 import {
   listVentures,
   getVenture,
-  activateVenture,
-  approveTranche,
-  denyTranche,
   killVenture,
   linkRepo,
   setDeploymentEnabled,
@@ -28,7 +25,6 @@ import {
   handleLogRevenue,
   handleLogExpense,
   handleReportMilestoneProgress,
-  handleRequestTranche,
   handleKillVenture,
   handleDeployCode,
   handleSendCustomerEmail,
@@ -155,16 +151,15 @@ async function runCompanyTurn(sessionId, message) {
       log_revenue: handleLogRevenue,
       log_expense: handleLogExpense,
       report_milestone_progress: handleReportMilestoneProgress,
-      request_tranche: handleRequestTranche,
       kill_venture: handleKillVenture,
       // deploy_code and send_customer_email are also wired into the
       // autonomous daily leadership sync (see dailyMeeting.js) — a
       // founder-granted scope (see finance/ventures.js's authorizeDeployment
       // and authorizeOutreach) is exactly the mechanism meant to let an
       // agent act without a human present, so there's no reason to require
-      // one here specifically. Every other treasury/venture action stays
-      // interactive-only, since those depend on the founder having actually
-      // reported a real outcome — see dailyMeeting.js's file header.
+      // one here specifically. The book-keeping and venture-status actions
+      // stay interactive-only, since those depend on the founder having
+      // actually reported a real outcome — see dailyMeeting.js's header.
       // 'interactive' is the triggeredBy tag recorded on the venture's
       // deployment/outreach log — see dailyMeeting.js for the 'daily_cycle'
       // counterpart.
@@ -270,13 +265,12 @@ app.get('/api/ventures/ledger', (_req, res) => {
 function computeVentureFinancials(venture, transactions) {
   const forVenture = transactions.filter((t) => t.ventureId === venture.id);
   const sumType = (type) => forVenture.filter((t) => t.type === type).reduce((sum, t) => sum + t.amount, 0);
-  const allocated = sumType('investment');
   const revenue = sumType('revenue');
   const expense = sumType('expense');
 
   return {
     ...venture,
-    financials: { allocated, revenue, expense, net: revenue - expense },
+    financials: { revenue, expense, net: revenue - expense },
     milestoneSummary: {
       total: venture.milestones.length,
       done: venture.milestones.filter((m) => m.status === 'done').length,
@@ -285,138 +279,31 @@ function computeVentureFinancials(venture, transactions) {
   };
 }
 
-// A portfolio-level view across every venture (proposed, active, and
-// killed), each enriched with its own slice of the ledger — since the
-// per-mode Ventures panel only ever shows one team's angle on "current"
-// ventures, this is the place to compare all of them side by side.
+// A portfolio-level view across every venture, active and killed, each
+// enriched with its own slice of the books — since the per-mode Ventures
+// panel only ever shows one team's angle on current ventures, this is the
+// place to compare all of them side by side. No allocated column: nothing
+// is allocated to a venture, so the only figures that mean anything are
+// what it earned and what it actually cost.
 app.get('/api/ventures/portfolio', (_req, res) => {
-  const { transactions, balance, startingCapital } = getLedger();
+  const { transactions, revenue, expenses, net } = getLedger();
   const ventures = listVentures().map((v) => computeVentureFinancials(v, transactions));
   const totals = ventures.reduce(
     (acc, v) => ({
-      allocated: acc.allocated + v.financials.allocated,
       revenue: acc.revenue + v.financials.revenue,
       expense: acc.expense + v.financials.expense,
     }),
-    { allocated: 0, revenue: 0, expense: 0 }
+    { revenue: 0, expense: 0 }
   );
 
   res.json({
     ventures,
     totals: { ...totals, net: totals.revenue - totals.expense },
-    treasury: { balance, startingCapital },
+    business: { revenue, expenses, net },
   });
 });
 
-app.post('/api/ventures/:id/greenlight', async (req, res) => {
-  const { id } = req.params;
-  const { sessionId } = req.body || {};
-
-  const venture = getVenture(id);
-  if (!venture) return res.status(404).json({ error: 'Venture not found' });
-  if (venture.status !== 'proposed') {
-    return res.status(400).json({ error: `Venture is already ${venture.status}` });
-  }
-
-  const { balance } = getLedger();
-  if (venture.budgetRequested > balance) {
-    return res.status(400).json({
-      error: `Not enough in the treasury: venture asks for $${venture.budgetRequested}, only $${balance.toFixed(2)} available.`,
-    });
-  }
-
-  const activated = activateVenture(id);
-  if (activated.budgetRequested > 0) {
-    addTransaction({
-      type: 'investment',
-      amount: activated.budgetRequested,
-      description: `Seed investment: ${activated.title}`,
-      ventureId: activated.id,
-    });
-  }
-
-  const result = { venture: activated, ledger: getLedger() };
-
-  if (sessionId && process.env.ANTHROPIC_API_KEY) {
-    const briefing = `The board just greenlit a new venture out of the studio: "${activated.title}".
-
-One-liner: ${activated.oneLiner}
-Problem: ${activated.problem}
-Target customer: ${activated.targetCustomer}
-Business model: ${activated.businessModel}
-Approved budget: $${activated.budgetRequested} out of the company's $${result.ledger.balance.toFixed(2)} remaining treasury
-Milestones: ${activated.milestones.map((m) => m.title).join('; ') || 'none specified'}
-
-Put together an execution plan and tell me which departments start on what first.`;
-
-    try {
-      const { reply, trace } = await runCompanyTurn(sessionId, briefing);
-      result.companyBriefing = { message: briefing, reply, trace };
-    } catch (err) {
-      console.error('Failed to push venture briefing to company:', err);
-    }
-  }
-
-  res.json(result);
-});
-
-app.post('/api/ventures/:id/tranche/approve', async (req, res) => {
-  const { id } = req.params;
-  const { sessionId } = req.body || {};
-
-  const venture = getVenture(id);
-  if (!venture) return res.status(404).json({ error: 'Venture not found' });
-  if (!venture.pendingTranche) {
-    return res.status(400).json({ error: 'No pending tranche request for this venture' });
-  }
-
-  const { balance } = getLedger();
-  if (venture.pendingTranche.amount > balance) {
-    return res.status(400).json({
-      error: `Not enough in the treasury: tranche asks for $${venture.pendingTranche.amount}, only $${balance.toFixed(2)} available.`,
-    });
-  }
-
-  const { venture: updated, tranche } = approveTranche(id);
-  addTransaction({
-    type: 'investment',
-    amount: tranche.amount,
-    description: `Tranche: ${tranche.description || updated.title}`,
-    ventureId: updated.id,
-  });
-
-  const result = { venture: updated, ledger: getLedger() };
-
-  if (sessionId && process.env.ANTHROPIC_API_KEY) {
-    const briefing = `The board approved a follow-on tranche of $${tranche.amount} for "${updated.title}": ${tranche.description}.
-
-Remaining treasury: $${result.ledger.balance.toFixed(2)}.
-
-Continue execution with this.`;
-
-    try {
-      const { reply, trace } = await runCompanyTurn(sessionId, briefing);
-      result.companyBriefing = { message: briefing, reply, trace };
-    } catch (err) {
-      console.error('Failed to push tranche briefing to company:', err);
-    }
-  }
-
-  res.json(result);
-});
-
-app.post('/api/ventures/:id/tranche/deny', (req, res) => {
-  const { id } = req.params;
-  try {
-    const venture = denyTranche(id);
-    res.json({ venture });
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-
-// Killing doesn't move money, so — unlike greenlighting or a tranche — this
-// is safe for the founder to do directly from the UI without a company
+// Safe for the founder to do directly from the UI without a company
 // briefing step; the CEO can also do it from a conversation via the
 // kill_venture action.
 app.post('/api/ventures/:id/kill', (req, res) => {
