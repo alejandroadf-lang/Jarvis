@@ -140,8 +140,9 @@ function buildTools(agents, agent) {
  * @param {Array<{role: string, content: any}>} opts.messages
  * @param {Array<object>} [opts.trace] - shared array collecting every agent consulted
  * @param {number} [opts.depth]
- * @param {Record<string, (input: object) => Promise<string>>} [opts.actionHandlers]
+ * @param {Record<string, (input: object, ctx: {agentId: string}) => Promise<string>>} [opts.actionHandlers]
  * @param {string} [opts.extraContext] - extra text appended to every agent's system prompt for this run
+ * @param {(agentId: string) => string} [opts.perAgentContext] - extra text specific to each agent, resolved per delegation (e.g. what that agent has personally earned). Kept as a callback so this runner stays ignorant of finance.
  * @param {{inputTokens: number, outputTokens: number, costUsd: number}} [opts.usage] - shared accumulator, mutated across the whole run (including every delegated sub-agent)
  * @returns {Promise<{text: string, trace: object[], usage: {inputTokens: number, outputTokens: number, costUsd: number}}>}
  */
@@ -154,6 +155,7 @@ export async function runAgent({
   depth = 0,
   actionHandlers = {},
   extraContext = '',
+  perAgentContext = null,
   usage = emptyUsage(),
 }) {
   const agent = getAgent(agents, agentId);
@@ -161,7 +163,10 @@ export async function runAgent({
   // Resolved per agent, not per run: a fan-out can legitimately mix a
   // frontier orchestrator with cheap leaves in the same conversation.
   const modelSpec = resolveModelForAgent(agent, isOpenRouterConfigured());
-  const system = extraContext ? `${agent.systemPrompt}\n\n${extraContext}` : agent.systemPrompt;
+  // Resolved per agent rather than per run: a delegated specialist gets its
+  // own line here, not the CEO's.
+  const ownContext = perAgentContext ? perAgentContext(agent.id) : '';
+  const system = [agent.systemPrompt, extraContext, ownContext].filter((part) => part && part.trim()).join('\n\n');
   const working = [...messages];
 
   let finalText = '';
@@ -210,6 +215,7 @@ export async function runAgent({
             depth: depth + 1,
             actionHandlers,
             extraContext,
+            perAgentContext,
             usage,
           });
           resultText = sub.text;
@@ -219,7 +225,11 @@ export async function runAgent({
         }
       } else if (actionHandlers[toolUse.name]) {
         try {
-          resultText = await actionHandlers[toolUse.name](toolUse.input || {});
+          // The acting agent is passed alongside the input so a handler can
+          // attribute what just happened (see finance/profitShare.js). It's
+          // the runner that knows this, not the agent — which is precisely
+          // why credit can't be self-reported.
+          resultText = await actionHandlers[toolUse.name](toolUse.input || {}, { agentId: agent.id });
         } catch (err) {
           resultText = `(Action ${toolUse.name} failed: ${err.message})`;
         }

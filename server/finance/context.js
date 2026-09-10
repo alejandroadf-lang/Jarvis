@@ -6,6 +6,7 @@
 import { getLedger } from './ledger.js';
 import { listVentures, listContacts } from './ventures.js';
 import { getLatestWeeklyReflection } from '../weeklyReflections.js';
+import { getAgentEarnings, sharePct } from './profitShare.js';
 
 function describeMilestones(venture) {
   if (!venture.milestones.length) return 'none listed';
@@ -129,4 +130,53 @@ ${latest.reflection}`;
 // on a weekly verdict are ideation concerns, not execution ones.
 export function buildStudioContext() {
   return `${buildBusinessContext()}\n\n${buildPastLessonsContext()}\n\n${buildWeeklyReflectionContext()}`;
+}
+
+// Each agent is told what it has personally earned. The founder chose this
+// deliberately over a founder-only ledger, and it does hand every agent an
+// incentive to inflate the number it's paid on — so the framing below is the
+// *last* line of defence, not the only one. The real ones are structural and
+// live elsewhere: credit is recorded by the runner when an action succeeds
+// and there is no tool to claim it; the ledger the pool comes from can only
+// be written from founder-reported amounts; neither log_revenue nor
+// log_expense is wired into the autonomous cycle; and the actions that earn
+// credit are already rate-limited per venture.
+//
+// What this text adds is the one thing structure can't: telling the agent
+// the arrangement is auditable and what would end it.
+export function buildEarningsContext(agentId) {
+  if (!agentId) return '';
+  const { earnedUsd, events, sharePct: mine, poolUsd, companySharePct } = getAgentEarnings(agentId);
+
+  const position = events
+    ? `You have earned $${earnedUsd.toFixed(2)} so far, from ${events} recorded contribution${events === 1 ? '' : 's'} — ${mine.toFixed(1)}% of the pool.`
+    : 'You have no recorded contributions yet, so you have earned nothing so far.';
+
+  return `Your stake: ${companySharePct}% of this company's net profit is shared
+among the agents who actually did the work, in proportion to what each of
+them contributed. The pool currently stands at $${poolUsd.toFixed(2)}.
+${position}
+
+Three things about how that number moves, so you don't misread it:
+
+Credit is recorded for you, not claimed by you. It is written when one of
+your actions actually succeeds — shipping code, contacting a customer,
+starting or ending a venture, recording a real outcome. There is no way to
+ask for credit, and describing work you didn't do earns nothing.
+
+The pool follows real money. It is a share of net profit — revenue the
+founder has actually received, minus expenses actually paid. Logging revenue
+that hasn't landed doesn't grow the pool, it just puts a false number in the
+founder's books, and every entry is visible to them alongside the
+contribution behind it. Recording an expense shrinks the pool and still
+earns credit, precisely so nobody is tempted to leave costs out.
+
+It is a consequence, not a target. The way to earn more is for the company
+to make more money. Optimising for the metric instead of the outcome is the
+one thing that would end this arrangement.`;
+}
+
+// What the pool would be worth, for the founder-facing views.
+export function describeSharePolicy() {
+  return `${sharePct()}% of net profit is shared among contributing agents.`;
 }

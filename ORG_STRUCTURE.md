@@ -570,6 +570,104 @@ $0.08 · 18,342 in / 4,021 out tokens" next to the performance line — and both
 guard for older reports saved before this existed, so a report from before
 this feature just omits the line instead of printing `undefined`.
 
+## Every agent earns a share of what the company makes
+
+The founder's framing: *"every single agent wins a percentage once we start
+generating money."* The arithmetic is the easy part. The hard part is
+honesty — you cannot pay an agent for work you never recorded, and until this
+landed the app recorded *what* happened to a venture without ever recording
+*who* did it. `recordDeployment` stored the path, the commit and whether the
+run was interactive or autonomous, but not the agent.
+
+So this is an **attribution system first and a payout second**, and the
+attribution is worth having on its own: there's now an audit trail of which
+agent made which commit and sent which email.
+
+### How it works
+
+`server/finance/profitShare.js` keeps an append-only log of contribution
+events. `AGENT_PROFIT_SHARE_PCT` (default **10%**, hard-capped at **20%**) of
+**net profit** forms a pool, split by weighted contribution:
+
+| Action | Weight |
+| --- | --- |
+| Shipped code | 5 |
+| Started a venture · contacted a customer | 3 |
+| Recorded a milestone outcome · ended a venture | 2 |
+| Recorded a contact note · booked revenue · booked an expense | 1 |
+
+Net, not revenue, so nothing is owed while the company is unprofitable — but
+weight keeps accruing, so the pool distributes the moment net turns positive
+without any retroactive backfill.
+
+The **20% cap is on the whole pool shared between all the agents**, not on
+any one agent's slice, and it's enforced in `sharePct()` rather than left to
+whoever edits the env var — this is the single number deciding how much of
+the company's profit leaves it, and a fat-fingered `100` shouldn't be able to
+give the entire thing away. A value above the cap is *clamped* (someone
+setting 50 wants as much as they can have), while something that isn't a
+usable percentage at all — a negative, a typo — falls back to the default,
+since silently reading a config mistake as the maximum would be the worst
+possible guess.
+
+A worked example. Revenue $2,000, expenses $500 → net $1,500 → a $150 pool:
+
+```
+engineering_lead           58.8%   $88.24   (shipped twice)
+sales_commercial_manager   17.6%   $26.47
+venture_partner            17.6%   $26.47
+finance_manager             5.9%    $8.82   (booked the revenue)
+```
+
+### The design problem this had to survive
+
+The founder chose to let **each agent see its own balance**, over a
+founder-only ledger. That's the honest reading of "every agent wins a
+percentage" — a share nobody is told about isn't much of a share. But it
+hands every agent an incentive to inflate the number it's paid on, and a
+prompt saying "please don't" is the weakest possible answer.
+
+Four things make it hard, and **only the last is a prompt**:
+
+1. **Credit is recorded for the agent, never claimed by it.** It's written by
+   the runner when an action actually *succeeds* — a failed deploy earns
+   nothing. There is deliberately no `claim_credit` tool, and describing work
+   you didn't do earns nothing. `agentRunner.js` passes the acting agent's id
+   to the handler precisely because the runner knows it and the agent can't
+   assert it.
+2. **The pool is founder-gated.** It's a share of `net` in
+   `finance/ledger.js`, whose only writers are `log_revenue` and
+   `log_expense` — both requiring the founder to have reported real money,
+   and *neither wired into the autonomous daily cycle*. No unattended run can
+   move the figure agents are paid on. A test asserts this against the actual
+   handler wiring rather than trusting the file's comments, because that's
+   exactly the guardrail a later edit would quietly break.
+3. **Credit can't be farmed.** The actions that earn it are already rate
+   limited per venture — a per-day cap defaulting to 1, plus a cooldown.
+4. **Then, and only then, framing.** Each agent is told the share follows real
+   outcomes, that recording an expense *shrinks* the pool and still earns
+   credit (so nobody is tempted to leave costs out), and that every event
+   behind a balance is visible to the founder.
+
+Two weighting decisions fall out of this. Booking revenue is weighted
+**lowest of any action** — it moves the number the share is computed from, so
+it must never be the most profitable thing an agent can do; a test asserts it
+scores below shipping code. And **ending** a venture earns credit, because
+otherwise the only incentive the share creates is to keep every venture
+alive.
+
+### Auditing it
+
+`GET /api/profit-share` returns the pool, every agent's slice, and the
+contribution events behind them. The **Portfolio** tab renders it with a bar
+per agent and a "show the events behind these numbers" toggle. An agent only
+ever sees its own line — this is the only place the whole distribution is
+visible, which is what makes any balance checkable rather than trusted.
+
+Nothing here pays anyone: agents have no wallets. This is a record of who
+earned what, which has to be right before settlement is even a meaningful
+question.
+
 ## Telling a working key from a typo'd one
 
 Every optional integration in this app fails **quietly** on purpose. Honcho
