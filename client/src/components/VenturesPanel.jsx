@@ -93,7 +93,9 @@ function DeploymentScope({ venture, onLinkRepo, onEnable, onDisable, busy }) {
           </p>
           <div className="flex items-center gap-2 mt-1">
             <span className={`text-[10px] ${repo.enabled ? 'text-emerald-400/80' : 'text-cyan-500/50'}`}>
-              {repo.enabled ? 'Enabled — Engineering Lead can deploy within scope' : 'Disabled'}
+              {repo.enabled
+                ? 'Enabled — Engineering Lead can deploy within scope, including the unattended daily cycle'
+                : 'Disabled'}
             </span>
             <button
               onClick={() => (repo.enabled ? onDisable(venture.id) : onEnable(venture.id))}
@@ -201,7 +203,9 @@ function OutreachScope({ venture, onLinkOutreach, onEnable, onDisable, busy }) {
           </p>
           <div className="flex items-center gap-2 mt-1">
             <span className={`text-[10px] ${outreach.enabled ? 'text-emerald-400/80' : 'text-cyan-500/50'}`}>
-              {outreach.enabled ? 'Enabled — Sales & Commercial can email within scope' : 'Disabled'}
+              {outreach.enabled
+                ? 'Enabled — Sales & Commercial can email within scope, including the unattended daily cycle'
+                : 'Disabled'}
             </span>
             <button
               onClick={() => (outreach.enabled ? onDisable(venture.id) : onEnable(venture.id))}

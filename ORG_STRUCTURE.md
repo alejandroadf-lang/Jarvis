@@ -416,17 +416,22 @@ runs on its own, once a day, with nobody prompting it:
    failed send is logged but never fails the cycle, since the report is
    already saved and viewable either way.
 
-**This cycle cannot move money or kill a venture on its own.** The
-leadership sync isn't given the treasury/venture action handlers at
-all — it's explicitly told this is an internal status meeting, not a
-real founder-reported event, and even a stray tool call would resolve as
-an unknown tool rather than a silent no-op. The only side effect the
-whole cycle can cause is the Studio logging a new *proposal*, which
-spends nothing and still needs the founder's greenlight
+**This cycle still cannot move money or kill a venture on its own.** The
+leadership sync isn't given the treasury/venture action handlers that
+depend on a real founder-reported outcome (`log_revenue`, `log_expense`,
+`report_milestone_progress`, `request_tranche`, `kill_venture`) — it's
+explicitly told this is an internal status meeting, not that kind of
+event, and even a stray tool call would resolve as an unknown tool rather
+than a silent no-op. It *does* now carry `deploy_code` and
+`send_customer_email` — see "Full autonomy" further down for why those
+two specifically were judged safe to run unattended, and why the rest
+weren't. The Studio phase can still also cause a new venture *proposal*,
+which spends nothing and still needs the founder's greenlight
 (`POST /api/ventures/:id/greenlight`) before any budget is allocated —
 the same human-in-the-loop guarantee every other capital-moving action in
-this app already has. Autonomy here means the *information gathering and
-recommending* runs itself; spending real (simulated) money never does.
+this app still has. Autonomy here means the *information gathering and
+recommending* runs itself, plus — now — two narrowly-scoped real actions;
+spending real (simulated) money never does.
 
 `server/scheduler.js` targets a specific wall-clock time — **8:00 AM
 Bangkok time**, which is always 01:00 UTC (`Asia/Bangkok` is a fixed
@@ -683,18 +688,11 @@ app reporting something that already happened to a real system rather than
 a pending decision, since there's nothing left to approve or deny after
 the fact.
 
-`deploy_code` is wired into exactly one place: the interactive Executive
-Team chat (`runCompanyTurn` in `server/index.js`). It is deliberately
-**not** wired into the autonomous daily leadership sync or the weekly
-reflection — both are already barred from every other real-world action
-for the same reason (see "Resilience" above and `dailyMeeting.js`'s file
-header), and a live commit to a real repo is exactly the kind of action
-that principle exists to prevent from happening inside an unattended
-overnight run. The founder's scope grant means no separate click is needed
-per deploy, but it still only fires during a conversation the founder is
-actually having — the last line of defense isn't a click, but a human
-paying enough attention to notice if something looks wrong, which an
-unattended cron job can't do.
+`deploy_code` is wired into the interactive Executive Team chat
+(`runCompanyTurn` in `server/index.js`) and into the autonomous daily
+leadership sync (`dailyMeeting.js`) — see "Full autonomy" below for why
+the daily cycle earned that trust while the weekly reflection and every
+other treasury/venture action still haven't.
 
 The Ventures panel (`client/src/components/VenturesPanel.jsx`) is where
 the scope is actually granted: a form to link a repo (owner, name, branch,
@@ -747,15 +745,68 @@ duplicating the whole message. Like the deployment alert, this reports
 something that already happened; there's nothing left to approve.
 
 `send_customer_email` follows the identical wiring rule as `deploy_code`:
-it's on the Sales & Commercial Manager, and it's only reachable from the
-interactive Executive Team chat — never the autonomous daily or weekly
-cycles, for the same reason stated above. Two real actions in, that rule
-is holding as the actual boundary of this app's autonomy, not a one-off
-decision made for deployment specifically: **anything that reaches a real
-external system stays inside a scope the founder explicitly granted, and
-still only fires while the founder is in the room.**
+it's on the Sales & Commercial Manager, reachable from the interactive
+Executive Team chat and the autonomous daily leadership sync — see "Full
+autonomy" below.
 
 The Ventures panel shows this scope right below the deployment one: set
 allowed recipients and a weekly cap, flip outreach on or off, and see a
 running log of every real email actually sent — timestamp, recipient, and
 subject — the same audit-first pattern as the deployment log.
+
+## Full autonomy: letting the daily cycle act, not just recommend
+
+For a while, this app drew its autonomy boundary at "a human is in the
+room": `deploy_code` and `send_customer_email` worked without a
+per-action approval click, but only inside a live conversation the
+founder was actually having. The daily and weekly cycles stayed
+read-only — able to analyze and recommend, never to act on a real
+external system.
+
+That boundary has moved, deliberately and only this far: **the daily
+leadership sync can now call `deploy_code` and `send_customer_email` too**
+(`dailyMeeting.js`), with nobody watching it happen. The weekly reflection
+still can't — it stays a pure retrospective, `actionHandlers: {}`, on
+purpose (see `weeklyReflection.js`'s file header) — and every other
+treasury/venture action (`log_revenue`, `log_expense`,
+`report_milestone_progress`, `request_tranche`, `kill_venture`) is still
+not wired into either autonomous cycle, because those specifically depend
+on the founder having personally reported a real-world outcome; nobody
+reports anything to an unattended run, so there's nothing genuine for them
+to log.
+
+The reasoning for singling out these two: unlike a tranche request or a
+logged expense, `deploy_code` and `send_customer_email` don't need the
+founder to say what happened — they act inside a scope (a linked repo, an
+outreach allowlist) the founder already granted *in advance*, specifically
+so an agent could act without asking again. That grant doesn't distinguish
+between "while I'm watching" and "while I'm not" — a founder who links a
+repo and flips deployments on has already decided the path allowlist and
+weekly cap are enough of a leash, regardless of who's in the room when a
+commit happens to land. Enabling a venture's scope now means both at
+once: the same toggle in the Ventures panel governs interactive use and
+the daily cycle, so a founder reviewing that switch should read "enabled"
+as "this venture can act on this scope with or without me watching,"
+not just "during our next conversation."
+
+This makes the existing per-venture guardrails — the path/recipient
+allowlist and the weekly cap enforced by `authorizeDeployment` and
+`authorizeOutreach` — the only real backstop against a bad autonomous
+call, since the human-in-the-room fallback is gone for these two actions.
+That's exactly why those enforcement functions live at the data layer
+(`server/finance/ventures.js`) rather than as prompt instructions the
+model could talk itself out of: a venture with no scope granted, or scope
+left disabled, still can't be touched by either action, in either cycle,
+no matter what an agent decides to try. The alert emails
+(`sendDeploymentEmail`, `sendOutreachAlertEmail`) matter more now than
+they did before — they're no longer a courtesy copy of something the
+founder just watched happen, but the actual mechanism by which an
+unattended real action becomes visible at all.
+
+`server/test/dailyMeeting.test.js` exercises this directly with a scripted
+fake Anthropic client (no real model call, no real network): one test
+proves a `deploy_code` call from the leadership sync's delegation tree
+lands as a real, recorded deployment when a venture's scope is enabled;
+another proves the same for `send_customer_email`; a third proves
+`log_revenue` still resolves as an unknown tool there, confirming the
+boundary didn't quietly widen further than intended.

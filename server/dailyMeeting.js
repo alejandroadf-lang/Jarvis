@@ -5,15 +5,23 @@
 // look at what came out of it and decides whether anything is worth a real
 // venture proposal. The result is persisted as one Daily Report.
 //
-// Deliberately read-only where it matters: the leadership sync is barred
-// from calling any treasury- or venture-status action (nothing here reports
-// a real founder event, so there's nothing genuine to log), and it isn't
-// even given those handlers — a stray call resolves as an unknown tool
-// rather than a no-op that could be mistaken for success. The only side
-// effect this cycle can cause is the Studio logging a new venture
-// *proposal*, which spends no money and still needs the founder's
-// greenlight before anything is funded — the same human-in-the-loop
-// guarantee every other capital-moving action in this app already has.
+// Every action that requires the founder to have personally reported a real
+// outcome is still barred here: log_revenue, log_expense,
+// report_milestone_progress, request_tranche, and kill_venture are not
+// wired in, so a stray call resolves as an unknown tool rather than a no-op
+// that could be mistaken for success — there's nothing genuine for those to
+// log in an unattended run. deploy_code and send_customer_email are the
+// exception, and deliberately so: unlike those, they don't depend on the
+// founder reporting anything — they act inside a scope (a linked repo, an
+// outreach allowlist) the founder already granted in advance specifically
+// so an agent could act without asking again, and that grant makes no
+// distinction between "during a conversation" and "during this unattended
+// cycle." A venture with no scope granted, or scope left disabled, still
+// can't be touched here (see finance/ventures.js's authorizeDeployment and
+// authorizeOutreach) — this only changes what happens for ventures the
+// founder has already explicitly opted in. The Studio phase can still also
+// cause a venture *proposal*, which spends no money and still needs the
+// founder's greenlight before anything is funded.
 
 import { runAgent } from './agents/agentRunner.js';
 import { AGENTS as COMPANY_AGENTS, ROOT_AGENT_ID as COMPANY_ROOT } from './agents/orgChart.js';
@@ -21,7 +29,7 @@ import { AGENTS as STUDIO_AGENTS, ROOT_AGENT_ID as STUDIO_ROOT } from './agents/
 import { buildTreasuryContext, buildStudioContext } from './finance/context.js';
 import { getLedger } from './finance/ledger.js';
 import { listVentures } from './finance/ventures.js';
-import { handleProposeVenture } from './actionHandlers.js';
+import { handleProposeVenture, handleDeployCode, handleSendCustomerEmail } from './actionHandlers.js';
 import { todayKey, saveDailyReport } from './dailyReports.js';
 import { sendDailyReportEmail } from './email.js';
 import { estimateCostUsd, sumUsage } from './usage.js';
@@ -34,8 +42,16 @@ function leadershipKickoff(date) {
 This is an internal status meeting, not a real-world event: don't call
 log_revenue, log_expense, report_milestone_progress, request_tranche, or
 kill_venture here — those are only for when the founder reports something
-that actually happened. Today, just gather information and make
-recommendations for the founder to act on afterward.
+that actually happened, and nobody is reporting anything today. Just
+gather information and make recommendations for the founder to act on
+afterward.
+
+The exceptions are deploy_code and send_customer_email: for any venture
+where the founder has already linked a repo or set up an outreach scope
+and enabled it, those tools work exactly the same here as they would in a
+live conversation — that's what enabling them means. Use them only for
+real, ready work that scope was actually granted for, not to manufacture
+activity for today's report; if nothing rises to that bar today, say so.
 
 Consult each of your direct reports (CTO, CFO, CMO, COO). Ask each of them
 to check in with their own team first if it would surface something real,
@@ -101,7 +117,10 @@ export async function runDailyMeeting({ anthropic }) {
       agents: COMPANY_AGENTS,
       agentId: COMPANY_ROOT,
       messages: [{ role: 'user', content: leadershipKickoff(date) }],
-      actionHandlers: {}, // no side effects during the automated sync — see file header
+      // Only the two scope-gated real actions are wired in here — see file
+      // header for why those specifically are safe in an unattended run
+      // when every other treasury/venture action still isn't.
+      actionHandlers: { deploy_code: handleDeployCode, send_customer_email: handleSendCustomerEmail },
       extraContext: treasuryContext,
     });
   } catch (err) {
