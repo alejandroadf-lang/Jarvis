@@ -14,7 +14,8 @@ function describeMilestones(venture) {
 }
 
 function describeActiveVenture(venture) {
-  return `"${venture.title}" [id: ${venture.id}] — milestones: ${describeMilestones(venture)}`;
+  const edge = venture.agentNativeEdge ? `\n    agent-native edge: ${venture.agentNativeEdge}` : '';
+  return `"${venture.title}" [id: ${venture.id}] — milestones: ${describeMilestones(venture)}${edge}`;
 }
 
 // Deliberately not a treasury. This company has no seed capital and no

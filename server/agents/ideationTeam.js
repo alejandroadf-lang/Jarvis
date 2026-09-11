@@ -55,6 +55,47 @@ something with a believable path to $1M+ in annual revenue within a few
 years, in a market big enough to support it. "It's free to try" is not a
 reason to pursue anything.`;
 
+// The filter that makes this studio different from a generic one. A company
+// with no payroll doesn't just have cheaper versions of normal businesses
+// available to it — it has a different set of businesses available to it,
+// and the interesting ideas are the ones that were previously impossible
+// rather than merely expensive.
+const AGENT_NATIVE_NOTE = `One more filter, and it is the one that makes this studio worth running at
+all. This company has no payroll. That doesn't just make normal businesses
+cheaper to run — it puts a different set of businesses within reach, and the
+ones worth your time are the ones that were previously *impossible* rather
+than merely expensive.
+
+So for any idea, ask what an agent-run company can do here that a
+conventionally-staffed one structurally cannot. The advantages worth
+building on:
+
+- Labour that costs cents instead of salaries, which makes a price point or
+  a long tail viable that nobody could afford to staff. This is the big one.
+- Always-on. Responding in seconds at 3am is normal, not a night shift.
+- Parallelism. A thousand instances working at once, on a thousand
+  customers, is a configuration choice rather than a hiring plan.
+- Bespoke work at volume. Per-customer custom output where the human
+  version only ever penciled out as a template.
+- Perfect recall and consistency, where humans drift.
+
+And be equally clear-eyed about what this company is structurally *bad* at,
+because these kill an idea outright rather than making it harder:
+
+- Anything physical. No hands, no premises, no inventory.
+- Anything requiring a licence, a signature, or a person who can be held
+  liable — regulated advice, audit sign-off, anything a professional body
+  must certify.
+- Relationship and trust-led selling, long enterprise procurement, anything
+  where the buyer needs to look someone in the eye.
+- Holding money, or acting as a legal entity in its own right.
+
+The failure mode to watch for is an idea that is really "a normal software
+company, except the staff are agents." That is not an edge — a funded team
+could build the same thing and out-execute us. If the only honest answer to
+"why does an agent-run company win here?" is "it's cheaper for us," the idea
+has not cleared this bar.`;
+
 export const AGENTS = {
   venture_partner: {
     id: 'venture_partner',
@@ -94,6 +135,11 @@ export const AGENTS = {
               description:
                 'A concrete explanation of how this specific idea could plausibly reach $1M+ in annual revenue within a few years — name the mechanism (price x volume, expansion revenue, a network or platform effect), not just optimism.',
             },
+            agentNativeEdge: {
+              type: 'string',
+              description:
+                "Why an agent-run company wins at THIS specifically — the structural advantage, not enthusiasm. Name which one it leans on: labour that costs cents rather than salaries (so it can serve a price point or a long tail nobody can afford to staff), always-on response, running thousands of instances in parallel, per-customer bespoke work at volume, or perfect recall and consistency. If the honest answer is 'a normal software company could do this too, we just happen to be agents', say so — that idea does not clear this bar.",
+            },
             milestones: {
               type: 'array',
               items: { type: 'string' },
@@ -109,6 +155,7 @@ export const AGENTS = {
             'businessModel',
             'marketSize',
             'pathToMillions',
+            'agentNativeEdge',
             'milestones',
           ],
         },
@@ -324,6 +371,15 @@ default. Don't manufacture objections for their own sake either way: if an
 idea is genuinely solid and genuinely big enough, say so plainly and say
 why.
 
+Third, and specific to this company: challenge the agent-native claim
+directly. For any idea, ask what an agent-run company can do here that a
+funded, conventionally-staffed competitor structurally cannot — and treat
+"it's cheaper for us" as a non-answer, because a well-funded team can absorb
+that and out-execute us on everything else. Be just as blunt about the
+disqualifiers: if it needs hands, premises, a licence, a signature, someone
+who can be held liable, or a buyer who wants to look a person in the eye,
+that isn't a hard version of the idea, it's a dead one. Say which.
+
 You'll also be given the list of ventures already killed and why. If the
 idea in front of you is the same one, or close enough that the same reason
 would kill it again, say so directly and name which past venture it
@@ -333,3 +389,12 @@ already been proven true once.
 ${BASE_STYLE}`,
   },
 };
+
+// Appended to every agent in this team rather than pasted into each prompt,
+// so a specialist added later inherits the same filter instead of quietly
+// brainstorming for a company that doesn't exist. The Executive Team
+// deliberately doesn't get this — it executes whatever the studio decided,
+// and second-guessing the premise mid-build isn't its job.
+for (const agent of Object.values(AGENTS)) {
+  agent.systemPrompt = `${agent.systemPrompt}\n\n${AGENT_NATIVE_NOTE}`;
+}
