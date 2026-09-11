@@ -18,6 +18,7 @@ import { listVentures } from './finance/ventures.js';
 import { getLedger } from './finance/ledger.js';
 import { listDailyReports } from './dailyReports.js';
 import { weekKey, saveWeeklyReflection } from './weeklyReflections.js';
+import { publishWeeklyReflection } from './workspace/vault.js';
 import { sendWeeklyReflectionEmail } from './email.js';
 import { estimateCostUsd, emptyUsage } from './usage.js';
 
@@ -120,6 +121,7 @@ export async function runWeeklyReflection({ anthropic }) {
   };
 
   saveWeeklyReflection(reflection);
+  await publishWeeklyReflection(reflection);
 
   try {
     await sendWeeklyReflectionEmail(reflection);

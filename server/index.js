@@ -21,6 +21,7 @@ import {
 } from './finance/ventures.js';
 import { buildCompanyContext, buildStudioContext, buildEarningsContext } from './finance/context.js';
 import { recordExchange, buildFounderContext } from './memory/honcho.js';
+import { readFounderSteering } from './workspace/vault.js';
 import {
   handleProposeVenture,
   handleLogRevenue,
@@ -165,7 +166,13 @@ async function runCompanyTurn(sessionId, message) {
   // Awaited because it shapes the prompt, but it can only ever return a
   // string — buildFounderContext swallows its own failures (see
   // memory/honcho.js) rather than taking the turn down.
-  const founderContext = await buildFounderContext(companySessionKey(sessionId));
+  // Two different kinds of founder knowledge: what Honcho inferred from past
+  // conversations, and what they deliberately wrote down in their vault.
+  // Fetched together since neither depends on the other.
+  const [founderContext, steering] = await Promise.all([
+    buildFounderContext(companySessionKey(sessionId)),
+    readFounderSteering(),
+  ]);
 
   const { text, trace } = await runAgent({
     anthropic,
@@ -194,7 +201,7 @@ async function runCompanyTurn(sessionId, message) {
       // the building (see actionHandlers.js).
       log_contact_note: handleLogContactNote,
     },
-    extraContext: joinContext(buildCompanyContext(), founderContext),
+    extraContext: joinContext(buildCompanyContext(), steering, founderContext),
     perAgentContext: buildEarningsContext,
   });
 
@@ -259,14 +266,17 @@ app.post('/api/studio/chat', async (req, res) => {
   const workingMessages = [...history, { role: 'user', content: message }];
 
   try {
-    const founderContext = await buildFounderContext(studioSessionKey(sessionId));
+    const [founderContext, steering] = await Promise.all([
+      buildFounderContext(studioSessionKey(sessionId)),
+      readFounderSteering(),
+    ]);
     const { text, trace } = await runAgent({
       anthropic,
       agents: STUDIO_AGENTS,
       agentId: STUDIO_ROOT,
       messages: workingMessages,
       actionHandlers: { propose_venture: handleProposeVenture },
-      extraContext: joinContext(buildStudioContext(), founderContext),
+      extraContext: joinContext(buildStudioContext(), steering, founderContext),
       perAgentContext: buildEarningsContext,
     });
 

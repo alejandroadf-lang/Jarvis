@@ -38,6 +38,7 @@ import {
 } from './actionHandlers.js';
 import { todayKey, saveDailyReport } from './dailyReports.js';
 import { sendDailyReportEmail } from './email.js';
+import { publishDailyReport, publishVenture, readFounderSteering } from './workspace/vault.js';
 import { estimateCostUsd, sumUsage, emptyUsage } from './usage.js';
 
 
@@ -109,6 +110,9 @@ export async function runDailyMeeting({ anthropic }) {
   const date = todayKey();
   const startedAt = Date.now();
   const companyContext = buildCompanyContext();
+  // Standing direction matters most here: an unattended run is exactly when
+  // the founder isn't around to say "focus on X this week".
+  const steering = await readFounderSteering();
   const beforeIds = new Set(listVentures().map((v) => v.id));
 
   // Both phases are isolated the same way: a persistent failure in one
@@ -138,7 +142,7 @@ export async function runDailyMeeting({ anthropic }) {
         // into memory the next draft will read.
         log_contact_note: handleLogContactNote,
       },
-      extraContext: companyContext,
+      extraContext: [companyContext, steering].filter(Boolean).join('\n\n'),
       perAgentContext: buildEarningsContext,
     });
   } catch (err) {
@@ -161,7 +165,7 @@ export async function runDailyMeeting({ anthropic }) {
         agentId: STUDIO_ROOT,
         messages: [{ role: 'user', content: studioKickoff(leadership.text) }],
         actionHandlers: { propose_venture: handleProposeVenture },
-        extraContext: buildStudioContext(),
+        extraContext: [buildStudioContext(), steering].filter(Boolean).join('\n\n'),
         perAgentContext: buildEarningsContext,
       });
     } catch (err) {
@@ -187,6 +191,13 @@ export async function runDailyMeeting({ anthropic }) {
   };
 
   saveDailyReport(report);
+
+  // Into the founder's vault, where the report becomes a linkable note rather
+  // than a page in a tab they don't open. Venture names (not just ids) so the
+  // note can [[wikilink]] to each one.
+  const startedVentures = listVentures().filter((v) => proposedVentureIds.includes(v.id));
+  await publishDailyReport({ ...report, proposedVentureNames: startedVentures.map((v) => v.title) });
+  for (const venture of startedVentures) await publishVenture(venture);
 
   try {
     await sendDailyReportEmail(report);

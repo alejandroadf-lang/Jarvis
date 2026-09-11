@@ -570,6 +570,79 @@ $0.08 · 18,342 in / 4,021 out tokens" next to the performance line — and both
 guard for older reports saved before this existed, so a report from before
 this feature just omits the line instead of printing `undefined`.
 
+## The company works in your tools: Obsidian and VS Code
+
+Daily reports, weekly reflections and venture write-ups all lived in a web UI
+nobody re-reads. They're written work, and written work belongs where the
+founder actually thinks.
+
+Both target tools are **git-native**, which is the whole design: one
+mechanism serves both. Jarvis commits markdown into a repo the founder
+nominates, and
+
+- **Obsidian** opens that repo *as the vault*, synced by a git plugin
+  ([SyncGit](https://community.obsidian.md/plugins/sync-git),
+  [Obsidian Git](https://community.obsidian.md/plugins/obsidian-git),
+  [Vault Sync](https://community.obsidian.md/plugins/vault-sync-rest)).
+- **VS Code** opens the same repo as a folder — markdown preview, real
+  diffs, and the full history of what the company decided, with no plugin at
+  all.
+
+This also settles a constraint worth recording: Obsidian's
+[Local REST API](https://github.com/coddingtonbear/obsidian-local-rest-api)
+runs *inside* Obsidian on the founder's machine, so a server on Railway can
+never reach it. Git is not a workaround here, it's the only bridge that works
+from a cloud host — and it happens to be the one both tools already speak.
+
+### What gets written
+
+```
+Company/Daily Reports/2026-03-05.md
+Company/Weekly Reflections/2026-01-04.md
+Company/Ventures/Ledger Watch.md
+Steering.md              ← yours, not the company's
+```
+
+The markdown is genuinely Obsidian-shaped rather than merely valid:
+**YAML frontmatter** becomes note properties you can filter and sort on
+(`type`, `status`, `net`, `tags`); **`[[wikilinks]]`** connect a daily report
+to the ventures it started, so the graph view shows where an idea came from;
+and milestones render as **real task checkboxes** (`- [x]`), so a venture
+note is something you can tick off rather than only read. `noteName()` strips
+the characters a vault or filesystem would reject, since a title that can't
+be a filename would silently produce a broken link.
+
+### `Steering.md` — the half that makes it an integration
+
+Publishing alone would be an export. The return path is a single note at the
+top of the vault, **yours rather than the company's**: whatever you write in
+`Steering.md` is read back into every agent's context — interactive turns and
+the autonomous daily cycle alike.
+
+The daily cycle is where it matters most. An unattended 8am run is exactly
+when you aren't there to say "focus on the newsletter this month, drop the
+marketplace idea." Now you write it once, in the tool you were already in,
+and the company reads it every morning. Frontmatter is stripped before the
+text reaches an agent — it's metadata for Obsidian, not instruction for the
+company.
+
+### The usual three properties
+
+- **Opt-in.** No `WORKSPACE_REPO_OWNER`/`WORKSPACE_REPO_NAME`, no calls,
+  nothing changes.
+- **Fail-quiet.** A publish failure is logged and returns `false`; it can
+  never break the cycle that produced the report, which has already saved its
+  real work. Same for reads: a missing `Steering.md` is a normal state, not
+  an error, so it returns `''` like every other context builder.
+- **Kill-switch-aware.** Unlike Honcho or the model router, this writes to a
+  real external system, so halting real actions stops these writes too. A
+  test asserts the halt stops the write *before* it goes out.
+
+One supporting fix: `deploy/github.js` threw a plain `Error` on every
+failure, which made "this file doesn't exist yet" — a normal state — look
+identical to "the token is wrong". It now carries `.status`, so a 404 reads
+as absence and everything else still throws.
+
 ## Ideas a company without payroll can actually win
 
 The studio's ambition bar asked whether an idea was *big*. It never asked the
