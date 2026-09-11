@@ -39,6 +39,21 @@ const FOLDERS = {
 // to the agents.
 export const FOUNDER_NOTE_PATH = 'Steering.md';
 
+// readFounderSteering() runs on every interactive chat turn, and a GitHub
+// round-trip per message is a poor trade for a note the founder edits maybe
+// once a week — it makes their chat slower and, if GitHub is having a bad
+// day, makes them wait on it. Cached for a minute: long enough that a busy
+// conversation costs one fetch, short enough that a steering change is live
+// almost immediately.
+const STEERING_TTL_MS = 60 * 1000;
+let steeringCache = { text: null, at: 0 };
+
+// For tests, and for the case where the founder wants their edit to land
+// without waiting out the TTL.
+export function invalidateSteeringCache() {
+  steeringCache = { text: null, at: 0 };
+}
+
 export function workspaceConfig() {
   const owner = (process.env.WORKSPACE_REPO_OWNER || '').trim();
   const repo = (process.env.WORKSPACE_REPO_NAME || '').trim();
@@ -216,23 +231,34 @@ export function publishVenture(venture) {
 export async function readFounderSteering() {
   if (!isWorkspaceConfigured()) return '';
 
+  if (steeringCache.text !== null && Date.now() - steeringCache.at < STEERING_TTL_MS) {
+    return steeringCache.text;
+  }
+
   const { owner, repo, branch } = workspaceConfig();
   try {
     const text = await readFile({ owner, repo, branch, path: FOUNDER_NOTE_PATH });
-    if (!text || !text.trim()) return '';
+    if (!text || !text.trim()) return cacheSteering('');
 
     // Strip frontmatter if the founder's editor added any — it's metadata for
     // Obsidian, not instruction for the company.
     const body = text.replace(/^---\n[\s\S]*?\n---\n/, '').trim();
-    if (!body) return '';
+    if (!body) return cacheSteering('');
 
-    return `Standing direction from the founder, written in their own notes
+    return cacheSteering(`Standing direction from the founder, written in their own notes
 (${FOUNDER_NOTE_PATH} in the workspace repo) rather than said in this
 conversation. Treat it as current priorities and constraints from them, and
 where it conflicts with something older, this wins:
-${body.slice(0, 4000)}`;
+${body.slice(0, 4000)}`);
   } catch (err) {
+    // Deliberately not cached: a transient GitHub failure shouldn't blind the
+    // company to its own steering for the next minute.
     console.error('Workspace: failed to read founder steering:', err.message);
     return '';
   }
+}
+
+function cacheSteering(text) {
+  steeringCache = { text, at: Date.now() };
+  return text;
 }

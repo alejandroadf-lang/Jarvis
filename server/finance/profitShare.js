@@ -92,8 +92,48 @@ export function sharePct() {
   return Math.min(pct, MAX_SHARE_PCT);
 }
 
+// How many individual events stay on the log. Past this the oldest are
+// folded into per-agent totals — see compact() for why folding rather than
+// deleting is the only safe move here.
+//
+// Every recordContribution() does a synchronous full-file read *and* rewrite
+// (store.js is sync), and it fires on every consultation, so the cost of one
+// write grows with the whole history: measured at 1.5ms after 1k entries,
+// 6.8ms after 5k, and effectively unusable by 20k. That time blocks the
+// event loop, so it stalls the whole server rather than just that agent.
+const MAX_KEPT_EVENTS = 500;
+
 function load() {
-  return readJson(FILE, { contributions: [] });
+  const data = readJson(FILE, { contributions: [], totals: {} });
+  // Files written before compaction existed have no totals key.
+  if (!data.totals) data.totals = {};
+  return data;
+}
+
+/**
+ * Folds the oldest events into per-agent running totals.
+ *
+ * Deleting them outright would be wrong in a way that's easy to miss:
+ * contributions *are* the basis for the share split, so dropping an agent's
+ * old work silently reduces what it has earned. Rolling the weight into a
+ * total preserves every share exactly while bounding the file — the founder
+ * loses the individual event rows for old work, not the earnings behind
+ * them.
+ */
+function compact(data) {
+  if (data.contributions.length <= MAX_KEPT_EVENTS) return data;
+
+  const overflow = data.contributions.slice(0, data.contributions.length - MAX_KEPT_EVENTS);
+  data.contributions = data.contributions.slice(-MAX_KEPT_EVENTS);
+
+  for (const c of overflow) {
+    const t = data.totals[c.agentId] || { weight: 0, events: 0, kinds: {} };
+    t.weight += c.weight;
+    t.events += 1;
+    t.kinds[c.kind] = (t.kinds[c.kind] || 0) + 1;
+    data.totals[c.agentId] = t;
+  }
+  return data;
 }
 
 /**
@@ -116,7 +156,7 @@ export function recordContribution({ agentId, kind, ventureId = null, detail = '
     at: new Date().toISOString(),
   };
   data.contributions.push(entry);
-  writeJson(FILE, data);
+  writeJson(FILE, compact(data));
   return entry;
 }
 
@@ -142,11 +182,18 @@ export function getProfitShare() {
   // anything retroactively.
   const poolUsd = net > 0 ? (net * pct) / 100 : 0;
 
-  const contributions = listContributions();
+  const data = load();
   const byAgent = new Map();
   let totalWeight = 0;
 
-  for (const c of contributions) {
+  // Start from whatever has already been folded away, so a compacted history
+  // pays out exactly as it did before compaction.
+  for (const [agentId, t] of Object.entries(data.totals)) {
+    totalWeight += t.weight;
+    byAgent.set(agentId, { agentId, weight: t.weight, events: t.events, kinds: { ...t.kinds } });
+  }
+
+  for (const c of data.contributions) {
     totalWeight += c.weight;
     const existing = byAgent.get(c.agentId) || { agentId: c.agentId, weight: 0, events: 0, kinds: {} };
     existing.weight += c.weight;

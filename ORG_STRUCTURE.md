@@ -626,6 +626,19 @@ and the company reads it every morning. Frontmatter is stripped before the
 text reaches an agent — it's metadata for Obsidian, not instruction for the
 company.
 
+### One fetch per conversation, not per message
+
+`readFounderSteering()` runs on every interactive turn. Left uncached that's
+a GitHub round-trip per message, for a note the founder edits maybe once a
+week — it slows their chat and makes them wait on GitHub's availability.
+
+It's cached for 60 seconds: long enough that a busy conversation costs one
+fetch, short enough that a steering change goes live almost immediately. An
+*absent* note is cached too, since that's the common case and re-fetching a
+404 every message is the same problem wearing a different hat. A **failed**
+read is deliberately not cached — a transient GitHub blip must not blind the
+company to its own steering for the next minute.
+
 ### The usual three properties
 
 - **Opt-in.** No `WORKSPACE_REPO_OWNER`/`WORKSPACE_REPO_NAME`, no calls,
@@ -797,6 +810,27 @@ it must never be the most profitable thing an agent can do; a test asserts it
 scores below shipping code. And **ending** a venture earns credit, because
 otherwise the only incentive the share creates is to keep every venture
 alive.
+
+### Keeping the log from eating the server
+
+`recordContribution()` fires on every consultation, and `store.js` is
+synchronous — so each one does a blocking full-file read *and* rewrite, which
+means the cost of a single write grew with the entire history. Measured:
+**1.5ms after 1,000 events, 6.8ms after 5,000, and a 20,000-event benchmark
+that never finished.** All of that blocks the event loop, so it stalls the
+whole server rather than just the agent being consulted.
+
+The log is now capped at 500 events, and the overflow is **folded into
+per-agent totals rather than deleted**. That distinction is the whole point:
+contributions *are* the basis for the share split, so dropping an agent's old
+work would silently reduce what it has earned. Rolling the weight into a
+running total preserves every share exactly — the founder loses the
+individual event rows for old work, never the earnings behind them. A test
+asserts that two agents with equal weight still earn equally after
+compaction, and that the slices still sum to the pool.
+
+Cost is now flat at roughly 0.8ms with the file bounded near 110 KB,
+regardless of how long the company has been running.
 
 ### Auditing it
 
