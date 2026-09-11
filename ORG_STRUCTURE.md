@@ -570,6 +570,57 @@ $0.08 · 18,342 in / 4,021 out tokens" next to the performance line — and both
 guard for older reports saved before this existed, so a report from before
 this feature just omits the line instead of printing `undefined`.
 
+## Scaling the roster: what actually breaks
+
+Growing from 27 agents to 150 isn't a prompt-writing problem. Measured on
+the current chart and extrapolated:
+
+```
+agents reachable from the CEO   : 21
+one full fan-out, mixed tiers   : ~$0.11
+
+at 150 agents (same shape, x5.6):
+  full fan-out                  : ~$0.61
+  vs the $5/day cap             : ~8 full questions per day
+  latency, sequential dispatch  : 117 calls x ~4s = ~8 minutes per question
+```
+
+Cost survives. **Latency was the blocker**: dispatch ran strictly
+sequentially, so a turn's duration was proportional to how many agents were
+consulted rather than to the depth of the chart. Eight minutes for one
+question is unusable however cheap it is.
+
+### Consultations parallelise; actions never do
+
+`agentRunner` now runs delegations concurrently, bounded at 5 in flight.
+That turns the ~8 minute worst case into roughly 2 — the remainder is chart
+*depth*, which is genuinely serial because a manager can't synthesise before
+its reports answer.
+
+Action tools are deliberately excluded, and this is the load-bearing part. An
+action has a real side effect governed by a per-venture daily cap and a
+cooldown (see `finance/ventures.js`), and every one of those checks reads the
+log that the *previous* action writes. Two running at once would both read
+the same pre-action state and slip past a cap that should have stopped the
+second. So actions stay strictly in order, in the order the model asked for
+them, and a test asserts peak concurrency of exactly 1.
+
+### Why bounded rather than unlimited
+
+Two reasons, both of which cost money. The daily spend cap is checked
+*before* each request, so N calls launched together can all pass the check
+before any records what it spent — the cap can be overshot by roughly the
+width of the limit, and no more. And an unbounded fan-out is the fastest way
+to hit a provider rate limit, which converts a wide turn into a slow one
+anyway.
+
+### The part worth doing before growing the roster
+
+At 27 agents, the Agent Operations Engineer's own data showed **18 were never
+consulted**. Scaling the same shape to 150 multiplies unconsulted headcount,
+not output. The machinery here makes a larger roster *viable*; it doesn't
+make it *right*. Let the operations data decide the number.
+
 ## Three roles a conventional org chart wouldn't have
 
 The roster grew to 27. Two of the new roles exist only because this

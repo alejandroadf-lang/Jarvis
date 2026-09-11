@@ -32,6 +32,33 @@ import { isOpenRouterConfigured, createCompletion } from './openrouter.js';
 const MAX_TOKENS = 1024;
 const MAX_ROUNDS = 6; // safety cap on tool-calling rounds within one agent's turn
 
+// How many delegations run at once. Dispatch used to be strictly sequential,
+// which made a turn's latency proportional to the number of agents consulted
+// rather than to the depth of the chart — around eight minutes for a
+// company of 150, which is unusable however cheap it is.
+//
+// Bounded rather than unlimited for two reasons that both cost money. The
+// daily spend cap is checked *before* each request, so N calls launched at
+// once can all pass the check before any of them records what they spent —
+// the cap can be overshot by roughly the width of this limit, and no more.
+// And an unbounded fan-out is also the fastest way to hit a provider's rate
+// limit, which converts a wide turn into a slow one anyway.
+const MAX_PARALLEL_CONSULTS = 5;
+
+// Runs `tasks` with at most `limit` in flight, preserving result order.
+async function mapWithLimit(items, limit, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i], i);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
 // The Anthropic SDK already retries a single request on 429/5xx/connection
 // errors internally (see its own `maxRetries`, default 2). This adds one
 // more attempt on top of that, specifically for a daily cycle that can burn
@@ -199,42 +226,56 @@ export async function runAgent({
 
     working.push({ role: 'assistant', content: response.content });
 
-    const toolResults = [];
-    for (const toolUse of toolUses) {
-      let resultText;
-      if (toolUse.name.startsWith('consult_')) {
-        const reportId = toolUse.name.slice('consult_'.length);
-        try {
-          const report = getAgent(agents, reportId);
-          const brief = typeof toolUse.input?.task === 'string' ? toolUse.input.task : '';
-          const sub = await runAgent({
-            anthropic,
-            agents,
-            agentId: reportId,
-            messages: [{ role: 'user', content: brief }],
-            trace,
-            depth: depth + 1,
-            actionHandlers,
-            extraContext,
-            perAgentContext,
-            usage,
-          });
-          resultText = sub.text;
-          trace.push({ id: report.id, title: report.title, department: report.department, depth: depth + 1 });
-          // Credit the specialist for answering — but only if it actually
-          // said something. A consult that errored or came back empty is not
-          // work, and the catch below means a failed one never reaches here.
-          if (resultText && resultText.trim()) {
-            recordContribution({
-              agentId: report.id,
-              kind: 'consulted',
-              detail: `consulted by ${agent.id}`,
-            });
-          }
-        } catch (err) {
-          resultText = `(Could not reach ${toolUse.name}: ${err.message})`;
+    // Consultations run concurrently; actions never do. An action tool has a
+    // real side effect governed by per-venture daily caps and a cooldown
+    // (see finance/ventures.js), and every one of those checks reads the log
+    // that the previous action writes. Running two at once lets both read
+    // the same pre-action state and slip past a cap that should have stopped
+    // the second — so actions stay strictly in order, in the order the model
+    // asked for them.
+    const consults = toolUses.filter((t) => t.name.startsWith('consult_'));
+    const others = toolUses.filter((t) => !t.name.startsWith('consult_'));
+
+    const consultResults = await mapWithLimit(consults, MAX_PARALLEL_CONSULTS, async (toolUse) => {
+      const reportId = toolUse.name.slice('consult_'.length);
+      try {
+        const report = getAgent(agents, reportId);
+        const brief = typeof toolUse.input?.task === 'string' ? toolUse.input.task : '';
+        const sub = await runAgent({
+          anthropic,
+          agents,
+          agentId: reportId,
+          messages: [{ role: 'user', content: brief }],
+          trace,
+          depth: depth + 1,
+          actionHandlers,
+          extraContext,
+          perAgentContext,
+          usage,
+        });
+        const resultText = sub.text;
+        trace.push({ id: report.id, title: report.title, department: report.department, depth: depth + 1 });
+        // Credit the specialist for answering — but only if it actually said
+        // something. A consult that errored or came back empty is not work,
+        // and the catch below means a failed one never reaches here.
+        if (resultText && resultText.trim()) {
+          recordContribution({ agentId: report.id, kind: 'consulted', detail: `consulted by ${agent.id}` });
         }
-      } else if (actionHandlers[toolUse.name]) {
+        return { tool_use_id: toolUse.id, resultText };
+      } catch (err) {
+        return { tool_use_id: toolUse.id, resultText: `(Could not reach ${toolUse.name}: ${err.message})` };
+      }
+    });
+
+    const toolResults = consultResults.map((r) => ({
+      type: 'tool_result',
+      tool_use_id: r.tool_use_id,
+      content: r.resultText,
+    }));
+
+    for (const toolUse of others) {
+      let resultText;
+      if (actionHandlers[toolUse.name]) {
         try {
           // The acting agent is passed alongside the input so a handler can
           // attribute what just happened (see finance/profitShare.js). It's
