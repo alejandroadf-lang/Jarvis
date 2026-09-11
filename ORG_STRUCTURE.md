@@ -570,6 +570,60 @@ $0.08 · 18,342 in / 4,021 out tokens" next to the performance line — and both
 guard for older reports saved before this existed, so a report from before
 this feature just omits the line instead of printing `undefined`.
 
+## Three roles a conventional org chart wouldn't have
+
+The roster grew to 27. Two of the new roles exist only because this
+company's workforce *is* its software, and the third fills a gap that was
+genuinely embarrassing once noticed.
+
+**Agent Operations Engineer** (under the CTO). A normal company does this
+work in management meetings; here it has to be a role. Its job is how the
+company itself runs — which agents get consulted, where a fan-out wasted a
+turn, whether a role is earning its place.
+
+The trap with a role like this is building a nameplate: an agent asked to
+improve operations it cannot see would just produce plausible-sounding
+advice. So `server/agents/operations.js` feeds it the real data, which was
+already sitting in every daily report and had never reached an agent —
+consultations per agent, cost and duration per cycle, and the most useful
+signal of all: **which agents were never consulted at all**.
+
+That list is the point. An agent nobody asks isn't free — it dilutes the
+profit-share pool and adds one more option every manager weighs on every
+turn. The prompt tells it to treat that as the most actionable thing
+available and to be willing to recommend cutting a role outright.
+
+The operating data is scoped to this one agent via `buildPerAgentContext()`,
+not broadcast. It's a wall of numbers that would be noise in a Marketing
+Manager's prompt, and an agent reasoning about the org chart while doing its
+actual job is exactly the distraction this company doesn't need.
+
+**Automation Architect** (under the CTO). Sits in the gap between "we could
+build this with agents" and "this only works because agents run it." Normal
+architecture assumes human labour is the expensive part and automates around
+it; this role designs for the inversion — labour nearly free, never
+sleeping, instantiable a thousand times over. Batch becomes continuous,
+sampling becomes exhaustive, per-customer work becomes the default. It's
+also instructed to say plainly when parallelism buys nothing, because a
+venture bottlenecked on a data source or a licence won't move for it.
+
+**Data Analyst** (under the CFO). Across 24 roles, nobody was responsible
+for looking at what actually happened — so the default failure mode was
+confident narrative on no evidence. Its standing instruction is that *"three
+data points over two weeks cannot tell us whether this is working"* is a
+complete and useful answer. Small numbers are the normal state of a young
+company, and treating them as signal is the most expensive mistake available
+here.
+
+### Which tier each runs on
+
+The Data Analyst carries `CHEAP_TIER` — reading numbers already in front of
+it and saying what they show is exactly the bounded, single-shot work that
+tier exists for. The other two deliberately don't. Judging the company's own
+behaviour and making architecture calls are the highest-reasoning tasks on
+the chart, and both compound: a cheap wrong answer from the Automation
+Architect is paid for over a venture's whole life.
+
 ## The company works in your tools: Obsidian and VS Code
 
 Daily reports, weekly reflections and venture write-ups all lived in a web UI

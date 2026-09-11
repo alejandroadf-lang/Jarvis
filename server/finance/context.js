@@ -7,6 +7,7 @@ import { getLedger } from './ledger.js';
 import { listVentures, listContacts } from './ventures.js';
 import { getLatestWeeklyReflection } from '../weeklyReflections.js';
 import { getAgentEarnings, sharePct } from './profitShare.js';
+import { buildOperationsContext } from '../agents/operations.js';
 
 function describeMilestones(venture) {
   if (!venture.milestones.length) return 'none listed';
@@ -180,4 +181,18 @@ one thing that would end this arrangement.`;
 // What the pool would be worth, for the founder-facing views.
 export function describeSharePolicy() {
   return `${sharePct()}% of net profit is shared among contributing agents.`;
+}
+
+// What a specific agent gets on top of the shared context, resolved per
+// delegation. Earnings for everyone; operating data for the one role whose
+// job is the company's own behaviour.
+//
+// Scoped to that role rather than given to everybody because it is a large
+// block of numbers that would be noise in a Marketing Manager's prompt — and
+// because an agent reasoning about the org chart while doing its actual job
+// is exactly the distraction this company does not need.
+export function buildPerAgentContext(agentId) {
+  const parts = [buildEarningsContext(agentId)];
+  if (agentId === 'agent_operations_engineer') parts.push(buildOperationsContext());
+  return parts.filter((p) => p && p.trim()).join('\n\n');
 }
