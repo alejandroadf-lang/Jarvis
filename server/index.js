@@ -38,6 +38,16 @@ import { getKillSwitch, haltRealActions, resumeRealActions } from './killSwitch.
 import { getSpendSummary } from './spend.js';
 import { getIntegrationStatus } from './integrations.js';
 import { getProfitShare, listContributions } from './finance/profitShare.js';
+import {
+  isWhatsAppConfigured,
+  verifyWebhookChallenge,
+  verifySignature,
+  extractMessage,
+  isAllowedSender,
+  sendWhatsAppMessage,
+  isDuplicate,
+  unsupportedTypeReply,
+} from './channels/whatsapp.js';
 import { listWeeklyReflections, getWeeklyReflection, getLatestWeeklyReflection } from './weeklyReflections.js';
 import { startWeeklyReflectionScheduler, runWeeklyReflectionNow, isWeeklyReflectionRunning } from './weeklyScheduler.js';
 
@@ -59,7 +69,16 @@ const studioSessions = loadSessions('studio'); // sessionId -> [{ role, content 
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+// The raw body is kept because Meta signs WhatsApp webhooks with an HMAC
+// over exactly the bytes it sent; json() would parse and discard them, and
+// re-serialising the parsed object does not reproduce the same bytes.
+app.use(
+  express.json({
+    verify: (req, _res, buf) => {
+      req.rawBody = buf;
+    },
+  })
+);
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true, configured: Boolean(process.env.ANTHROPIC_API_KEY) });
@@ -436,6 +455,65 @@ app.post('/api/kill-switch/resume', (_req, res) => {
 app.get('/api/profit-share', (_req, res) => {
   res.json({ ...getProfitShare(), contributions: listContributions().slice(-100).reverse() });
 });
+
+// --- WhatsApp -------------------------------------------------------------
+// Meta's one-time handshake when the webhook URL is saved.
+app.get('/api/whatsapp/webhook', (req, res) => {
+  const challenge = verifyWebhookChallenge(req.query);
+  if (challenge === null) return res.sendStatus(403);
+  res.type('text/plain').send(challenge);
+});
+
+// Inbound messages. Everything here is ordered around one constraint: Meta
+// wants a 200 within seconds and retries if it doesn't get one, while a team
+// turn takes 20 seconds to two minutes. So this acknowledges immediately and
+// answers afterwards through the Send API — see channels/whatsapp.js.
+app.post('/api/whatsapp/webhook', (req, res) => {
+  if (!verifySignature(req.rawBody, req.get('x-hub-signature-256'))) {
+    // Refused before anything is read out of the body: this endpoint is
+    // public and what's behind it can commit code and email customers.
+    return res.sendStatus(403);
+  }
+
+  // Acknowledge now. Every path below this line runs after the response.
+  res.sendStatus(200);
+
+  const message = extractMessage(req.body);
+  if (!message) return; // delivery and read receipts arrive here too
+
+  // A signature proves Meta sent it, not who typed it. The allowlist is the
+  // gate that decides whose messages actually reach the company.
+  if (!isAllowedSender(message.from)) {
+    console.warn(`WhatsApp: ignoring a message from an un-allowlisted number (${message.from}).`);
+    return;
+  }
+
+  // A retried delivery must not run the turn — or fire an action — twice.
+  if (isDuplicate(message.id)) return;
+
+  handleWhatsAppMessage(message).catch((err) => {
+    console.error('WhatsApp: failed to handle a message:', err);
+  });
+});
+
+async function handleWhatsAppMessage(message) {
+  if (message.type !== 'text' || !message.text.trim()) {
+    await sendWhatsAppMessage(message.from, unsupportedTypeReply(message.type));
+    return;
+  }
+
+  try {
+    // The sender's number is the session key, so a WhatsApp conversation has
+    // its own continuous history rather than colliding with the web app's.
+    const { reply } = await runCompanyTurn(`whatsapp-${message.from}`, message.text.trim());
+    await sendWhatsAppMessage(message.from, reply);
+  } catch (err) {
+    // The founder asked a question and is waiting on their phone. Silence is
+    // the worst possible answer, so the real reason goes back to them — the
+    // spend cap and a missing key both produce something actionable.
+    await sendWhatsAppMessage(message.from, `The team couldn't answer that — ${err.message}`);
+  }
+}
 
 app.get('/api/spend', (_req, res) => {
   res.json(getSpendSummary());

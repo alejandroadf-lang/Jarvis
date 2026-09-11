@@ -675,6 +675,74 @@ behaviour and making architecture calls are the highest-reasoning tasks on
 the chart, and both compound: a cheap wrong answer from the Automation
 Architect is paid for over a venture's whole life.
 
+## Talking to the company from WhatsApp
+
+`POST /api/whatsapp/webhook` lets the founder ask the Executive Team a
+question from their phone. Three things about it are load-bearing, and two
+are easy to get wrong in ways that only surface in production.
+
+### Acknowledge first, answer later
+
+Meta expects a 200 within seconds and retries the delivery if it doesn't get
+one. A team turn fans out from the CEO through the C-suite and takes 20
+seconds to two minutes. Answering inline would guarantee a timeout on every
+question *and* duplicate deliveries.
+
+So the webhook returns 200 immediately and the reply goes back afterwards as
+a separate outbound message through the Send API. This is also why chat was
+the right channel and a phone call wasn't: a two-minute silence is normal in
+messaging and a dropped call on the phone.
+
+### The signature is the door
+
+This endpoint is public, and what sits behind it can commit code and email
+real customers. Meta signs every payload with HMAC-SHA256 over the **raw**
+body — and `express.json()` parses and discards exactly those bytes, so
+`index.js` captures them with a `verify` hook. Re-serialising the parsed
+object does *not* reproduce the same bytes and would fail every check.
+
+Comparison is constant-time. A plain `===` leaks how much of a forged
+signature was correct, one byte at a time.
+
+### A signature proves Meta sent it, not who typed it
+
+Anyone who finds the number can message it. So there's a second, independent
+gate: `WHATSAPP_ALLOWED_NUMBERS`, an explicit allowlist. It **fails closed** —
+an empty or missing allowlist admits nobody, and `isWhatsAppConfigured()`
+reports the channel as unconfigured until one exists, so there is no state
+where the webhook is live and ungated. Numbers are compared digits-only, so
+`+44 7700 900123` and `447700900123` match; a formatting mismatch that locked
+the founder out of their own company would be a miserable thing to debug.
+
+Verified against a running server rather than only stubs:
+
+```
+unsigned POST   -> 403
+bad signature   -> 403
+valid signature -> 200
+handshake ok    -> 42
+handshake bad   -> 403
+```
+
+### Smaller things that still matter
+
+**Duplicates.** Meta retries a delivery it thinks failed, so the same message
+id can arrive twice. Running the turn again would cost real money and could
+fire an action tool a second time, so ids are remembered for ten minutes.
+
+**Long replies.** WhatsApp rejects bodies over 4096 characters and a
+synthesised team answer can exceed that, so replies split on paragraph
+boundaries with a `(1/3)` marker rather than failing the send.
+
+**Voice notes.** No transcription service is wired into this app, so a voice
+note gets a plain explanation instead of silence — silence reads as the
+company ignoring you. Adding transcription means adding a provider; that's a
+deliberate gap, not an oversight.
+
+**Session isolation.** The sender's number keys the conversation
+(`whatsapp-<number>`), so a WhatsApp thread has its own continuous history
+rather than colliding with the web app's.
+
 ## The company works in your tools: Obsidian and VS Code
 
 Daily reports, weekly reflections and venture write-ups all lived in a web UI

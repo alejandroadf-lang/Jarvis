@@ -22,6 +22,7 @@
 // as personas for this org chart rather than copied verbatim.
 
 import { CHEAP_TIER } from './models.js';
+import { validateOrgChart } from './validate.js';
 
 // A handful of roles below carry `modelTier: CHEAP_TIER`. Those are the
 // leaves of this chart — no reports, no action tools, no web search — whose
@@ -819,3 +820,6 @@ ${BASE_STYLE}`,
   },
 };
 
+
+// Fails the boot rather than letting a broken chart run — see validate.js.
+validateOrgChart(AGENTS, ROOT_AGENT_ID, 'Executive Team');

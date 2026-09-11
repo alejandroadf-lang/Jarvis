@@ -12,6 +12,7 @@
 // Ventures panel.
 
 import { CHEAP_TIER } from './models.js';
+import { validateOrgChart } from './validate.js';
 
 // A handful of roles below carry `modelTier: CHEAP_TIER`. Those are the
 // leaves of this chart — no reports, no action tools, no web search — whose
@@ -398,3 +399,6 @@ ${BASE_STYLE}`,
 for (const agent of Object.values(AGENTS)) {
   agent.systemPrompt = `${agent.systemPrompt}\n\n${AGENT_NATIVE_NOTE}`;
 }
+
+// Fails the boot rather than letting a broken chart run — see validate.js.
+validateOrgChart(AGENTS, ROOT_AGENT_ID, 'Venture Studio');
