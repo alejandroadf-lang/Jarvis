@@ -570,6 +570,111 @@ $0.08 · 18,342 in / 4,021 out tokens" next to the performance line — and both
 guard for older reports saved before this existed, so a report from before
 this feature just omits the line instead of printing `undefined`.
 
+## Scaling the roster: what actually breaks
+
+Growing from 27 agents to 150 isn't a prompt-writing problem. Measured on
+the current chart and extrapolated:
+
+```
+agents reachable from the CEO   : 21
+one full fan-out, mixed tiers   : ~$0.11
+
+at 150 agents (same shape, x5.6):
+  full fan-out                  : ~$0.61
+  vs the $5/day cap             : ~8 full questions per day
+  latency, sequential dispatch  : 117 calls x ~4s = ~8 minutes per question
+```
+
+Cost survives. **Latency was the blocker**: dispatch ran strictly
+sequentially, so a turn's duration was proportional to how many agents were
+consulted rather than to the depth of the chart. Eight minutes for one
+question is unusable however cheap it is.
+
+### Consultations parallelise; actions never do
+
+`agentRunner` now runs delegations concurrently, bounded at 5 in flight.
+That turns the ~8 minute worst case into roughly 2 — the remainder is chart
+*depth*, which is genuinely serial because a manager can't synthesise before
+its reports answer.
+
+Action tools are deliberately excluded, and this is the load-bearing part. An
+action has a real side effect governed by a per-venture daily cap and a
+cooldown (see `finance/ventures.js`), and every one of those checks reads the
+log that the *previous* action writes. Two running at once would both read
+the same pre-action state and slip past a cap that should have stopped the
+second. So actions stay strictly in order, in the order the model asked for
+them, and a test asserts peak concurrency of exactly 1.
+
+### Why bounded rather than unlimited
+
+Two reasons, both of which cost money. The daily spend cap is checked
+*before* each request, so N calls launched together can all pass the check
+before any records what it spent — the cap can be overshot by roughly the
+width of the limit, and no more. And an unbounded fan-out is the fastest way
+to hit a provider rate limit, which converts a wide turn into a slow one
+anyway.
+
+### The part worth doing before growing the roster
+
+At 27 agents, the Agent Operations Engineer's own data showed **18 were never
+consulted**. Scaling the same shape to 150 multiplies unconsulted headcount,
+not output. The machinery here makes a larger roster *viable*; it doesn't
+make it *right*. Let the operations data decide the number.
+
+## Three roles a conventional org chart wouldn't have
+
+The roster grew to 27. Two of the new roles exist only because this
+company's workforce *is* its software, and the third fills a gap that was
+genuinely embarrassing once noticed.
+
+**Agent Operations Engineer** (under the CTO). A normal company does this
+work in management meetings; here it has to be a role. Its job is how the
+company itself runs — which agents get consulted, where a fan-out wasted a
+turn, whether a role is earning its place.
+
+The trap with a role like this is building a nameplate: an agent asked to
+improve operations it cannot see would just produce plausible-sounding
+advice. So `server/agents/operations.js` feeds it the real data, which was
+already sitting in every daily report and had never reached an agent —
+consultations per agent, cost and duration per cycle, and the most useful
+signal of all: **which agents were never consulted at all**.
+
+That list is the point. An agent nobody asks isn't free — it dilutes the
+profit-share pool and adds one more option every manager weighs on every
+turn. The prompt tells it to treat that as the most actionable thing
+available and to be willing to recommend cutting a role outright.
+
+The operating data is scoped to this one agent via `buildPerAgentContext()`,
+not broadcast. It's a wall of numbers that would be noise in a Marketing
+Manager's prompt, and an agent reasoning about the org chart while doing its
+actual job is exactly the distraction this company doesn't need.
+
+**Automation Architect** (under the CTO). Sits in the gap between "we could
+build this with agents" and "this only works because agents run it." Normal
+architecture assumes human labour is the expensive part and automates around
+it; this role designs for the inversion — labour nearly free, never
+sleeping, instantiable a thousand times over. Batch becomes continuous,
+sampling becomes exhaustive, per-customer work becomes the default. It's
+also instructed to say plainly when parallelism buys nothing, because a
+venture bottlenecked on a data source or a licence won't move for it.
+
+**Data Analyst** (under the CFO). Across 24 roles, nobody was responsible
+for looking at what actually happened — so the default failure mode was
+confident narrative on no evidence. Its standing instruction is that *"three
+data points over two weeks cannot tell us whether this is working"* is a
+complete and useful answer. Small numbers are the normal state of a young
+company, and treating them as signal is the most expensive mistake available
+here.
+
+### Which tier each runs on
+
+The Data Analyst carries `CHEAP_TIER` — reading numbers already in front of
+it and saying what they show is exactly the bounded, single-shot work that
+tier exists for. The other two deliberately don't. Judging the company's own
+behaviour and making architecture calls are the highest-reasoning tasks on
+the chart, and both compound: a cheap wrong answer from the Automation
+Architect is paid for over a venture's whole life.
+
 ## The company works in your tools: Obsidian and VS Code
 
 Daily reports, weekly reflections and venture write-ups all lived in a web UI

@@ -230,3 +230,132 @@ test('runAgent accumulates token usage across a delegated sub-agent call', async
   assert.equal(usage.outputTokens, 23);
   assert.ok(usage.costUsd > 0, 'a delegated run should accumulate cost too');
 });
+
+// Dispatch used to be strictly sequential, which made a turn's latency
+// proportional to how many agents were consulted rather than to the depth of
+// the chart — about eight minutes for a company of 150. These cover the fix
+// and, more importantly, the one thing that must NOT be parallelised.
+
+const WIDE_TEAM = {
+  boss: {
+    id: 'boss',
+    title: 'Boss',
+    department: 'Test',
+    reportsTo: null,
+    reports: ['a', 'b', 'c', 'd'],
+    systemPrompt: 'You are the boss.',
+    toolDescription: 'Consult the boss.',
+    actions: [
+      { name: 'act', description: 'do a thing', input_schema: { type: 'object', properties: {} } },
+    ],
+  },
+};
+for (const id of ['a', 'b', 'c', 'd']) {
+  WIDE_TEAM[id] = {
+    id,
+    title: `Specialist ${id}`,
+    department: 'Test',
+    reportsTo: 'boss',
+    reports: [],
+    systemPrompt: `You are ${id}.`,
+    toolDescription: `Consult ${id}.`,
+  };
+}
+
+function consultAll(ids) {
+  return {
+    stop_reason: 'tool_use',
+    content: ids.map((id) => ({ type: 'tool_use', id: `tu_${id}`, name: `consult_${id}`, input: { task: 'go' } })),
+    usage: { input_tokens: 10, output_tokens: 5 },
+  };
+}
+
+test('delegations to several reports run concurrently', async () => {
+  let inFlight = 0;
+  let peak = 0;
+  const anthropic = {
+    messages: {
+      create: async (params) => {
+        // Only the sub-agent calls are slow; the boss answers immediately.
+        const isSub = !params.tools || params.tools.length === 0;
+        if (!isSub) {
+          return params.messages.length === 1
+            ? consultAll(['a', 'b', 'c', 'd'])
+            : textResponse('done', { input_tokens: 5, output_tokens: 5 });
+        }
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await new Promise((r) => setTimeout(r, 30));
+        inFlight -= 1;
+        return textResponse('specialist answer', { input_tokens: 5, output_tokens: 5 });
+      },
+    },
+  };
+
+  const { trace } = await runAgent({ anthropic, agents: WIDE_TEAM, agentId: 'boss', messages: [{ role: 'user', content: 'go' }] });
+  assert.ok(peak > 1, `expected concurrent consultations, peak in-flight was ${peak}`);
+  assert.equal(trace.length, 4, 'every consulted specialist should still appear in the trace');
+});
+
+// The load-bearing one. An action tool has a real side effect governed by
+// per-venture daily caps and a cooldown, and every one of those checks reads
+// the log the previous action writes. Two at once would both read the same
+// pre-action state and slip past a cap that should have stopped the second.
+test('action tools are never dispatched concurrently', async () => {
+  let inFlight = 0;
+  let peak = 0;
+  const anthropic = {
+    messages: {
+      create: async (params) => {
+        if (params.messages.length === 1) {
+          return {
+            stop_reason: 'tool_use',
+            content: [1, 2, 3].map((n) => ({ type: 'tool_use', id: `tu_act_${n}`, name: 'act', input: {} })),
+            usage: { input_tokens: 10, output_tokens: 5 },
+          };
+        }
+        return textResponse('done', { input_tokens: 5, output_tokens: 5 });
+      },
+    },
+  };
+
+  await runAgent({
+    anthropic,
+    agents: WIDE_TEAM,
+    agentId: 'boss',
+    messages: [{ role: 'user', content: 'go' }],
+    actionHandlers: {
+      act: async () => {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await new Promise((r) => setTimeout(r, 20));
+        inFlight -= 1;
+        return 'acted';
+      },
+    },
+  });
+
+  assert.equal(peak, 1, `actions must run one at a time, peak in-flight was ${peak}`);
+});
+
+test('a failed consultation does not take down the ones beside it', async () => {
+  const anthropic = {
+    messages: {
+      create: async (params) => {
+        const isSub = !params.tools || params.tools.length === 0;
+        if (!isSub) {
+          return params.messages.length === 1
+            ? consultAll(['a', 'b'])
+            : textResponse('done', { input_tokens: 5, output_tokens: 5 });
+        }
+        // 'a' is asked first; fail whichever asks first.
+        if (params.system.includes('You are a.')) throw apiError(400, 'bad request');
+        return textResponse('b answered', { input_tokens: 5, output_tokens: 5 });
+      },
+    },
+  };
+
+  const { trace } = await runAgent({ anthropic, agents: WIDE_TEAM, agentId: 'boss', messages: [{ role: 'user', content: 'go' }] });
+  // b still got through and is credited; a failed and isn't.
+  assert.deepEqual(trace.map((t) => t.id), ['b']);
+});

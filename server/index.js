@@ -19,7 +19,7 @@ import {
   linkOutreachScope,
   setOutreachEnabled,
 } from './finance/ventures.js';
-import { buildCompanyContext, buildStudioContext, buildEarningsContext } from './finance/context.js';
+import { buildCompanyContext, buildStudioContext, buildPerAgentContext } from './finance/context.js';
 import { recordExchange, buildFounderContext } from './memory/honcho.js';
 import { readFounderSteering } from './workspace/vault.js';
 import {
@@ -202,7 +202,7 @@ async function runCompanyTurn(sessionId, message) {
       log_contact_note: handleLogContactNote,
     },
     extraContext: joinContext(buildCompanyContext(), steering, founderContext),
-    perAgentContext: buildEarningsContext,
+    perAgentContext: buildPerAgentContext,
   });
 
   history.push({ role: 'user', content: message });
@@ -277,7 +277,7 @@ app.post('/api/studio/chat', async (req, res) => {
       messages: workingMessages,
       actionHandlers: { propose_venture: handleProposeVenture },
       extraContext: joinContext(buildStudioContext(), steering, founderContext),
-      perAgentContext: buildEarningsContext,
+      perAgentContext: buildPerAgentContext,
     });
 
     history.push({ role: 'user', content: message });
@@ -432,7 +432,7 @@ app.post('/api/kill-switch/resume', (_req, res) => {
 // before every paid call (see spend.js).
 // Who has earned what, and the events behind each balance — the founder's
 // audit surface for the profit share. Agents see only their own line (see
-// finance/context.js's buildEarningsContext); this is the whole picture.
+// finance/context.js's buildPerAgentContext); this is the whole picture.
 app.get('/api/profit-share', (_req, res) => {
   res.json({ ...getProfitShare(), contributions: listContributions().slice(-100).reverse() });
 });
