@@ -48,6 +48,7 @@ import {
   isDuplicate,
   unsupportedTypeReply,
 } from './channels/whatsapp.js';
+import { recordInbound, recordReceipt, recentInbound, STAGES } from './channels/whatsappLog.js';
 import { listWeeklyReflections, getWeeklyReflection, getLatestWeeklyReflection } from './weeklyReflections.js';
 import { startWeeklyReflectionScheduler, runWeeklyReflectionNow, isWeeklyReflectionRunning } from './weeklyScheduler.js';
 
@@ -472,6 +473,7 @@ app.post('/api/whatsapp/webhook', (req, res) => {
   if (!verifySignature(req.rawBody, req.get('x-hub-signature-256'))) {
     // Refused before anything is read out of the body: this endpoint is
     // public and what's behind it can commit code and email customers.
+    recordInbound({ stage: STAGES.BAD_SIGNATURE });
     return res.sendStatus(403);
   }
 
@@ -479,17 +481,28 @@ app.post('/api/whatsapp/webhook', (req, res) => {
   res.sendStatus(200);
 
   const message = extractMessage(req.body);
-  if (!message) return; // delivery and read receipts arrive here too
+  if (!message) {
+    // Delivery and read receipts arrive here too. Worth counting even though
+    // there's nothing to answer: they're the proof that Meta is calling this
+    // webhook at all, which is the first thing in question when a message
+    // seems to vanish.
+    recordReceipt();
+    return;
+  }
 
   // A signature proves Meta sent it, not who typed it. The allowlist is the
   // gate that decides whose messages actually reach the company.
   if (!isAllowedSender(message.from)) {
     console.warn(`WhatsApp: ignoring a message from an un-allowlisted number (${message.from}).`);
+    recordInbound({ stage: STAGES.NOT_ALLOWLISTED, from: message.from, text: message.text });
     return;
   }
 
   // A retried delivery must not run the turn — or fire an action — twice.
-  if (isDuplicate(message.id)) return;
+  if (isDuplicate(message.id)) {
+    recordInbound({ stage: STAGES.DUPLICATE, from: message.from, text: message.text });
+    return;
+  }
 
   handleWhatsAppMessage(message).catch((err) => {
     console.error('WhatsApp: failed to handle a message:', err);
@@ -498,6 +511,7 @@ app.post('/api/whatsapp/webhook', (req, res) => {
 
 async function handleWhatsAppMessage(message) {
   if (message.type !== 'text' || !message.text.trim()) {
+    recordInbound({ stage: STAGES.UNSUPPORTED_TYPE, from: message.from, detail: `Type: ${message.type}` });
     await sendWhatsAppMessage(message.from, unsupportedTypeReply(message.type));
     return;
   }
@@ -507,13 +521,25 @@ async function handleWhatsAppMessage(message) {
     // its own continuous history rather than colliding with the web app's.
     const { reply } = await runCompanyTurn(`whatsapp-${message.from}`, message.text.trim());
     await sendWhatsAppMessage(message.from, reply);
+    recordInbound({ stage: STAGES.ANSWERED, from: message.from, text: message.text });
   } catch (err) {
     // The founder asked a question and is waiting on their phone. Silence is
     // the worst possible answer, so the real reason goes back to them — the
     // spend cap and a missing key both produce something actionable.
+    //
+    // Recorded before the apology is sent, because the send is the other
+    // thing that fails here and it would otherwise take the reason with it.
+    recordInbound({ stage: STAGES.FAILED, from: message.from, text: message.text, detail: err.message });
     await sendWhatsAppMessage(message.from, `The team couldn't answer that — ${err.message}`);
   }
 }
+
+// What the webhook has actually seen. An empty list here is a diagnosis in
+// itself: Meta is not calling the webhook, so the problem is in the Meta
+// dashboard rather than anywhere in this app.
+app.get('/api/whatsapp/recent', (_req, res) => {
+  res.json(recentInbound());
+});
 
 app.get('/api/spend', (_req, res) => {
   res.json(getSpendSummary());

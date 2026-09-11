@@ -14,6 +14,7 @@ import {
   resumeRealActions,
   fetchSpend,
   fetchIntegrations,
+  fetchWhatsAppActivity,
 } from '../api/chat.js';
 
 function formatUsd(amount) {
@@ -84,6 +85,86 @@ function Integrations({ status, onRefresh, busy }) {
             className="text-[11px] text-cyan-400/80 hover:text-cyan-300 disabled:opacity-40 underline"
           >
             {busy ? 'Checking…' : 'Re-check now'}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Two grey ticks in WhatsApp prove Meta delivered the message to the business
+// number and nothing whatsoever after that. This is the rest of the journey:
+// whether Meta called the webhook, whether the signature checked out, whether
+// the sender was allowlisted, and whether the team managed to answer.
+const WHATSAPP_STAGE_TONE = {
+  answered: 'text-emerald-400',
+  bad_signature: 'text-red-400',
+  not_allowlisted: 'text-amber-400',
+  failed: 'text-red-400',
+  unsupported_type: 'text-amber-400',
+  duplicate: 'text-cyan-500/50',
+};
+
+function WhatsAppActivity({ activity, onRefresh, busy }) {
+  const [open, setOpen] = useState(false);
+  if (!activity) return null;
+
+  const { events = [], receipts = {} } = activity;
+  // Receipts are the tell that separates "Meta isn't calling us" from "Meta is
+  // calling us but no message got through" — two very different fixes.
+  const heard = events.length > 0 || receipts.count > 0;
+
+  return (
+    <div className="mb-4 border border-cyan-500/20 rounded-lg">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between px-3 py-2 text-[11px] uppercase tracking-wide text-cyan-300"
+      >
+        <span>WhatsApp activity</span>
+        <span className={heard ? 'text-cyan-500/50' : 'text-amber-400'}>
+          {events.length ? `${events.length} message${events.length === 1 ? '' : 's'}` : heard ? 'receipts only' : 'nothing yet'}{' '}
+          {open ? '▾' : '▸'}
+        </span>
+      </button>
+
+      {open && (
+        <div className="px-3 pb-3 space-y-2">
+          {!heard && (
+            <p className="text-[11px] text-amber-400/90">
+              Meta has never called this webhook. That points at the Meta dashboard rather than
+              this app — check that the <span className="font-mono">messages</span> field is
+              subscribed under WhatsApp → Configuration → Webhook fields.
+            </p>
+          )}
+
+          {heard && events.length === 0 && (
+            <p className="text-[11px] text-amber-400/90">
+              Meta is calling the webhook ({receipts.count} status update
+              {receipts.count === 1 ? '' : 's'}), but no actual message has arrived. The{' '}
+              <span className="font-mono">messages</span> field is probably not subscribed.
+            </p>
+          )}
+
+          {events.map((event, i) => (
+            <div key={`${event.at}-${i}`} className="border-l border-cyan-500/20 pl-2">
+              <p className={`text-[11px] ${WHATSAPP_STAGE_TONE[event.stage] || 'text-cyan-100/90'}`}>
+                {event.summary}
+              </p>
+              <p className="text-[11px] text-cyan-500/50">
+                {new Date(event.at).toLocaleString()}
+                {event.from ? ` · ${event.from}` : ''}
+              </p>
+              {event.preview && <p className="text-[11px] text-cyan-100/60 truncate">"{event.preview}"</p>}
+              {event.detail && <p className="text-[11px] text-red-400/80">{event.detail}</p>}
+            </div>
+          ))}
+
+          <button
+            onClick={onRefresh}
+            disabled={busy}
+            className="text-[11px] text-cyan-400/80 hover:text-cyan-300 disabled:opacity-40 underline"
+          >
+            {busy ? 'Checking…' : 'Refresh'}
           </button>
         </div>
       )}
@@ -498,6 +579,8 @@ export default function VenturesPanel({ reloadKey }) {
   const [spend, setSpend] = useState(null);
   const [integrations, setIntegrations] = useState(null);
   const [checkingIntegrations, setCheckingIntegrations] = useState(false);
+  const [whatsapp, setWhatsapp] = useState(null);
+  const [checkingWhatsapp, setCheckingWhatsapp] = useState(false);
   const [busyId, setBusyId] = useState(null);
   const [error, setError] = useState(null);
 
@@ -516,6 +599,20 @@ export default function VenturesPanel({ reloadKey }) {
     fetchIntegrations()
       .then(setIntegrations)
       .catch(() => {});
+    fetchWhatsAppActivity()
+      .then(setWhatsapp)
+      .catch(() => {});
+  }, []);
+
+  const refreshWhatsapp = useCallback(async () => {
+    setCheckingWhatsapp(true);
+    try {
+      setWhatsapp(await fetchWhatsAppActivity());
+    } catch {
+      // Same as integrations: keep the last known state rather than blanking.
+    } finally {
+      setCheckingWhatsapp(false);
+    }
   }, []);
 
   const recheckIntegrations = useCallback(async () => {
@@ -664,6 +761,7 @@ export default function VenturesPanel({ reloadKey }) {
   return (
     <div className="p-4 border-t border-cyan-500/20">
       <Integrations status={integrations} onRefresh={recheckIntegrations} busy={checkingIntegrations} />
+      <WhatsAppActivity activity={whatsapp} onRefresh={refreshWhatsapp} busy={checkingWhatsapp} />
 
       <KillSwitch
         state={killSwitch}

@@ -135,6 +135,13 @@ export async function fetchIntegrations() {
   return data;
 }
 
+// What the WhatsApp webhook has actually seen. An empty list is a diagnosis
+// in itself: Meta isn't calling the webhook at all.
+export async function fetchWhatsAppActivity() {
+  const { data } = await axios.get('/api/whatsapp/recent');
+  return data; // { events, receipts }
+}
+
 // Who has earned what, plus the contribution events behind each balance so
 // any figure can be audited rather than taken on trust.
 export async function fetchProfitShare() {
