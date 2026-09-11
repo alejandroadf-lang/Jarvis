@@ -18,6 +18,7 @@ import {
   formatVenture,
   publishDailyReport,
   readFounderSteering,
+  invalidateSteeringCache,
   FOUNDER_NOTE_PATH,
 } from '../workspace/vault.js';
 
@@ -47,6 +48,7 @@ after(() => {
 
 beforeEach(() => {
   for (const k of KEYS) delete process.env[k];
+  invalidateSteeringCache();
   global.fetch = originalFetch;
   savedError = console.error;
   console.error = () => {};
@@ -216,4 +218,66 @@ test('unconfigured, nothing is read and nothing is written', async () => {
   };
   assert.equal(await readFounderSteering(), '');
   assert.equal(await publishDailyReport(REPORT), false);
+});
+
+// readFounderSteering runs on every interactive chat turn. Without a cache
+// that's a GitHub round-trip per message, for a note edited maybe weekly —
+// it slows the founder's chat and makes them wait on GitHub's availability.
+test('a busy conversation costs one fetch, not one per message', async () => {
+  configure();
+  let fetches = 0;
+  global.fetch = async () => {
+    fetches += 1;
+    return { ok: true, json: async () => ({ content: Buffer.from('Focus on the newsletter.', 'utf8').toString('base64') }) };
+  };
+
+  const first = await readFounderSteering();
+  for (let i = 0; i < 9; i++) await readFounderSteering();
+
+  assert.equal(fetches, 1, `ten turns should cost one fetch, cost ${fetches}`);
+  assert.match(first, /Focus on the newsletter/);
+});
+
+// The common case is no steering note at all, and re-fetching a 404 on every
+// message would be the same problem wearing a different hat.
+test('an absent note is cached too', async () => {
+  configure();
+  let fetches = 0;
+  global.fetch = async () => {
+    fetches += 1;
+    return { ok: false, status: 404, text: async () => 'Not Found' };
+  };
+
+  await readFounderSteering();
+  await readFounderSteering();
+  assert.equal(fetches, 1);
+});
+
+// A transient GitHub failure must not blind the company to its steering for
+// the whole TTL — the next turn should try again.
+test('a failed read is not cached', async () => {
+  configure();
+  let fetches = 0;
+  global.fetch = async () => {
+    fetches += 1;
+    throw new Error('network is down');
+  };
+
+  assert.equal(await readFounderSteering(), '');
+  assert.equal(await readFounderSteering(), '');
+  assert.equal(fetches, 2, 'a failure should be retried on the next turn, not cached');
+});
+
+test('invalidating the cache makes the next read hit GitHub again', async () => {
+  configure();
+  let fetches = 0;
+  global.fetch = async () => {
+    fetches += 1;
+    return { ok: true, json: async () => ({ content: Buffer.from('Steer here.', 'utf8').toString('base64') }) };
+  };
+
+  await readFounderSteering();
+  invalidateSteeringCache();
+  await readFounderSteering();
+  assert.equal(fetches, 2);
 });

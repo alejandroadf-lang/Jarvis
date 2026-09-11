@@ -267,3 +267,54 @@ test('being consulted is weighted below every action that produces something', (
   assert.ok(consulted.weight < deploy.weight);
   assert.ok(consulted.weight < propose.weight);
 });
+
+// Compaction exists because recordContribution does a synchronous full-file
+// read *and* rewrite on every consultation, so the cost of one write grew
+// with the entire history — 1.5ms at 1k events, 6.8ms at 5k, unusable by
+// 20k, all of it blocking the event loop. These pin the fix and, more
+// importantly, that it doesn't quietly change what anyone has earned.
+test('the log stays bounded however many contributions are recorded', () => {
+  for (let i = 0; i < 1200; i++) {
+    profitShare.recordContribution({ agentId: 'market_researcher', kind: 'consulted' });
+  }
+  const stored = JSON.parse(fs.readFileSync(path.join(tmpDir, 'profitShare.json'), 'utf-8'));
+  assert.ok(stored.contributions.length <= 500, `expected the event log to be capped, got ${stored.contributions.length}`);
+  // The overflow was folded, not dropped.
+  assert.equal(stored.totals.market_researcher.events, 1200 - stored.contributions.length);
+});
+
+test('compaction preserves every share exactly', () => {
+  ledger.addTransaction({ type: 'revenue', amount: 1000, description: 'a sale' });
+
+  // Well past the cap, in a fixed 3:1 weight ratio — deploy_code is weight 5,
+  // consulted is weight 1, so 200 deploys against 1000 consults is 1000 vs
+  // 1000 weight: an even split that compaction must not disturb.
+  for (let i = 0; i < 200; i++) profitShare.recordContribution({ agentId: 'engineering_lead', kind: 'deploy_code' });
+  for (let i = 0; i < 1000; i++) profitShare.recordContribution({ agentId: 'market_researcher', kind: 'consulted' });
+
+  const share = profitShare.getProfitShare();
+  const eng = share.agents.find((a) => a.agentId === 'engineering_lead');
+  const res = share.agents.find((a) => a.agentId === 'market_researcher');
+
+  assert.equal(eng.weight, 1000);
+  assert.equal(res.weight, 1000);
+  assert.equal(eng.events, 200);
+  assert.equal(res.events, 1000);
+  assert.ok(Math.abs(eng.earnedUsd - res.earnedUsd) < 0.001, 'equal weight must still earn equally after compaction');
+  const total = share.agents.reduce((sum, a) => sum + a.earnedUsd, 0);
+  assert.ok(Math.abs(total - share.poolUsd) < 0.001, 'the shares must still add up to the pool');
+});
+
+// A file written before compaction existed has no totals key.
+test('a pre-compaction file still loads and pays out', () => {
+  fs.writeFileSync(
+    path.join(tmpDir, 'profitShare.json'),
+    JSON.stringify({ contributions: [{ id: 'c_old', agentId: 'ceo', kind: 'deploy_code', weight: 5, at: '2026-01-01T00:00:00.000Z' }] })
+  );
+  ledger.addTransaction({ type: 'revenue', amount: 1000, description: 'a sale' });
+
+  const share = profitShare.getProfitShare();
+  assert.equal(share.totalWeight, 5);
+  assert.equal(share.agents[0].agentId, 'ceo');
+  assert.equal(share.agents[0].earnedUsd, 100);
+});
