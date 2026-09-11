@@ -9,15 +9,16 @@
 // reading deploy logs, which is a bad answer for something you want to check
 // on every redeploy.
 //
-// So: presence of the env var is reported for everything, and the two that
-// were just added are additionally *probed* — a real request that proves the
-// credential is accepted, rather than merely present.
+// So: presence of the env var is reported for everything, and the ones whose
+// failure is otherwise invisible are additionally *probed* — a real request
+// that proves the credential is accepted, rather than merely present.
 
 import { isOpenRouterConfigured } from './agents/openrouter.js';
 import { isHonchoConfigured, FOUNDER_PEER_ID } from './memory/honcho.js';
 import { isEmailConfigured } from './email.js';
 import { isGithubConfigured } from './deploy/github.js';
 import { isWorkspaceConfigured, workspaceConfig } from './workspace/vault.js';
+import { isWhatsAppConfigured, allowedNumbers, GRAPH_API } from './channels/whatsapp.js';
 import { MODELS, CHEAP_TIER } from './agents/models.js';
 
 // A probe must never hang a page load. Both services are normally fast; if
@@ -108,12 +109,67 @@ async function probeHoncho() {
 }
 
 /**
+ * Reads back the phone number the token is supposed to control. This is the
+ * one probe worth making here: a webhook that verified green proves only that
+ * Meta could reach the app, and says nothing about whether the app can send
+ * *back* — which is a separate token, and the failure mode is silence on the
+ * founder's phone rather than an error anywhere they'd look.
+ */
+async function probeWhatsApp() {
+  if (!isWhatsAppConfigured()) {
+    const partial = ['WHATSAPP_TOKEN', 'WHATSAPP_PHONE_NUMBER_ID', 'WHATSAPP_APP_SECRET']
+      .filter((name) => !process.env[name]);
+    if (!allowedNumbers().length) partial.push('WHATSAPP_ALLOWED_NUMBERS');
+    return notConfigured(
+      partial.length === 4
+        ? 'Not set — the company can only be reached through this app.'
+        : `Half-configured — still needs ${partial.join(', ')}.`
+    );
+  }
+
+  const id = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  try {
+    const res = await withTimeout(
+      fetch(`${GRAPH_API}/${id}?fields=display_phone_number,verified_name`, {
+        headers: { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}` },
+      }),
+      'WhatsApp'
+    );
+    const body = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      // Meta's temporary tokens last 24 hours, so an expired token is the
+      // single likeliest reason this stops working with nothing else changed.
+      const reason = body?.error?.message || `Graph API returned ${res.status}`;
+      const expired = /expire|session|OAuth/i.test(reason);
+      return {
+        configured: true,
+        ok: false,
+        detail: expired
+          ? `Token rejected: ${reason} Temporary tokens last 24 hours — generate a System User token for a permanent one.`
+          : `Token rejected: ${reason}`,
+      };
+    }
+
+    const number = body.display_phone_number ? ` from ${body.display_phone_number}` : '';
+    const allowed = allowedNumbers();
+    return {
+      configured: true,
+      ok: true,
+      detail: `Token accepted — the company can reply${number} to ${allowed.length} allowlisted number${allowed.length === 1 ? '' : 's'}.`,
+    };
+  } catch (err) {
+    return { configured: true, ok: false, detail: `Couldn't reach the Graph API: ${err.message}` };
+  }
+}
+
+/**
  * Everything the founder can switch on, and whether it's actually live.
- * The two probes run in parallel — neither depends on the other, and this
- * is fetched on page load.
+ * The probes run in parallel — none depends on another, and this is fetched
+ * on page load.
  */
 export async function getIntegrationStatus() {
-  const [openrouter, honcho] = await Promise.all([probeOpenRouter(), probeHoncho()]);
+  const [openrouter, honcho, whatsapp] = await Promise.all([probeOpenRouter(), probeHoncho(), probeWhatsApp()]);
 
   return {
     // Not optional: without it nothing runs at all, so it's reported for
@@ -125,6 +181,7 @@ export async function getIntegrationStatus() {
     },
     openrouter,
     honcho,
+    whatsapp,
     // These two predate the probes and fail loudly at the point of use (an
     // action tool returns the reason), so presence is the useful signal.
     email: {

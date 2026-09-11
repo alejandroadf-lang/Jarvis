@@ -24,7 +24,7 @@
 
 import crypto from 'node:crypto';
 
-const GRAPH_API = 'https://graph.facebook.com/v21.0';
+export const GRAPH_API = 'https://graph.facebook.com/v21.0';
 
 export function isWhatsAppConfigured() {
   return Boolean(
