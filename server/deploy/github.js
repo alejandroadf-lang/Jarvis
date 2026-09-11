@@ -34,7 +34,13 @@ async function githubRequest(path, options = {}) {
   });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
-    throw new Error(`GitHub API ${options.method || 'GET'} ${path} failed: ${res.status} ${body}`);
+    const err = new Error(`GitHub API ${options.method || 'GET'} ${path} failed: ${res.status} ${body}`);
+    // Carry the code so callers can tell "this file doesn't exist yet", which
+    // is a normal state, from "the token is wrong", which is not. Without it
+    // every failure looks identical and a misconfigured repo reads as an
+    // empty one.
+    err.status = res.status;
+    throw err;
   }
   return res.json();
 }
@@ -54,6 +60,26 @@ async function getExistingFileSha({ owner, repo, branch, path }) {
  * Creates or updates a single file with one real commit.
  * @returns {Promise<{commitSha: string, commitUrl: string}>}
  */
+/**
+ * Reads a file's text, or null when it isn't there.
+ *
+ * The counterpart to commitFile: the workspace integration (see
+ * ../workspace/vault.js) is an integration rather than an export precisely
+ * because what the founder writes in Obsidian or VS Code can come back the
+ * other way. A missing file is expected — the founder hasn't written that
+ * note yet — so it returns null, while a real failure still throws.
+ */
+export async function readFile({ owner, repo, branch, path }) {
+  try {
+    const file = await githubRequest(`/repos/${owner}/${repo}/contents/${encodeURI(path)}?ref=${branch}`);
+    if (!file?.content) return null;
+    return Buffer.from(file.content, 'base64').toString('utf8');
+  } catch (err) {
+    if (err.status === 404) return null;
+    throw err;
+  }
+}
+
 export async function commitFile({ owner, repo, branch, path, content, message }) {
   const sha = await getExistingFileSha({ owner, repo, branch, path });
   const result = await githubRequest(`/repos/${owner}/${repo}/contents/${encodeURI(path)}`, {

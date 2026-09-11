@@ -17,6 +17,7 @@ import { isOpenRouterConfigured } from './agents/openrouter.js';
 import { isHonchoConfigured, FOUNDER_PEER_ID } from './memory/honcho.js';
 import { isEmailConfigured } from './email.js';
 import { isGithubConfigured } from './deploy/github.js';
+import { isWorkspaceConfigured, workspaceConfig } from './workspace/vault.js';
 import { MODELS, CHEAP_TIER } from './agents/models.js';
 
 // A probe must never hang a page load. Both services are normally fast; if
@@ -132,6 +133,18 @@ export async function getIntegrationStatus() {
       detail: isEmailConfigured()
         ? 'Daily reports, alerts and real customer outreach can send.'
         : 'Not set — no report emails, and customer outreach is unavailable.',
+    },
+    // Reported rather than probed: a bad repo name surfaces loudly at the
+    // point of use (the publish logs the GitHub error), and probing would
+    // mean a read against the founder's private vault on every page load.
+    workspace: {
+      configured: isWorkspaceConfigured(),
+      ok: null,
+      detail: isWorkspaceConfigured()
+        ? `Reports, reflections and venture notes publish to ${workspaceConfig().owner}/${workspaceConfig().repo} (${workspaceConfig().branch}).`
+        : process.env.WORKSPACE_REPO_OWNER || process.env.WORKSPACE_REPO_NAME
+          ? 'Half-configured — needs WORKSPACE_REPO_OWNER, WORKSPACE_REPO_NAME and a GITHUB_TOKEN.'
+          : 'Not set — the company keeps its written output in this app only.',
     },
     github: {
       configured: isGithubConfigured(),

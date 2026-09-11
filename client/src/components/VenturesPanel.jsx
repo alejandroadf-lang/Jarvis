@@ -30,6 +30,7 @@ const INTEGRATION_LABELS = {
   honcho: 'Honcho (founder memory)',
   email: 'Email',
   github: 'GitHub',
+  workspace: 'Workspace (Obsidian / VS Code)',
 };
 
 // Three states, not two. `ok === null` means "nothing to verify" — either the
