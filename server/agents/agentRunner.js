@@ -25,7 +25,7 @@
 import { getAgent } from './registry.js';
 import { assertUnderDailyCap, recordSpend } from '../spend.js';
 import { priceUsage, emptyUsage } from '../usage.js';
-import { resolveModelForAgent, MODELS, OPENAI_TIER, GEMINI_TIER } from './models.js';
+import { resolveModelForAgent, MODELS, OPENAI_TIER, GEMINI_TIER, DEFAULT_TIER } from './models.js';
 import { recordContribution } from '../finance/profitShare.js';
 import { isOpenRouterConfigured, createCompletion } from './openrouter.js';
 import { createCompletion as createOpenAiCompletion, isOpenAIConfigured, fallbackModel } from './openai.js';
@@ -144,8 +144,28 @@ const DEGRADED_NOTE =
   '(Answering without the team — the usual model is unavailable, so this is one ' +
   'model working alone rather than the departments weighing in.)\n\n';
 
-async function failOverToBackup(modelSpec, params, err) {
-  if (modelSpec.provider !== 'anthropic' || !isProviderOutage(err)) throw err;
+async function failOverToBackup(anthropic, modelSpec, params, err) {
+  if (!isProviderOutage(err)) throw err;
+
+  // A tiered agent whose cheaper provider is refusing us. models.js already
+  // collapses a tier to the default model when the key is simply absent; a
+  // key that is present but rejected is the same condition discovered later,
+  // so it gets the same answer instead of taking the agent down.
+  //
+  // This is the failure that reads to a founder as a broken "tool": the
+  // specialist agents are the ones on tiers, so a single bad OpenRouter key
+  // makes exactly those agents 401 while everything else keeps working.
+  // Nothing is lost by the swap — tiered agents are leaves by construction,
+  // and the default model is the better one.
+  if (modelSpec.provider !== 'anthropic') {
+    const fallback = MODELS[DEFAULT_TIER];
+    console.warn(
+      `${modelSpec.provider} rejected the request (${err.message}); running this agent on ${fallback.model} instead.`
+    );
+    const response = await anthropic.messages.create({ ...params, model: fallback.model });
+    response.__pricedAs = fallback;
+    return response;
+  }
 
   const candidates = backupProviders().filter((provider) => provider.available());
   if (!candidates.length) throw err;
@@ -228,10 +248,10 @@ async function createMessage(anthropic, modelSpec, params) {
       try {
         response = await send();
       } catch (retryErr) {
-        response = await failOverToBackup(modelSpec, params, retryErr);
+        response = await failOverToBackup(anthropic, modelSpec, params, retryErr);
       }
     } else {
-      response = await failOverToBackup(modelSpec, params, err);
+      response = await failOverToBackup(anthropic, modelSpec, params, err);
     }
   }
 
