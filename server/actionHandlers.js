@@ -17,6 +17,8 @@ import {
   authorizeOutreach,
   recordOutreach,
   recordContactNote,
+  authorizeExecution,
+  recordRun,
 } from './finance/ventures.js';
 import { recordContribution } from './finance/profitShare.js';
 import {
@@ -27,6 +29,14 @@ import {
   isEmailConfigured,
 } from './email.js';
 import { commitFile, isGithubConfigured } from './deploy/github.js';
+import {
+  isExecutionConfigured,
+  dispatchWorkflow,
+  findRunAfter,
+  waitForRun,
+  failureSummary,
+  listWorkflows,
+} from './execute/githubActions.js';
 
 // Some things shouldn't wait for the next daily digest: a venture starting
 // on its own, a real commit, a real email going out. Never lets a send
@@ -228,5 +238,99 @@ export async function handleLogContactNote(input, ctx = {}) {
     return `Noted against ${note.email}: "${note.note}". It'll be in the contact history before the next email to them is drafted.`;
   } catch (err) {
     return `Could not log the contact note: ${err.message}`;
+  }
+}
+
+/**
+ * Runs a workflow in the venture's repo and reports what happened.
+ *
+ * This is the loop the company was missing: agents could write code and ship
+ * it, but never find out whether it worked. "The tests pass" was a claim
+ * nobody could check — including the agent making it.
+ *
+ * The reply is written for an agent that has to act on it. A bare "failure"
+ * is not actionable; the failing job and step are.
+ */
+export async function handleRunChecks(input, triggeredBy = 'interactive', ctx = {}) {
+  const { ventureId, workflow, rationale } = input;
+  if (!isExecutionConfigured()) {
+    return 'Could not run checks: this server has no GITHUB_TOKEN configured, so there is no execution environment.';
+  }
+
+  let venture;
+  try {
+    venture = authorizeExecution(ventureId);
+  } catch (err) {
+    return `Could not run checks: ${err.message}`;
+  }
+
+  const { owner, name: repo, branch } = venture.repo;
+  const file = (workflow || '').trim() || 'ci.yml';
+
+  try {
+    const startedAt = Date.now();
+    await dispatchWorkflow({ owner, repo, workflow: file, ref: branch });
+    const run = await findRunAfter({ owner, repo, workflow: file, branch, since: startedAt });
+
+    if (!run) {
+      // Dispatch succeeded but no run appeared. Almost always the workflow
+      // lacks a workflow_dispatch trigger, which is a fixable thing to say.
+      recordRun(ventureId, { workflow: file, status: 'not_found', triggeredBy, agentId: ctx.agentId });
+      return `Started ${file} on ${owner}/${repo}@${branch}, but no run appeared. The workflow probably has no "workflow_dispatch:" trigger — add one to .github/workflows/${file} and it becomes runnable.`;
+    }
+
+    const finished = await waitForRun({ owner, repo, runId: run.id });
+
+    if (finished.status !== 'completed') {
+      recordRun(ventureId, {
+        workflow: file, runId: run.id, url: run.html_url, status: finished.status, triggeredBy, agentId: ctx.agentId,
+      });
+      return `${file} is still running after 5 minutes — check back rather than waiting. ${run.html_url}`;
+    }
+
+    if (finished.conclusion === 'success') {
+      recordRun(ventureId, {
+        workflow: file, runId: run.id, url: run.html_url, status: 'completed', conclusion: 'success',
+        triggeredBy, agentId: ctx.agentId,
+      });
+      return `${file} passed on ${owner}/${repo}@${branch}. ${run.html_url}`;
+    }
+
+    const failures = await failureSummary({ owner, repo, runId: run.id });
+    recordRun(ventureId, {
+      workflow: file, runId: run.id, url: run.html_url, status: 'completed', conclusion: finished.conclusion,
+      failures, triggeredBy, agentId: ctx.agentId,
+    });
+
+    const detail = failures.length
+      ? failures
+          .map((f) => `${f.job} (${f.conclusion})${f.failedSteps.length ? ` at: ${f.failedSteps.join(', ')}` : ''}`)
+          .join('; ')
+      : 'no job-level detail available';
+    return `${file} failed on ${owner}/${repo}@${branch} — ${detail}. Full logs: ${run.html_url}. Fix the cause and run it again; do not report this as passing.`;
+  } catch (err) {
+    recordRun(ventureId, { workflow: file, status: 'error', conclusion: err.message, triggeredBy, agentId: ctx.agentId });
+    return `Could not run checks: ${err.message}`;
+  }
+}
+
+/** What an agent is allowed to run, so it can stop guessing at filenames. */
+export async function handleListChecks(input) {
+  const { ventureId } = input;
+  if (!isExecutionConfigured()) return 'No GITHUB_TOKEN is configured, so there is no execution environment.';
+  let venture;
+  try {
+    venture = authorizeExecution(ventureId);
+  } catch (err) {
+    return `Could not list checks: ${err.message}`;
+  }
+  try {
+    const workflows = await listWorkflows({ owner: venture.repo.owner, repo: venture.repo.name });
+    if (!workflows.length) {
+      return `${venture.repo.owner}/${venture.repo.name} has no workflows yet. Commit one to .github/workflows/ci.yml with a "workflow_dispatch:" trigger, then it can be run.`;
+    }
+    return `Runnable in ${venture.repo.owner}/${venture.repo.name}: ${workflows.map((w) => `${w.file} (${w.name})`).join(', ')}.`;
+  } catch (err) {
+    return `Could not list checks: ${err.message}`;
   }
 }
