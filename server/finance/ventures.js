@@ -477,6 +477,43 @@ export function authorizeOutreach(id, { to }) {
 // is working memory for the next email, not an archive.
 const NOTES_KEPT_PER_CONTACT = 5;
 
+// What the team learned building this venture, kept where the next turn
+// reads it.
+//
+// Honcho remembers the founder. Nothing remembered the *work*: an agent
+// coming back to a venture started from the venture record and whatever is
+// in the repo, never from "we tried X and it failed because Y". So the same
+// dead end gets walked into twice, and the second walk looks exactly as
+// confident as the first.
+//
+// Scoped to the venture rather than global, and capped, because a learning
+// log that grows without limit stops being read — by the model as much as by
+// a person.
+const MAX_VENTURE_NOTES = 40;
+
+export function recordVentureNote(id, { note, agentId }) {
+  if (!note || !String(note).trim()) throw new Error('A note needs something in it.');
+  const data = load();
+  const venture = findOrThrow(data, id);
+  venture.notes = venture.notes || [];
+  venture.notes.push({
+    at: new Date().toISOString(),
+    agentId: agentId || null,
+    note: String(note).trim(),
+  });
+  // Oldest first out: what was learned last week about an API that has since
+  // been rewritten is worth less than what was learned an hour ago.
+  if (venture.notes.length > MAX_VENTURE_NOTES) {
+    venture.notes = venture.notes.slice(-MAX_VENTURE_NOTES);
+  }
+  save(data);
+  return venture.notes[venture.notes.length - 1];
+}
+
+export function listVentureNotes(id) {
+  return getVenture(id)?.notes || [];
+}
+
 export function recordContactNote(id, { email, note }) {
   const address = String(email || '').trim().toLowerCase();
   if (!address) throw new Error('email is required to log a contact note');

@@ -419,6 +419,100 @@ ${BASE_STYLE}`,
         },
       },
       {
+        name: 'queue_work',
+        description:
+          "Write down a multi-step job BEFORE attempting any of it. Use this whenever the work is more than one file or one action — it is the difference between a run that stops early costing one task and costing the whole plan. A turn has a token ceiling and a time limit; deciding on seven files and producing none is a real failure mode, and this is the fix for it. Queueing grants nothing: every task still passes scope, plan, caps and the kill switch when it is actually carried out.",
+        input_schema: {
+          type: 'object',
+          properties: {
+            ventureId: { type: 'string', description: 'The venture this work belongs to.' },
+            tasks: {
+              type: 'array',
+              description: 'The steps, in the order they should happen. One file or one coherent unit each — not "build the API".',
+              items: {
+                type: 'object',
+                properties: {
+                  title: { type: 'string', description: 'What this step is, in one line.' },
+                  detail: { type: 'string', description: 'Anything the agent doing it later will need and would otherwise have to re-derive.' },
+                },
+                required: ['title'],
+              },
+            },
+          },
+          required: ['ventureId', 'tasks'],
+        },
+      },
+      {
+        name: 'next_task',
+        description:
+          'The next queued piece of work for a venture, including why it failed last time if it has been attempted. Call this at the start of a turn rather than re-deciding what to do — work already written down beats work re-imagined.',
+        input_schema: {
+          type: 'object',
+          properties: { ventureId: { type: 'string' } },
+          required: ['ventureId'],
+        },
+      },
+      {
+        name: 'start_task',
+        description: 'Claim a task before doing it, so two turns never do the same work. Always follow with complete_task or fail_task.',
+        input_schema: {
+          type: 'object',
+          properties: { taskId: { type: 'string' } },
+          required: ['taskId'],
+        },
+      },
+      {
+        name: 'complete_task',
+        description: 'Record that a task is genuinely done — after the action actually succeeded, not after deciding how to do it.',
+        input_schema: {
+          type: 'object',
+          properties: {
+            taskId: { type: 'string' },
+            result: { type: 'string', description: 'What landed — a commit URL, a file path, a check result.' },
+          },
+          required: ['taskId'],
+        },
+      },
+      {
+        name: 'fail_task',
+        description:
+          "Record that a task did not work, and why. This puts it back in the queue with the reason kept, so the next attempt starts knowing what went wrong. Report the failure rather than going quiet: a task left claimed blocks the queue, and silence is the one outcome nobody can act on.",
+        input_schema: {
+          type: 'object',
+          properties: {
+            taskId: { type: 'string' },
+            error: { type: 'string', description: 'What actually went wrong, plainly.' },
+          },
+          required: ['taskId', 'error'],
+        },
+      },
+      {
+        name: 'read_repo_file',
+        description:
+          "Read a file as it actually exists in the venture's repo. Use it before editing anything you did not write in this same turn — working from memory of a previous turn's file is where contradictions come from, and CI finding them is the expensive way. A file that does not exist returns an answer saying so, which is information, not an error.",
+        input_schema: {
+          type: 'object',
+          properties: {
+            ventureId: { type: 'string' },
+            path: { type: 'string', description: 'Path in the repo, e.g. "src/engine.py".' },
+          },
+          required: ['ventureId', 'path'],
+        },
+      },
+      {
+        name: 'log_venture_note',
+        description:
+          "Record something learned about this venture that the next attempt would otherwise have to rediscover — a library that didn't work, a constraint from the spec, why an approach was abandoned. Every agent on this venture reads these before acting. Write the thing that would have saved you an hour.",
+        input_schema: {
+          type: 'object',
+          properties: {
+            ventureId: { type: 'string' },
+            note: { type: 'string', description: 'What was learned, and why it matters next time.' },
+          },
+          required: ['ventureId', 'note'],
+        },
+      },
+      {
         name: 'run_checks',
         description:
           "Run a workflow in the venture's repo and get back what actually happened — the real conclusion, and which job and step failed if it did. This is how you find out whether code you shipped works, rather than assuming it does. Needs a linked repo and a workflow with a \"workflow_dispatch:\" trigger. There is a 30-second cooldown between runs; a run can take a few minutes.",

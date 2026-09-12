@@ -38,6 +38,13 @@ import {
   handleLinkVentureRepo,
   handleListApprovedRepos,
   handleSubmitDailyPlan,
+  handleQueueWork,
+  handleNextTask,
+  handleStartTask,
+  handleCompleteTask,
+  handleFailTask,
+  handleReadRepoFile,
+  handleLogVentureNote,
   handleCheckDailyPlan,
 } from './actionHandlers.js';
 import { listDailyReports, getDailyReport, getLatestDailyReport } from './dailyReports.js';
@@ -285,6 +292,18 @@ async function runCompanyTurn(sessionId, message, { deadlineAt = null } = {}) {
       propose_venture: handleProposeVenture,
       list_approved_repos: () => handleListApprovedRepos(),
       run_checks: (input, ctx) => handleRunChecks(input, 'interactive', ctx),
+      // Durable work: see tasks.js. These let a build survive a turn that
+      // ends early, which is the failure that made them necessary.
+      queue_work: (input, ctx) => handleQueueWork(input, ctx),
+      next_task: (input) => handleNextTask(input),
+      start_task: (input) => handleStartTask(input),
+      complete_task: (input, ctx) => handleCompleteTask(input, ctx),
+      fail_task: (input) => handleFailTask(input),
+      // Reading before writing. No scope needed beyond the linked repo the
+      // founder already granted — reading a file the team can already commit
+      // to gives away nothing it did not already have.
+      read_repo_file: (input) => handleReadRepoFile(input),
+      log_venture_note: (input, ctx) => handleLogVentureNote(input, ctx),
       list_checks: (input) => handleListChecks(input),
       send_customer_email: (input) => handleSendCustomerEmail(input, 'interactive'),
       // Internal memory only — no scope grant or cap, since nothing leaves
