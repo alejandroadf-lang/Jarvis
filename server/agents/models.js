@@ -20,6 +20,9 @@
 
 export const DEFAULT_TIER = 'frontier';
 export const CHEAP_TIER = 'specialist';
+// A third option for leaf agents, for when OpenAI is the provider with credit
+// on it. Same leaf-only rule as the others — see canUseAlternativeModel.
+export const OPENAI_TIER = 'assistant';
 
 // Prices are per million tokens and are pinned by hand — same convention as
 // the rest of this app. Anthropic's published pricing for claude-sonnet-5
@@ -38,7 +41,30 @@ export const MODELS = {
     inputPricePerMTok: 0.13,
     outputPricePerMTok: 0.4,
   },
+  // Model name and prices are read at call time rather than frozen here:
+  // OpenAI retires and renames models faster than this file gets edited, and
+  // a stale default should be fixable from Railway's variables rather than a
+  // redeploy. See agents/openai.js for the env names.
+  [OPENAI_TIER]: {
+    provider: 'openai',
+    get model() {
+      return (process.env.OPENAI_MODEL || '').trim() || 'gpt-4o-mini';
+    },
+    get inputPricePerMTok() {
+      return numberFromEnv('OPENAI_INPUT_PRICE_PER_MTOK', 0.15);
+    },
+    get outputPricePerMTok() {
+      return numberFromEnv('OPENAI_OUTPUT_PRICE_PER_MTOK', 0.6);
+    },
+  },
 };
+
+// Prices feed the daily spend cap, so a wrong one silently mis-meters the
+// company's only real cost. Overridable for exactly that reason.
+function numberFromEnv(name, fallback) {
+  const raw = Number((process.env[name] || '').trim());
+  return Number.isFinite(raw) && raw >= 0 ? raw : fallback;
+}
 
 export function getModelSpec(tier) {
   return MODELS[tier] || MODELS[DEFAULT_TIER];
@@ -68,6 +94,16 @@ export function canUseAlternativeModel(agent) {
 export function resolveModelForAgent(agent, alternativeAvailable) {
   const spec = getModelSpec(agent.modelTier);
   if (spec.provider === 'anthropic') return spec;
-  if (!alternativeAvailable || !canUseAlternativeModel(agent)) return MODELS[DEFAULT_TIER];
+  if (!isProviderAvailable(spec.provider, alternativeAvailable) || !canUseAlternativeModel(agent)) {
+    return MODELS[DEFAULT_TIER];
+  }
   return spec;
+}
+
+// `alternativeAvailable` predates there being more than one alternative, and
+// still means OpenRouter — callers pass isOpenRouterConfigured(). OpenAI is
+// checked directly rather than threaded through every call site.
+function isProviderAvailable(provider, openRouterAvailable) {
+  if (provider === 'openai') return Boolean(process.env.OPENAI_API_KEY);
+  return openRouterAvailable;
 }

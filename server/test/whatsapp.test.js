@@ -122,7 +122,14 @@ test('an inbound text message is pulled out of the nested payload', () => {
   const message = extractMessage({
     entry: [{ changes: [{ value: { messages: [{ id: 'wamid.1', from: '447700900123', type: 'text', text: { body: 'what is our net?' } }] } }] }],
   });
-  assert.deepEqual(message, { id: 'wamid.1', from: '447700900123', type: 'text', text: 'what is our net?' });
+  // mediaId is null for text: only voice notes arrive as an id to fetch.
+  assert.deepEqual(message, {
+    id: 'wamid.1',
+    from: '447700900123',
+    type: 'text',
+    text: 'what is our net?',
+    mediaId: null,
+  });
 });
 
 // Delivery and read receipts arrive on the same webhook as real messages.
