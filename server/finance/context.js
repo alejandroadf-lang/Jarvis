@@ -8,6 +8,7 @@ import { listVentures, listContacts } from './ventures.js';
 import { getLatestWeeklyReflection } from '../weeklyReflections.js';
 import { getAgentEarnings, sharePct } from './profitShare.js';
 import { buildOperationsContext } from '../agents/operations.js';
+import { describePlanForAgents } from '../dailyPlan.js';
 
 function describeMilestones(venture) {
   if (!venture.milestones.length) return 'none listed';
@@ -88,7 +89,12 @@ ${sections.join('\n')}`;
 // contact history — it's an execution concern, and ideation doesn't send
 // email.
 export function buildCompanyContext() {
-  return `${buildBusinessContext()}\n\n${buildOutreachContext()}`;
+  // The plan goes first when there is one. An agent that reads it last has
+  // already decided what it intends to do, and the plan then reads as an
+  // obstacle rather than the brief.
+  return [describePlanForAgents(), buildBusinessContext(), buildOutreachContext()]
+    .filter((part) => part && part.trim())
+    .join('\n\n');
 }
 
 // Without this, every ideation session starts cold and can re-pitch an idea

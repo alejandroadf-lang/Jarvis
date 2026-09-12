@@ -15,6 +15,9 @@ import {
   fetchSpend,
   fetchIntegrations,
   fetchWhatsAppActivity,
+  fetchDailyPlan,
+  approveDailyPlan,
+  rejectDailyPlan,
 } from '../api/chat.js';
 
 function formatUsd(amount) {
@@ -171,6 +174,85 @@ function WhatsAppActivity({ activity, onRefresh, busy }) {
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+// The founder's one decision of the day. Deliberately the loudest thing in
+// the panel when something is waiting: the team is stopped until it's
+// answered, so burying it would cost a day of work rather than a scroll.
+function DailyPlan({ state, onApprove, onReject, busy }) {
+  const [reason, setReason] = useState('');
+  if (!state?.required) return null;
+
+  const plan = state.plan;
+
+  if (!plan) {
+    return (
+      <div className="mb-4 border border-cyan-500/20 rounded-lg p-3">
+        <p className="text-[11px] uppercase tracking-wide text-cyan-300">Today&apos;s plan</p>
+        <p className="text-[11px] text-cyan-500/50 mt-1">
+          Not submitted yet. Real actions are blocked until the team submits a plan and you approve it.
+        </p>
+      </div>
+    );
+  }
+
+  const pending = plan.status === 'pending';
+
+  return (
+    <div
+      className={`mb-4 rounded-lg p-3 border ${
+        pending ? 'border-amber-500/50 bg-amber-950/20' : 'border-cyan-500/20'
+      }`}
+    >
+      <p className={`text-[11px] uppercase tracking-wide ${pending ? 'text-amber-400 font-semibold' : 'text-cyan-300'}`}>
+        Today&apos;s plan · {plan.status}
+      </p>
+      {plan.summary && <p className="text-[11px] text-cyan-100/90 mt-1">{plan.summary}</p>}
+
+      <ul className="mt-2 space-y-1">
+        {plan.items.map((item, i) => (
+          <li key={i} className="text-[11px] text-cyan-100/80 border-l border-cyan-500/20 pl-2">
+            <span className="font-mono text-cyan-300">{item.action}</span>
+            {item.target ? <span className="text-cyan-500/70"> on {item.target}</span> : <span className="text-amber-400/70"> (any target)</span>}
+            <br />
+            <span className="text-cyan-500/60">{item.intent}</span>
+          </li>
+        ))}
+      </ul>
+
+      {pending && (
+        <>
+          <p className="text-[11px] text-amber-400/80 mt-2">
+            Nothing runs until you decide. Approving covers exactly these — anything else is refused.
+          </p>
+          <input
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="Optional note or reason"
+            className="mt-2 w-full bg-black/30 border border-cyan-500/20 rounded px-2 py-1 text-[11px] text-cyan-100"
+          />
+          <div className="flex gap-2 mt-2">
+            <button
+              onClick={() => onApprove(reason)}
+              disabled={busy}
+              className="text-[11px] px-2 py-1 rounded bg-emerald-600/80 hover:bg-emerald-600 disabled:opacity-40 text-white"
+            >
+              Approve the day
+            </button>
+            <button
+              onClick={() => onReject(reason)}
+              disabled={busy}
+              className="text-[11px] px-2 py-1 rounded border border-red-500/50 text-red-400 hover:bg-red-950/40 disabled:opacity-40"
+            >
+              Reject
+            </button>
+          </div>
+        </>
+      )}
+
+      {plan.note && !pending && <p className="text-[11px] text-cyan-500/60 mt-2">Your note: {plan.note}</p>}
     </div>
   );
 }
@@ -582,6 +664,8 @@ export default function VenturesPanel({ reloadKey }) {
   const [spend, setSpend] = useState(null);
   const [integrations, setIntegrations] = useState(null);
   const [checkingIntegrations, setCheckingIntegrations] = useState(false);
+  const [dailyPlan, setDailyPlan] = useState(null);
+  const [decidingPlan, setDecidingPlan] = useState(false);
   const [whatsapp, setWhatsapp] = useState(null);
   const [checkingWhatsapp, setCheckingWhatsapp] = useState(false);
   const [busyId, setBusyId] = useState(null);
@@ -605,6 +689,21 @@ export default function VenturesPanel({ reloadKey }) {
     fetchWhatsAppActivity()
       .then(setWhatsapp)
       .catch(() => {});
+    fetchDailyPlan()
+      .then(setDailyPlan)
+      .catch(() => {});
+  }, []);
+
+  const decidePlan = useCallback(async (decide, value) => {
+    setDecidingPlan(true);
+    try {
+      await decide(value);
+      setDailyPlan(await fetchDailyPlan());
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setDecidingPlan(false);
+    }
   }, []);
 
   const refreshWhatsapp = useCallback(async () => {
@@ -763,6 +862,12 @@ export default function VenturesPanel({ reloadKey }) {
 
   return (
     <div className="p-4 border-t border-cyan-500/20">
+      <DailyPlan
+        state={dailyPlan}
+        onApprove={(note) => decidePlan(approveDailyPlan, note)}
+        onReject={(reason) => decidePlan(rejectDailyPlan, reason)}
+        busy={decidingPlan}
+      />
       <Integrations status={integrations} onRefresh={recheckIntegrations} busy={checkingIntegrations} />
       <WhatsAppActivity activity={whatsapp} onRefresh={refreshWhatsapp} busy={checkingWhatsapp} />
 

@@ -142,6 +142,22 @@ export async function fetchWhatsAppActivity() {
   return data; // { events, receipts }
 }
 
+// The day's plan and the founder's one decision on it.
+export async function fetchDailyPlan() {
+  const { data } = await axios.get('/api/plan');
+  return data; // { required, plan, history }
+}
+
+export async function approveDailyPlan(note) {
+  const { data } = await axios.post('/api/plan/approve', { note });
+  return data;
+}
+
+export async function rejectDailyPlan(reason) {
+  const { data } = await axios.post('/api/plan/reject', { reason });
+  return data;
+}
+
 // Who has earned what, plus the contribution events behind each balance so
 // any figure can be audited rather than taken on trust.
 export async function fetchProfitShare() {
