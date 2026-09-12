@@ -49,6 +49,7 @@ import {
   unsupportedTypeReply,
 } from './channels/whatsapp.js';
 import { recordInbound, recordReceipt, recentInbound, STAGES } from './channels/whatsappLog.js';
+import { privacyPolicyHtml } from './privacy.js';
 import { listWeeklyReflections, getWeeklyReflection, getLatestWeeklyReflection } from './weeklyReflections.js';
 import { startWeeklyReflectionScheduler, runWeeklyReflectionNow, isWeeklyReflectionRunning } from './weeklyScheduler.js';
 
@@ -663,6 +664,14 @@ app.post('/api/reports/weekly/run', async (_req, res) => {
     console.error('Weekly reflection run failed:', err);
     res.status(502).json({ error: 'Failed to run the weekly reflection' });
   }
+});
+
+// Public and unauthenticated by necessity: Meta requires a reachable privacy
+// policy URL before a WhatsApp app can be published, and an unpublished app
+// receives no production webhooks at all. Declared above the static handler
+// so it wins over the client's catch-all route.
+app.get('/privacy', (_req, res) => {
+  res.type('html').send(privacyPolicyHtml());
 });
 
 const clientDist = path.join(__dirname, '..', 'client', 'dist');
