@@ -10,6 +10,7 @@ import { getAgentEarnings, sharePct } from './profitShare.js';
 import { buildOperationsContext } from '../agents/operations.js';
 import { describePlanForAgents } from '../dailyPlan.js';
 import { describeTasksForAgents } from '../tasks.js';
+import { buildCultureContext } from '../culture.js';
 
 function describeMilestones(venture) {
   if (!venture.milestones.length) return 'none listed';
@@ -117,6 +118,10 @@ export function buildCompanyContext() {
   // already decided what it intends to do, and the plan then reads as an
   // obstacle rather than the brief.
   return [
+    // First, and deliberately. Everything after this is a constraint or a
+    // number; this is the only part that says what the numbers are for, and
+    // an agent that reads it last has already decided.
+    buildCultureContext(),
     describePlanForAgents(),
     // Outstanding work comes high up for the same reason the plan does: an
     // agent that reads it after deciding what to do has already duplicated it.
@@ -169,7 +174,15 @@ ${latest.reflection}`;
 // Not used by the Executive Team — avoiding re-pitches and recalibrating
 // on a weekly verdict are ideation concerns, not execution ones.
 export function buildStudioContext() {
-  return `${buildBusinessContext()}\n\n${buildPastLessonsContext()}\n\n${buildWeeklyReflectionContext()}`;
+  // The Studio needs this most: it is the team that decides what this company
+  // builds at all, which is the decision where "it would make money" and "we
+  // should" come apart most often.
+  return [
+    buildCultureContext(),
+    buildBusinessContext(),
+    buildPastLessonsContext(),
+    buildWeeklyReflectionContext(),
+  ].join('\n\n');
 }
 
 // Each agent is told what it has personally earned. The founder chose this
