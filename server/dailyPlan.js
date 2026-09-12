@@ -1,27 +1,46 @@
-// The team plans its day; the founder approves it once; the team executes it
-// without asking again.
+// The team proposes a plan; the founder approves it once; the team executes
+// it without asking again.
 //
 // This is the middle ground between the two bad options. Approving every
 // action individually makes the founder the bottleneck on a company whose
 // whole point is that it runs itself. Approving nothing makes the scope model
-// decorative, because an agent that grants itself a scope has no scope. A
-// plan approved each morning is one decision a day, made with the whole day's
-// intent visible at once — which is also the only way to notice that six
-// reasonable-looking actions add up to something you would not have agreed to.
+// decorative, because an agent that grants itself a scope has no scope. One
+// approved plan is one decision, made with the whole intent visible at once —
+// which is also the only way to notice that six reasonable-looking actions
+// add up to something you would not have agreed to.
 //
 // Enforcement is here, at the data layer, not in a prompt. An agent that
 // argues its way to a different conclusion still cannot get past a function
 // that refuses to return.
+//
+// --- Why there are no dates in this file any more ---
+//
+// This was built as a *daily* plan, keyed by calendar date, and that was a
+// mistake inherited from how human companies work. A day is a shift: the
+// length of time a person can work before going home. Agents don't go home.
+//
+// The consequence was not theoretical. With one plan per calendar day and an
+// approved plan locked, a plan approved in the morning for a venture that
+// turned out not to exist froze the company until midnight UTC — unable to do
+// the approved work, unable to propose different work, and correctly telling
+// the founder it had no lever. Every part of that was working as designed,
+// and the design was wrong.
+//
+// So the unit is now the plan, not the day. A plan is superseded when the
+// next one is approved, which can be thirty seconds later. The founder's
+// approval still gates every real action; what's gone is the calendar.
 
 import { readJson, writeJson } from './store.js';
 
 const FILE = 'dailyPlans.json';
-const MAX_KEPT_DAYS = 60;
+const MAX_HISTORY = 60;
 
 export const PLAN_STATUS = {
   PENDING: 'pending',
   APPROVED: 'approved',
   REJECTED: 'rejected',
+  SUPERSEDED: 'superseded',
+  WITHDRAWN: 'withdrawn',
 };
 
 /** Whether a plan is required before real actions may run. */
@@ -34,38 +53,62 @@ export function isPlanRequired() {
   return Boolean((process.env.AUTONOMOUS_DEPLOY_REPOS || '').trim());
 }
 
-export function today() {
-  return new Date().toISOString().slice(0, 10);
+// Old files were { plans: { '2026-09-12': {...} } }. Rather than strand
+// whatever is live when this deploys, the most recent plan is carried into
+// the new shape by its status — an approved one stays in force, a pending one
+// stays waiting. Anything older becomes history, which is all it ever was.
+function migrate(data) {
+  if (!data.plans) return data;
+  const dates = Object.keys(data.plans).sort();
+  const latest = dates.length ? data.plans[dates[dates.length - 1]] : null;
+  const migrated = {
+    pending: latest?.status === PLAN_STATUS.PENDING ? latest : null,
+    approved: latest?.status === PLAN_STATUS.APPROVED ? latest : null,
+    history: dates.slice(0, -1).map((d) => data.plans[d]).reverse(),
+  };
+  if (latest && !migrated.pending && !migrated.approved) migrated.history.unshift(latest);
+  return migrated;
 }
 
 function load() {
-  const data = readJson(FILE, { plans: {} });
-  if (!data.plans) data.plans = {};
+  const data = readJson(FILE, { pending: null, approved: null, history: [] });
+  if (data.plans) return migrate(data);
+  if (!Array.isArray(data.history)) data.history = [];
   return data;
 }
 
 function save(data) {
-  // Old plans are the record of what was approved and when, but they are not
-  // worth keeping forever in a file read on every action.
-  const days = Object.keys(data.plans).sort();
-  for (const day of days.slice(0, Math.max(0, days.length - MAX_KEPT_DAYS))) {
-    delete data.plans[day];
-  }
+  data.history = data.history.slice(0, MAX_HISTORY);
   writeJson(FILE, data);
 }
 
-export function getPlan(date = today()) {
-  return load().plans[date] || null;
+function archive(data, plan, status) {
+  if (!plan) return;
+  data.history.unshift({ ...plan, status, archivedAt: new Date().toISOString() });
+}
+
+/** The plan in force — the only one that clears any real action. */
+export function getApprovedPlan() {
+  return load().approved;
 }
 
 /**
- * Submits the day's intended work for approval.
+ * What the founder should be looking at: whatever is waiting on them, or
+ * failing that whatever is currently in force.
+ */
+export function getPlan() {
+  const data = load();
+  return data.pending || data.approved || null;
+}
+
+/**
+ * Submits intended work for approval. Always allowed.
  *
- * Resubmitting replaces a pending or rejected plan — the team should be able
- * to answer a "no" with a better plan the same day. An *approved* plan is not
- * replaceable, because work has already been authorised against it and
- * silently swapping what was agreed is the one move this whole mechanism
- * exists to prevent.
+ * Nothing is blocked by an existing plan, in either direction. A new
+ * submission replaces anything pending, and leaves an approved plan in force
+ * until this one is approved in its place — so proposing the next piece of
+ * work never revokes clearance for work already under way, and never has to
+ * wait for a clock.
  */
 export function submitPlan({ items, summary, submittedBy }) {
   if (!Array.isArray(items) || items.length === 0) {
@@ -85,17 +128,10 @@ export function submitPlan({ items, summary, submittedBy }) {
   });
 
   const data = load();
-  const date = today();
-  const existing = data.plans[date];
-  if (existing?.status === PLAN_STATUS.APPROVED) {
-    throw new Error(
-      "Today's plan is already approved. Work under it, and submit a new plan tomorrow — " +
-        'an approved plan cannot be edited after the fact.'
-    );
-  }
-
-  data.plans[date] = {
-    date,
+  // A pending plan nobody decided on is a draft, not a record.
+  archive(data, data.pending, PLAN_STATUS.SUPERSEDED);
+  data.pending = {
+    id: `plan_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     status: PLAN_STATUS.PENDING,
     items: cleaned,
     summary: summary ? String(summary) : null,
@@ -105,38 +141,65 @@ export function submitPlan({ items, summary, submittedBy }) {
     note: null,
   };
   save(data);
-  return data.plans[date];
+  return data.pending;
 }
 
 export function approvePlan({ note } = {}) {
   const data = load();
-  const plan = data.plans[today()];
-  if (!plan) throw new Error('There is no plan for today to approve.');
-  plan.status = PLAN_STATUS.APPROVED;
-  plan.decidedAt = new Date().toISOString();
-  plan.note = note ? String(note) : null;
+  if (!data.pending) throw new Error('There is no plan waiting for a decision.');
+  // The plan being replaced is archived, not deleted: what was cleared, and
+  // when it stopped being cleared, is the audit trail.
+  archive(data, data.approved, PLAN_STATUS.SUPERSEDED);
+  data.approved = {
+    ...data.pending,
+    status: PLAN_STATUS.APPROVED,
+    decidedAt: new Date().toISOString(),
+    note: note ? String(note) : null,
+  };
+  data.pending = null;
   save(data);
-  return plan;
+  return data.approved;
 }
 
 export function rejectPlan({ reason } = {}) {
   const data = load();
-  const plan = data.plans[today()];
-  if (!plan) throw new Error('There is no plan for today to reject.');
-  plan.status = PLAN_STATUS.REJECTED;
-  plan.decidedAt = new Date().toISOString();
-  plan.note = reason ? String(reason) : null;
+  if (!data.pending) throw new Error('There is no plan waiting for a decision.');
+  const rejected = {
+    ...data.pending,
+    status: PLAN_STATUS.REJECTED,
+    decidedAt: new Date().toISOString(),
+    note: reason ? String(reason) : null,
+  };
+  archive(data, rejected, PLAN_STATUS.REJECTED);
+  data.pending = null;
   save(data);
-  return plan;
+  return rejected;
+}
+
+/**
+ * Revokes clearance the founder already gave.
+ *
+ * Separate from rejectPlan because they answer different questions: reject is
+ * "no, not this", withdraw is "what I already said yes to no longer stands".
+ * Without this, approval was a one-way door.
+ */
+export function withdrawPlan({ reason } = {}) {
+  const data = load();
+  if (!data.approved) throw new Error('There is no approved plan in force.');
+  const withdrawn = { ...data.approved, note: reason ? String(reason) : null };
+  archive(data, withdrawn, PLAN_STATUS.WITHDRAWN);
+  data.approved = null;
+  save(data);
+  return withdrawn;
 }
 
 /**
  * True when an approved item covers this action.
  *
- * An item with no target covers any target for that action on that venture —
- * "email three prospects" is a reasonable thing to approve without naming
- * them in advance. An item *with* a target covers only that target, because
- * naming one and then acting on another is not what was agreed.
+ * An item with no target covers any target for that action, because "email
+ * three prospects" is a reasonable thing to approve without naming them in
+ * advance. An item *with* a target covers only that target, because naming
+ * one and then acting on another is not what was agreed.
  */
 function covers(item, { ventureId, action, target }) {
   if (item.ventureId !== ventureId || item.action !== action) return false;
@@ -148,40 +211,46 @@ function covers(item, { ventureId, action, target }) {
 }
 
 export function isCoveredByApprovedPlan({ ventureId, action, target }) {
-  const plan = getPlan();
-  if (!plan || plan.status !== PLAN_STATUS.APPROVED) return false;
-  return plan.items.some((item) => covers(item, { ventureId, action, target }));
+  const approved = getApprovedPlan();
+  if (!approved) return false;
+  return approved.items.some((item) => covers(item, { ventureId, action, target }));
 }
 
 /**
- * Throws with a reason worth relaying unless today's approved plan covers
- * this. Called by every real action when a plan is required.
+ * Throws with a reason worth relaying unless the approved plan covers this.
+ * Called by every real action when a plan is required.
  */
 export function assertInApprovedPlan({ ventureId, action, target }) {
   if (!isPlanRequired()) return;
 
-  const plan = getPlan();
-  if (!plan) {
+  const data = load();
+  if (!data.approved) {
+    if (data.pending) {
+      throw new Error(
+        'A plan is waiting on the founder. Nothing runs until they approve it — and nothing is blocking you from ' +
+          'submitting a better one right now if this is not it.'
+      );
+    }
+    // A rejection is the most useful thing to say at the point of refusal:
+    // without it the agent sees "no plan approved" and resubmits the same
+    // plan the founder just turned down.
+    const last = data.history[0];
+    const because =
+      last?.status === PLAN_STATUS.REJECTED && last.note
+        ? ` The last plan was rejected: ${last.note}.`
+        : '';
     throw new Error(
-      `No plan has been submitted for today, so nothing is approved yet. Submit one with submit_daily_plan ` +
-        `covering "${action}" and the founder can approve the day's work in one go.`
+      `No plan is approved, so nothing is cleared yet.${because} Submit one with submit_daily_plan covering ` +
+        `"${action}" and the founder can approve it in one go. You can submit at any time; there is no queue ` +
+        'and no waiting for tomorrow.'
     );
   }
-  if (plan.status === PLAN_STATUS.PENDING) {
-    throw new Error(
-      "Today's plan is still waiting on the founder. Nothing runs until they approve it."
-    );
-  }
-  if (plan.status === PLAN_STATUS.REJECTED) {
-    throw new Error(
-      `The founder rejected today's plan${plan.note ? `: ${plan.note}` : '.'} ` +
-        'Submit a revised one rather than proceeding.'
-    );
-  }
+
   if (!isCoveredByApprovedPlan({ ventureId, action, target })) {
     throw new Error(
-      `"${action}"${target ? ` on ${target}` : ''} is not in today's approved plan. ` +
-        'The plan is what was agreed — do the work that is in it, and put this in tomorrow\'s.'
+      `"${action}"${target ? ` on ${target}` : ''} is not in the approved plan. ` +
+        'Either do the work that is in it, or submit a new plan covering this — a new plan can be submitted ' +
+        'immediately and replaces this one the moment the founder approves it.'
     );
   }
 }
@@ -189,29 +258,37 @@ export function assertInApprovedPlan({ ventureId, action, target }) {
 /** For the agent-facing context: what the team is actually cleared to do. */
 export function describePlanForAgents() {
   if (!isPlanRequired()) return '';
-  const plan = getPlan();
-  if (!plan) {
-    return 'Today\'s plan: none submitted yet. Real actions are blocked until a plan is submitted and the founder approves it.';
+  const data = load();
+
+  const render = (plan) =>
+    plan.items
+      .map((item) => `- ${item.action}${item.target ? ` on ${item.target}` : ''} (${item.ventureId}): ${item.intent}`)
+      .join('\n');
+
+  // Said explicitly everywhere below, because the absence of it is what made
+  // a stuck team conclude it had to wait for tomorrow: there is no clock here.
+  const always =
+    '\n\nA new plan can be submitted at any time and takes effect the moment the founder approves it. ' +
+    'Nothing about this waits for a new day.';
+
+  if (data.pending) {
+    return `A plan is waiting on the founder:\n${render(data.pending)}${
+      data.approved ? `\n\nStill in force until they decide:\n${render(data.approved)}` : ''
+    }${always}`;
   }
-  const lines = plan.items.map(
-    (item) => `- ${item.action}${item.target ? ` on ${item.target}` : ''} (${item.ventureId}): ${item.intent}`
-  );
-  if (plan.status === PLAN_STATUS.APPROVED) {
-    return `Today's plan is APPROVED. You may do exactly these, and nothing else:\n${lines.join('\n')}`;
+  if (data.approved) {
+    return `The approved plan. You may do exactly these, and nothing else:\n${render(data.approved)}${always}`;
   }
-  if (plan.status === PLAN_STATUS.REJECTED) {
-    return `Today's plan was REJECTED${plan.note ? `: ${plan.note}` : ''}. Submit a revised plan; no real actions run until one is approved.`;
+  const last = data.history[0];
+  if (last?.status === PLAN_STATUS.REJECTED) {
+    return `The last plan was REJECTED${last.note ? `: ${last.note}` : ''}. Submit a revised one; no real actions run until a plan is approved.${always}`;
   }
-  return `Today's plan is waiting on the founder. Nothing runs until they approve it:\n${lines.join('\n')}`;
+  return `No plan is approved, so real actions are blocked. Submit one and the founder can approve it.${always}`;
 }
 
 export function listPlans(limit = 30) {
   const data = load();
-  return Object.keys(data.plans)
-    .sort()
-    .slice(-limit)
-    .reverse()
-    .map((date) => data.plans[date]);
+  return [data.pending, data.approved, ...data.history].filter(Boolean).slice(0, limit);
 }
 
 // --- Deciding from a phone --------------------------------------------------
@@ -234,17 +311,15 @@ const STATUS = /^\s*(plan|status|today'?s\s+plan)\s*\??\s*$/i;
 /**
  * Reads a founder's reply as a decision, or null when it isn't one.
  *
- * Only ever returns a decision while a plan is actually pending. "Approve" on
- * a day with nothing waiting is far more likely to be part of a sentence than
- * a command, and acting on it would be inventing consent.
+ * Only ever returns a decision while a plan is actually pending. "Approve"
+ * with nothing waiting is far more likely to be part of a sentence than a
+ * command, and acting on it would be inventing consent.
  */
 export function parsePlanCommand(text) {
   const raw = String(text || '');
   if (STATUS.test(raw)) return { kind: 'status' };
 
-  const plan = getPlan();
-  const pending = plan?.status === PLAN_STATUS.PENDING;
-  if (!pending) return null;
+  if (!load().pending) return null;
 
   const approve = raw.match(APPROVE);
   if (approve) return { kind: 'approve', note: (approve[2] || '').trim() || null };
@@ -257,7 +332,7 @@ export function parsePlanCommand(text) {
 
 /** The plan as a WhatsApp message — short, and explicit about what replying does. */
 export function formatPlanForWhatsApp(plan) {
-  if (!plan) return 'No plan has been submitted today.';
+  if (!plan) return 'No plan is waiting and none is approved. The team can submit one at any time.';
 
   const lines = plan.items.map(
     (item, i) =>
@@ -266,14 +341,14 @@ export function formatPlanForWhatsApp(plan) {
 
   if (plan.status === PLAN_STATUS.PENDING) {
     return (
-      `Plan for ${plan.date} — waiting on you.\n\n` +
+      'Plan waiting on you.\n\n' +
       `${plan.summary ? `${plan.summary}\n\n` : ''}${lines.join('\n')}\n\n` +
       'Reply APPROVE to clear exactly this, or REJECT <reason>. Nothing runs until you do.'
     );
   }
 
   return (
-    `Plan for ${plan.date} — ${plan.status.toUpperCase()}${plan.note ? ` (${plan.note})` : ''}.\n\n` +
-    lines.join('\n')
+    `Plan — ${plan.status.toUpperCase()}${plan.note ? ` (${plan.note})` : ''}.\n\n` +
+    `${lines.join('\n')}\n\nPLAN CLEAR withdraws this.`
   );
 }

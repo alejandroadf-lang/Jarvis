@@ -32,7 +32,7 @@ import {
   setDeploymentCaps,
 } from '../finance/ventures.js';
 import { getLatestDailyReport } from '../dailyReports.js';
-import { rejectPlan, getPlan } from '../dailyPlan.js';
+import { withdrawPlan, getApprovedPlan } from '../dailyPlan.js';
 import { listAffordableModels } from '../agents/openrouter.js';
 import { describeDegradation } from '../degradation.js';
 
@@ -182,7 +182,7 @@ INTEGRATIONS — what's actually connected
 MODELS [search] — live OpenRouter models and their prices
 REPORT — the latest daily report
 PLAN — today's plan (APPROVE / REJECT <reason> to decide it)
-PLAN CLEAR <reason> — withdraw a plan you already approved
+PLAN CLEAR <reason> — withdraw clearance you already gave
 
 LINK <ventureId> <owner/repo> [paths] — grant a repo and turn deploys on
 OUTREACH <ventureId> <emails or @domains> — grant and enable an outreach scope
@@ -247,10 +247,9 @@ export async function runFounderCommand(command, deps = {}) {
     }
 
     case 'plan_clear': {
-      const current = getPlan();
-      if (!current) return 'There is no plan for today, so there is nothing to withdraw. The team can submit one now.';
-      const plan = rejectPlan({ reason: command.reason || 'Withdrawn by the founder.' });
-      return `Today's plan is withdrawn${plan.note ? `: ${plan.note}` : '.'}\n\nNothing from it runs any more, and the team can submit a new one for you to approve.`;
+      if (!getApprovedPlan()) return 'No plan is approved, so there is nothing to withdraw. The team can submit one at any time.';
+      const plan = withdrawPlan({ reason: command.reason || 'Withdrawn by the founder.' });
+      return `The approved plan is withdrawn${plan.note ? `: ${plan.note}` : '.'}\n\nNothing from it runs any more. The team can submit a new one right away — it takes effect the moment you approve it.`;
     }
 
     case 'models': {

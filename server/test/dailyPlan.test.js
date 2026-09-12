@@ -49,7 +49,7 @@ const ITEM = { ventureId: 'v1', action: 'deploy_code', target: 'src/', intent: '
 test('with no plan, nothing real runs — and the message says how to fix it', () => {
   assert.throws(
     () => plan.assertInApprovedPlan({ ventureId: 'v1', action: 'deploy_code', target: 'src/index.ts' }),
-    /No plan has been submitted/
+    /No plan is approved/
   );
 });
 
@@ -58,7 +58,7 @@ test('a submitted plan is not an approved plan', () => {
 
   assert.throws(
     () => plan.assertInApprovedPlan({ ventureId: 'v1', action: 'deploy_code', target: 'src/index.ts' }),
-    /still waiting on the founder/
+    /waiting on the founder/
   );
 });
 
@@ -77,7 +77,7 @@ test('work outside the plan is refused even when the plan is approved', () => {
 
   assert.throws(
     () => plan.assertInApprovedPlan({ ventureId: 'v1', action: 'send_customer_email', target: 'a@b.com' }),
-    /is not in today's approved plan/
+    /is not in the approved plan/
   );
 });
 
@@ -88,7 +88,7 @@ test('a planned target binds — naming one and acting on another is not what wa
   assert.doesNotThrow(() => plan.assertInApprovedPlan({ ventureId: 'v1', action: 'deploy_code', target: 'src/deep/file.ts' }));
   assert.throws(
     () => plan.assertInApprovedPlan({ ventureId: 'v1', action: 'deploy_code', target: 'secrets/prod.env' }),
-    /not in today's approved plan/
+    /not in the approved plan/
   );
 });
 
@@ -107,7 +107,7 @@ test('the plan is per venture — approving one does not approve another', () =>
   plan.submitPlan({ items: [ITEM] });
   plan.approvePlan();
 
-  assert.throws(() => plan.assertInApprovedPlan({ ventureId: 'v2', action: 'deploy_code', target: 'src/x.ts' }), /not in today's approved plan/);
+  assert.throws(() => plan.assertInApprovedPlan({ ventureId: 'v2', action: 'deploy_code', target: 'src/x.ts' }), /not in the approved plan/);
 });
 
 test('a rejected plan blocks, and carries the reason back', () => {
@@ -120,7 +120,7 @@ test('a rejected plan blocks, and carries the reason back', () => {
   );
 });
 
-test('a rejected plan can be replaced the same day', () => {
+test('a rejected plan can be replaced immediately', () => {
   plan.submitPlan({ items: [ITEM] });
   plan.rejectPlan({ reason: 'no' });
 
@@ -128,15 +128,25 @@ test('a rejected plan can be replaced the same day', () => {
   assert.equal(revised.status, 'pending');
 });
 
-test('an approved plan cannot be edited after the fact', () => {
-  // Work has already been authorised against it. Silently swapping what was
-  // agreed is the move this mechanism exists to prevent.
+test('a new plan can be proposed while one is approved, and changes nothing until approved', () => {
+  // This used to throw, and that was the bug: an approval locked the calendar
+  // day, so a team that finished its approved work could not propose the next
+  // piece until midnight UTC. Proposing is now always allowed — and crucially
+  // it grants nothing, so it cannot be used to widen a clearance the founder
+  // already gave.
   plan.submitPlan({ items: [ITEM] });
   plan.approvePlan();
 
+  plan.submitPlan({ items: [{ ventureId: 'v1', action: 'send_customer_email', intent: 'sneak this in' }] });
+
   assert.throws(
-    () => plan.submitPlan({ items: [{ ventureId: 'v1', action: 'send_customer_email', intent: 'sneak this in' }] }),
-    /already approved/
+    () => plan.assertInApprovedPlan({ ventureId: 'v1', action: 'send_customer_email', target: 'a@b.com' }),
+    /waiting on the founder|not in the approved plan/,
+    'submitting must not clear the new work'
+  );
+  assert.doesNotThrow(
+    () => plan.assertInApprovedPlan({ ventureId: 'v1', action: 'deploy_code', target: 'src/x.ts' }),
+    'and must not revoke work already cleared'
   );
 });
 
@@ -174,7 +184,7 @@ test('a real deploy is blocked by the plan before the path allowlist', () => {
   ventures.setDeploymentEnabled(v.id, true);
 
   // Everything else is in order; only the plan is missing.
-  assert.throws(() => ventures.authorizeDeployment(v.id, { path: 'src/index.ts' }), /No plan has been submitted/);
+  assert.throws(() => ventures.authorizeDeployment(v.id, { path: 'src/index.ts' }), /No plan is approved/);
 
   plan.submitPlan({ items: [{ ventureId: v.id, action: 'deploy_code', target: 'src/', intent: 'ship it' }] });
   plan.approvePlan();
@@ -187,8 +197,12 @@ test('the agent-facing description states plainly what is cleared', () => {
 
   plan.approvePlan();
   const approved = plan.describePlanForAgents();
-  assert.match(approved, /APPROVED/);
+  assert.match(approved, /approved plan/i);
   assert.match(approved, /and nothing else/);
+  // Said on every render, because its absence is what let a stuck team
+  // conclude on its own that the work had to wait for tomorrow.
+  assert.match(approved, /any time/i);
+  assert.doesNotMatch(approved, /tomorrow's plan/i);
 });
 
 // --- Deciding from a phone --------------------------------------------------
@@ -280,7 +294,8 @@ test('the cycle is told to work inside a plan already approved', async () => {
   const text = __planningInstructionForTests();
 
   assert.match(text, /already approved/);
-  // An approved plan cannot be edited, so asking would only waste a call.
+  // A plan is already approved, so the sync's job is to work inside it
+  // rather than open with a fresh submission.
   assert.doesNotMatch(text, /call submit_daily_plan with everything/);
 });
 
@@ -291,7 +306,7 @@ test('the cycle does not resubmit over a plan still waiting', async () => {
   const text = __planningInstructionForTests();
 
   assert.match(text, /waiting on the founder/);
-  assert.match(text, /Do not submit another/);
+  assert.match(text, /Don't\n?\s*submit a second one/);
 });
 
 test('with plans not required the cycle is told nothing about them', async () => {

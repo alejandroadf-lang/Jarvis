@@ -429,14 +429,14 @@ export async function handleSubmitDailyPlan(input, triggeredBy = 'interactive', 
   }
 }
 
-/** Where today's plan stands, so nobody guesses at whether they are cleared. */
+/** Where the plan stands, so nobody guesses at whether they are cleared. */
 export async function handleCheckDailyPlan() {
   const plan = getPlan();
   if (!plan) return 'No plan has been submitted today. Real actions are blocked until one is submitted and approved.';
   const lines = plan.items.map(
     (item) => `  • ${item.action}${item.target ? ` on ${item.target}` : ''} (${item.ventureId}) — ${item.intent}`
   );
-  return `Today's plan is ${plan.status.toUpperCase()}${plan.note ? ` — "${plan.note}"` : ''}.\n${lines.join('\n')}`;
+  return `The current plan is ${plan.status.toUpperCase()}${plan.note ? ` — "${plan.note}"` : ''}.\n${lines.join('\n')}\n\nA new plan can be submitted at any time and takes effect as soon as the founder approves it.`;
 }
 
 /**

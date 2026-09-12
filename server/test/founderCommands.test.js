@@ -287,36 +287,7 @@ test('"caps" in a sentence is not a cap change', () => {
 
 // --- PLAN CLEAR: approval was a one-way door ---
 
-test('an approved plan can be withdrawn, which unblocks a new one', async () => {
-  const plans = await import('../dailyPlan.js');
-  const before = process.env.DAILY_PLAN_REQUIRED;
-  process.env.DAILY_PLAN_REQUIRED = 'true';
-  try {
-    plans.submitPlan({
-      items: [{ ventureId: 'not-a-real-id', action: 'deploy_code', intent: 'ship it' }],
-      summary: 'A plan naming a venture that does not exist.',
-    });
-    plans.approvePlan({});
-
-    // The trap: submitPlan refuses while approved, and parsePlanCommand only
-    // offers APPROVE/REJECT while pending. So the day was locked with no
-    // founder override — unable to do the approved work or to propose other
-    // work, until midnight UTC.
-    assert.throws(() => plans.submitPlan({ items: [{ ventureId: 'v_1', action: 'deploy_code', intent: 'x' }] }), /already approved/);
-
-    await commands.runFounderCommand(commands.parseFounderCommand('plan clear wrong venture id'));
-
-    assert.doesNotThrow(() =>
-      plans.submitPlan({ items: [{ ventureId: 'v_1', action: 'deploy_code', intent: 'the real one' }] })
-    );
-  } finally {
-    if (before === undefined) delete process.env.DAILY_PLAN_REQUIRED;
-    else process.env.DAILY_PLAN_REQUIRED = before;
-    fs.rmSync(path.join(tmpDir, 'dailyPlans.json'), { force: true });
-  }
-});
-
-test('withdrawing stops the approved items from running', async () => {
+test('withdrawing revokes clearance the founder already gave', async () => {
   const plans = await import('../dailyPlan.js');
   const before = process.env.DAILY_PLAN_REQUIRED;
   process.env.DAILY_PLAN_REQUIRED = 'true';
@@ -325,13 +296,25 @@ test('withdrawing stops the approved items from running', async () => {
     plans.approvePlan({});
     assert.doesNotThrow(() => plans.assertInApprovedPlan({ ventureId: 'v_9', action: 'deploy_code' }));
 
-    await commands.runFounderCommand({ kind: 'plan_clear', reason: 'changed my mind' });
-    assert.throws(() => plans.assertInApprovedPlan({ ventureId: 'v_9', action: 'deploy_code' }), /rejected/);
+    await commands.runFounderCommand(commands.parseFounderCommand('plan clear changed my mind'));
+
+    assert.equal(plans.getApprovedPlan(), null);
+    assert.throws(
+      () => plans.assertInApprovedPlan({ ventureId: 'v_9', action: 'deploy_code' }),
+      /No plan is approved/
+    );
   } finally {
     if (before === undefined) delete process.env.DAILY_PLAN_REQUIRED;
     else process.env.DAILY_PLAN_REQUIRED = before;
     fs.rmSync(path.join(tmpDir, 'dailyPlans.json'), { force: true });
   }
+});
+
+test('withdrawing when nothing is approved says so rather than failing', async () => {
+  fs.rmSync(path.join(tmpDir, 'dailyPlans.json'), { force: true });
+  const reply = await commands.runFounderCommand({ kind: 'plan_clear', reason: null });
+  assert.match(reply, /nothing to withdraw/i);
+  assert.match(reply, /at any time/i, 'and points at the way forward rather than a clock');
 });
 
 test('a bare synonym is a command; the same word in a sentence is not', () => {

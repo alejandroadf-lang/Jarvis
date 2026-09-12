@@ -66,7 +66,7 @@ export const AGENTS = {
       {
         name: 'submit_daily_plan',
         description:
-          "Submit the day's intended real work for the founder to approve in one go. Required before anything real runs: no approved plan means no commits, no customer emails, no repo linking. List every action the team expects to take today — an item with no target covers any target for that action (\"email three prospects\"), while naming a target limits it to that one. Resubmitting replaces a pending or rejected plan; an approved one cannot be edited, so put tomorrow's work in tomorrow's plan.",
+          "Submit intended real work for the founder to approve in one go. Required before anything real runs: no approved plan means no commits, no customer emails, no repo linking. List every action the team is actually ready to take — an item with no target covers any target for that action (\"email three prospects\"), while naming a target limits it to that one. There is no schedule and no queue: submit whenever the work is ready, including immediately after an approval, and the new plan replaces the old one the moment the founder approves it. Never tell the founder that work must wait for tomorrow; that is not how this works.",
         input_schema: {
           type: 'object',
           properties: {
@@ -91,7 +91,7 @@ export const AGENTS = {
       },
       {
         name: 'check_daily_plan',
-        description: "Where today's plan stands — not submitted, waiting, approved, or rejected — so you never assume you are cleared.",
+        description: "Where the current plan stands — none, waiting, approved, or rejected — so you never assume you are cleared, and never assume you have to wait. Call this before reporting that anything is blocked by a plan.",
         input_schema: { type: 'object', properties: {} },
       },
       {
