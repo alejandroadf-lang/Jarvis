@@ -45,7 +45,9 @@ import { estimateCostUsd, sumUsage, emptyUsage } from './usage.js';
 import { isPlanRequired, getPlan } from './dailyPlan.js';
 
 
-// When the founder requires a daily plan, this cycle is where it comes from.
+// When the founder requires an approved plan, this cycle is one place it can
+// come from — not the only one. A plan can be submitted from any
+// conversation at any time; this sync just makes sure one exists by morning.
 //
 // Without this the sync was inert every morning: it can call deploy_code and
 // send_customer_email, both now gated on an approved plan, and it had no way
@@ -62,31 +64,32 @@ function planningInstruction() {
 
   const plan = getPlan();
   if (plan?.status === 'approved') {
-    return `\n\nToday's plan is already approved. Work inside it — anything not
-on it will be refused, and that is the point. Do not submit another; an
-approved plan cannot be edited.`;
+    return `\n\nA plan is already approved. Work inside it — anything not on it
+will be refused, and that is the point. If something genuinely needs doing
+that isn't on it, submit a new plan saying so; it replaces this one the
+moment the founder approves it. There is no waiting for a new day.`;
   }
   if (plan?.status === 'pending') {
-    return `\n\nToday's plan is already submitted and waiting on the founder.
-Do not submit another and do not attempt real actions yet — nothing runs
-until they decide.`;
+    return `\n\nA plan is already submitted and waiting on the founder. Don't
+submit a second one unless this sync changed what the team intends, and
+don't attempt real actions yet — nothing runs until they decide.`;
   }
 
   return `\n\nOne more thing, and it comes before any real action: the founder
-requires a daily plan. Nothing real — no commits, no customer emails —
-happens today until they approve one, and right now none has been submitted.
+requires an approved plan. Nothing real — no commits, no customer emails —
+happens until they approve one, and right now none is approved.
 
 So end this sync by calling submit_daily_plan with everything the team
-genuinely intends to do today. Not aspirations: the specific actions, on the
+genuinely intends to do. Not aspirations: the specific actions, on the
 specific ventures, that people are actually ready to take. An item naming a
 target binds to it; an item without one covers any target for that action, so
 leave the target off only when you really do mean "whichever three prospects
 the Sales Manager picks".
 
-If today's honest answer is that nothing real is ready, submit nothing and
-say so. A plan padded to look busy is worse than an empty morning, because
-the founder approves it and then the team is licensed for work nobody
-thought through.
+If the honest answer is that nothing real is ready, submit nothing and say
+so. A plan padded to look busy is worse than an empty morning, because the
+founder approves it and then the team is licensed for work nobody thought
+through.
 
 Don't attempt deploy_code or send_customer_email before the plan is approved
 — they will be refused, and the refusal will be the founder's first sign that

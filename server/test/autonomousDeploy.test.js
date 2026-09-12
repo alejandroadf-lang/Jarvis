@@ -190,14 +190,14 @@ test('the link is attributed to the agent that made it', async () => {
   assert.ok(contributions.some((c) => c.agentId === 'cto'), 'the founder must be able to see who granted this');
 });
 
-test('self-service still needs the day approved — autonomy is bounded, not unbounded', async () => {
+test('self-service still needs an approved plan — autonomy is bounded, not unbounded', async () => {
   // The point of the whole arrangement. Pre-approving a repo hands over the
   // linking, not the deciding: the day's work is still agreed first.
   const v = newVenture();
 
   const reply = await handlers.handleLinkVentureRepo({ ventureId: v.id, ...LINK });
 
-  assert.match(reply, /No plan has been submitted/);
+  assert.match(reply, /No plan is approved/);
   assert.equal(ventures.getVenture(v.id).repo, undefined);
 });
 
@@ -207,5 +207,5 @@ test('a plan approved for a different repo does not cover this one', async () =>
 
   const reply = await handlers.handleLinkVentureRepo({ ventureId: v.id, ...LINK });
 
-  assert.match(reply, /not in today's approved plan/);
+  assert.match(reply, /not in the approved plan/);
 });
