@@ -58,6 +58,7 @@ import {
   downloadMedia,
 } from './channels/whatsapp.js';
 import { recordInbound, recordReceipt, recentInbound, waitingMessage, STAGES } from './channels/whatsappLog.js';
+import { parseFounderCommand, runFounderCommand } from './channels/founderCommands.js';
 import { privacyPolicyHtml } from './privacy.js';
 import { recordBoot, warnIfEphemeral } from './storage.js';
 import {
@@ -651,6 +652,26 @@ async function handleWhatsAppMessage(message) {
       }
     } catch (err) {
       await sendWhatsAppMessage(message.from, `Couldn't record that — ${err.message}`);
+    }
+    return;
+  }
+
+  // The founder's own controls — halt, scope grants, status — decided the
+  // same way and for the same reason: these are the powers that bound
+  // agents, so an agent never gets to interpret them. See
+  // channels/founderCommands.js.
+  const founderCommand = parseFounderCommand(text);
+  if (founderCommand) {
+    try {
+      const reply = await runFounderCommand(founderCommand, {
+        probeIntegrations: getIntegrationStatus,
+      });
+      recordInbound({ stage: STAGES.ANSWERED, from: message.from, text, detail: `founder command: ${founderCommand.kind}` });
+      await sendWhatsAppMessage(message.from, reply);
+    } catch (err) {
+      // A mistyped venture id is the common case, and the founder needs to
+      // see which one it was rather than a generic failure.
+      await sendWhatsAppMessage(message.from, `Couldn't do that — ${err.message}`);
     }
     return;
   }
