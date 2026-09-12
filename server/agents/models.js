@@ -1,3 +1,4 @@
+import { hasSecret } from '../env.js';
 // Which model each agent actually runs on, and what that model costs.
 //
 // Every agent used to run on claude-sonnet-5, which was the right default
@@ -118,7 +119,7 @@ export function resolveModelForAgent(agent, alternativeAvailable) {
 // still means OpenRouter — callers pass isOpenRouterConfigured(). OpenAI is
 // checked directly rather than threaded through every call site.
 function isProviderAvailable(provider, openRouterAvailable) {
-  if (provider === 'openai') return Boolean(process.env.OPENAI_API_KEY);
-  if (provider === 'gemini') return Boolean(process.env.GEMINI_API_KEY);
+  if (provider === 'openai') return hasSecret('OPENAI_API_KEY');
+  if (provider === 'gemini') return hasSecret('GEMINI_API_KEY');
   return openRouterAvailable;
 }

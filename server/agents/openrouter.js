@@ -1,3 +1,4 @@
+import { readSecret, hasSecret } from '../env.js';
 // A deliberately small OpenRouter client for the one call shape this app
 // needs from it: system prompt + messages in, text out.
 //
@@ -14,7 +15,7 @@
 const BASE_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
 export function isOpenRouterConfigured() {
-  return Boolean(process.env.OPENROUTER_API_KEY);
+  return hasSecret('OPENROUTER_API_KEY');
 }
 
 /**
@@ -25,7 +26,7 @@ export function isOpenRouterConfigured() {
  * @param {{model: string, system: string, messages: Array<{role: string, content: any}>, maxTokens: number}} opts
  */
 export async function createCompletion({ model, system, messages, maxTokens }) {
-  const apiKey = process.env.OPENROUTER_API_KEY;
+  const apiKey = readSecret('OPENROUTER_API_KEY');
   if (!apiKey) throw new Error('OPENROUTER_API_KEY is not set');
 
   const response = await fetch(BASE_URL, {

@@ -22,6 +22,7 @@ import { isWhatsAppConfigured, allowedNumbers, GRAPH_API } from './channels/what
 import { isOpenAIConfigured, chatModel, fallbackModel, transcribeModel } from './agents/openai.js';
 import { isGeminiConfigured, geminiModel, listModelsUrl } from './agents/gemini.js';
 import { MODELS, CHEAP_TIER } from './agents/models.js';
+import { readSecret } from './env.js';
 
 // A probe must never hang a page load. Both services are normally fast; if
 // one isn't, "couldn't reach it" is a more useful answer than a spinner.
@@ -52,7 +53,7 @@ async function probeOpenRouter() {
   try {
     const res = await withTimeout(
       fetch('https://openrouter.ai/api/v1/key', {
-        headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}` },
+        headers: { Authorization: `Bearer ${readSecret('OPENROUTER_API_KEY')}` },
       }),
       'OpenRouter'
     );
@@ -180,7 +181,7 @@ async function probeOpenAI() {
   try {
     const res = await withTimeout(
       fetch('https://api.openai.com/v1/models', {
-        headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+        headers: { Authorization: `Bearer ${readSecret('OPENAI_API_KEY')}` },
       }),
       'OpenAI'
     );

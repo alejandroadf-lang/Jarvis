@@ -1,3 +1,4 @@
+import { readSecret, hasSecret } from '../env.js';
 // An OpenAI client covering the two things this app asks of it: a plain
 // completion (same shape as openrouter.js) and audio transcription.
 //
@@ -15,7 +16,7 @@ const CHAT_URL = 'https://api.openai.com/v1/chat/completions';
 const TRANSCRIBE_URL = 'https://api.openai.com/v1/audio/transcriptions';
 
 export function isOpenAIConfigured() {
-  return Boolean(process.env.OPENAI_API_KEY);
+  return hasSecret('OPENAI_API_KEY');
 }
 
 export function chatModel() {
@@ -36,7 +37,7 @@ export function transcribeModel() {
  * branches on provider to read a result.
  */
 export async function createCompletion({ model, system, messages, maxTokens }) {
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = readSecret('OPENAI_API_KEY');
   if (!apiKey) throw new Error('OPENAI_API_KEY is not set');
 
   const response = await fetch(CHAT_URL, {
@@ -82,7 +83,7 @@ export async function createCompletion({ model, system, messages, maxTokens }) {
  *   the extension; WhatsApp voice notes are .ogg (opus).
  */
 export async function transcribeAudio(audio, filename = 'voice.ogg') {
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = readSecret('OPENAI_API_KEY');
   if (!apiKey) throw new Error('OPENAI_API_KEY is not set');
 
   const form = new FormData();
