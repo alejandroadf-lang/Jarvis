@@ -19,8 +19,14 @@ import {
   recordContactNote,
   authorizeExecution,
   recordRun,
+  assertRepoIsPreApproved,
+  autonomousRepos,
+  linkRepo,
+  setDeploymentEnabled,
 } from './finance/ventures.js';
 import { recordContribution } from './finance/profitShare.js';
+import { submitPlan, getPlan, formatPlanForWhatsApp } from './dailyPlan.js';
+import { allowedNumbers, sendWhatsAppMessage, isWhatsAppConfigured } from './channels/whatsapp.js';
 import {
   sendVentureProposedEmail,
   sendDeploymentEmail,
@@ -333,4 +339,125 @@ export async function handleListChecks(input) {
   } catch (err) {
     return `Could not list checks: ${err.message}`;
   }
+}
+
+/**
+ * Points a venture at a repo and turns deployment on, without waiting for the
+ * founder — but only for repos they pre-approved in AUTONOMOUS_DEPLOY_REPOS.
+ *
+ * Both halves in one action on purpose. Linking without enabling is a state
+ * nobody wants and the team would immediately have to ask about, and every
+ * extra round trip is the thing this exists to remove.
+ */
+export async function handleLinkVentureRepo(input, triggeredBy = 'interactive', ctx = {}) {
+  const { ventureId, owner, name, branch, allowedPaths, maxPerDay, maxPerWeek, rationale } = input;
+  if (!isGithubConfigured()) {
+    return 'Could not link a repo: this server has no GITHUB_TOKEN configured.';
+  }
+  if (!owner || !name) return 'Could not link a repo: owner and name are both required.';
+
+  try {
+    assertRepoIsPreApproved(owner, name, ventureId);
+  } catch (err) {
+    return `Could not link a repo: ${err.message}`;
+  }
+
+  const paths = Array.isArray(allowedPaths) ? allowedPaths.filter(Boolean) : [];
+  if (!paths.length) {
+    // An empty allowlist permits nothing, so linking with one would produce a
+    // venture that looks ready and refuses every commit.
+    return 'Could not link a repo: allowedPaths is required, and must name the paths you actually intend to write.';
+  }
+
+  try {
+    const venture = getVenture(ventureId);
+    if (!venture) return 'Could not link a repo: no venture with that id.';
+    if (venture.status !== 'active') return `Could not link a repo: the venture is ${venture.status}.`;
+
+    linkRepo(ventureId, { owner, name, branch, allowedPaths: paths, maxPerDay, maxPerWeek });
+    setDeploymentEnabled(ventureId, true);
+    recordContribution({ agentId: ctx.agentId, kind: 'deploy_code', ventureId, detail: `linked ${owner}/${name}` });
+
+    const linked = getVenture(ventureId);
+    return (
+      `Linked ${owner}/${name} (branch ${linked.repo.branch}) to "${linked.title}" and enabled deployment. ` +
+      `Writable paths: ${paths.join(', ')}. Caps: ${linked.repo.maxPerDay}/day, ${linked.repo.maxPerWeek}/week. ` +
+      `Rationale recorded: ${rationale || '(none given)'}.`
+    );
+  } catch (err) {
+    return `Could not link a repo: ${err.message}`;
+  }
+}
+
+/** What the founder has pre-approved, so nobody guesses at a repo name. */
+export async function handleListApprovedRepos() {
+  const repos = autonomousRepos();
+  if (!repos.length) {
+    return 'No repos are pre-approved for self-service. The founder links repos and enables deployment themselves.';
+  }
+  return `Repos you can link and deploy to without asking: ${repos.join(', ')}.`;
+}
+
+/**
+ * The team's plan for the day, submitted for one approval rather than many.
+ *
+ * Resubmitting replaces a pending or rejected plan, so a "no" can be answered
+ * the same day. An approved one cannot be edited — work has already been
+ * authorised against it, and quietly changing what was agreed is the move
+ * this whole mechanism exists to prevent.
+ */
+export async function handleSubmitDailyPlan(input, triggeredBy = 'interactive', ctx = {}) {
+  const { items, summary } = input;
+  try {
+    const plan = submitPlan({ items, summary, submittedBy: ctx.agentId || 'ceo' });
+    // Pushed to the phone rather than left for the founder to come looking.
+    // The team is stopped until this is answered, so a plan sitting unread in
+    // a panel costs a day of work, not a scroll.
+    const pushed = await pushPlanToFounder(plan);
+    const lines = plan.items.map(
+      (item) => `  • ${item.action}${item.target ? ` on ${item.target}` : ''} (${item.ventureId}) — ${item.intent}`
+    );
+    return (
+      `Plan submitted for ${plan.date} and waiting on the founder. Nothing runs until they approve it.\n` +
+      `${lines.join('\n')}\n` +
+      (pushed
+        ? 'Sent to their phone; they can reply APPROVE or REJECT there. Do not start the work yet.'
+        : 'Tell the founder it is ready to look at, and do not start the work yet.')
+    );
+  } catch (err) {
+    return `Could not submit the plan: ${err.message}`;
+  }
+}
+
+/** Where today's plan stands, so nobody guesses at whether they are cleared. */
+export async function handleCheckDailyPlan() {
+  const plan = getPlan();
+  if (!plan) return 'No plan has been submitted today. Real actions are blocked until one is submitted and approved.';
+  const lines = plan.items.map(
+    (item) => `  • ${item.action}${item.target ? ` on ${item.target}` : ''} (${item.ventureId}) — ${item.intent}`
+  );
+  return `Today's plan is ${plan.status.toUpperCase()}${plan.note ? ` — "${plan.note}"` : ''}.\n${lines.join('\n')}`;
+}
+
+/**
+ * Sends a pending plan to every allowlisted number. Best-effort by design: a
+ * notification that fails must not lose the plan, which is already saved and
+ * visible in the app either way.
+ */
+async function pushPlanToFounder(plan) {
+  if (!isWhatsAppConfigured()) return false;
+  const numbers = allowedNumbers();
+  if (!numbers.length) return false;
+
+  const body = formatPlanForWhatsApp(plan);
+  let delivered = false;
+  for (const number of numbers) {
+    try {
+      await sendWhatsAppMessage(number, body);
+      delivered = true;
+    } catch (err) {
+      console.error(`Could not send the daily plan to ${number}: ${err.message}`);
+    }
+  }
+  return delivered;
 }

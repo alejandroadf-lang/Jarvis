@@ -33,6 +33,10 @@ import {
   handleLogContactNote,
   handleRunChecks,
   handleListChecks,
+  handleLinkVentureRepo,
+  handleListApprovedRepos,
+  handleSubmitDailyPlan,
+  handleCheckDailyPlan,
 } from './actionHandlers.js';
 import { listDailyReports, getDailyReport, getLatestDailyReport } from './dailyReports.js';
 import { startDailyMeetingScheduler, runDailyMeetingNow, isDailyMeetingRunning } from './scheduler.js';
@@ -54,6 +58,15 @@ import {
 import { recordInbound, recordReceipt, recentInbound, STAGES } from './channels/whatsappLog.js';
 import { privacyPolicyHtml } from './privacy.js';
 import { recordBoot, warnIfEphemeral } from './storage.js';
+import {
+  getPlan,
+  approvePlan,
+  rejectPlan,
+  listPlans,
+  isPlanRequired,
+  parsePlanCommand,
+  formatPlanForWhatsApp,
+} from './dailyPlan.js';
 import { isOpenAIConfigured, transcribeAudio } from './agents/openai.js';
 import { listWeeklyReflections, getWeeklyReflection, getLatestWeeklyReflection } from './weeklyReflections.js';
 import { startWeeklyReflectionScheduler, runWeeklyReflectionNow, isWeeklyReflectionRunning } from './weeklyScheduler.js';
@@ -224,6 +237,13 @@ async function runCompanyTurn(sessionId, message) {
       deploy_code: (input) => handleDeployCode(input, 'interactive'),
       // Execution is wired the same way as deploy_code: available in a live
       // conversation, where the founder is present to see a red run.
+      // Self-service deployment, bounded by AUTONOMOUS_DEPLOY_REPOS. Wired
+      // into the interactive path only, like every other real action — the
+      // founder is present to see what the team just granted itself.
+      submit_daily_plan: (input, ctx) => handleSubmitDailyPlan(input, 'interactive', ctx),
+      check_daily_plan: () => handleCheckDailyPlan(),
+      link_venture_repo: (input, ctx) => handleLinkVentureRepo(input, 'interactive', ctx),
+      list_approved_repos: () => handleListApprovedRepos(),
       run_checks: (input, ctx) => handleRunChecks(input, 'interactive', ctx),
       list_checks: (input) => handleListChecks(input),
       send_customer_email: (input) => handleSendCustomerEmail(input, 'interactive'),
@@ -549,6 +569,37 @@ async function handleWhatsAppMessage(message) {
     return;
   }
 
+  // Approval is decided here, before the company turn ever sees the words.
+  // An agent that interprets "approve" is an agent that can conclude it was
+  // approved — so the founder's reply goes straight to the function that
+  // records the decision, and the team finds out by reading the plan.
+  const command = parsePlanCommand(text);
+  if (command) {
+    try {
+      if (command.kind === 'status') {
+        await sendWhatsAppMessage(message.from, formatPlanForWhatsApp(getPlan()));
+      } else if (command.kind === 'approve') {
+        const plan = approvePlan({ note: command.note });
+        recordInbound({ stage: STAGES.ANSWERED, from: message.from, text, detail: 'approved the daily plan' });
+        await sendWhatsAppMessage(
+          message.from,
+          `Approved — ${plan.items.length} item${plan.items.length === 1 ? '' : 's'} cleared for ${plan.date}. ` +
+            'Anything not on that list is still refused.'
+        );
+      } else {
+        const plan = rejectPlan({ reason: command.reason });
+        recordInbound({ stage: STAGES.ANSWERED, from: message.from, text, detail: 'rejected the daily plan' });
+        await sendWhatsAppMessage(
+          message.from,
+          `Rejected${plan.note ? `: ${plan.note}` : ''}. Nothing runs; the team can send a revised plan today.`
+        );
+      }
+    } catch (err) {
+      await sendWhatsAppMessage(message.from, `Couldn't record that — ${err.message}`);
+    }
+    return;
+  }
+
   try {
     // The sender's number is the session key, so a WhatsApp conversation has
     // its own continuous history rather than colliding with the web app's.
@@ -576,6 +627,29 @@ function isVoiceNote(message) {
 // dashboard rather than anywhere in this app.
 app.get('/api/whatsapp/recent', (_req, res) => {
   res.json(recentInbound());
+});
+
+// The day's plan, and the founder's one decision on it. Approval is a founder
+// endpoint and never an agent action — a team that can approve its own plan
+// has not been approved, it has been asked politely.
+app.get('/api/plan', (_req, res) => {
+  res.json({ required: isPlanRequired(), plan: getPlan(), history: listPlans(14) });
+});
+
+app.post('/api/plan/approve', (req, res) => {
+  try {
+    res.json({ plan: approvePlan({ note: req.body?.note }) });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/plan/reject', (req, res) => {
+  try {
+    res.json({ plan: rejectPlan({ reason: req.body?.reason }) });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 app.get('/api/spend', (_req, res) => {

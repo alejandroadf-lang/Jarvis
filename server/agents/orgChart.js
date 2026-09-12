@@ -64,6 +64,66 @@ export const AGENTS = {
       'Consult the CEO for company vision, strategic prioritization, or decisions that cut across multiple departments.',
     actions: [
       {
+        name: 'submit_daily_plan',
+        description:
+          "Submit the day's intended real work for the founder to approve in one go. Required before anything real runs: no approved plan means no commits, no customer emails, no repo linking. List every action the team expects to take today — an item with no target covers any target for that action (\"email three prospects\"), while naming a target limits it to that one. Resubmitting replaces a pending or rejected plan; an approved one cannot be edited, so put tomorrow's work in tomorrow's plan.",
+        input_schema: {
+          type: 'object',
+          properties: {
+            summary: { type: 'string', description: "One or two sentences on what today is for, as the founder will read it first." },
+            items: {
+              type: 'array',
+              description: 'Every real action the team intends to take today.',
+              items: {
+                type: 'object',
+                properties: {
+                  ventureId: { type: 'string', description: 'Which venture this is for.' },
+                  action: { type: 'string', description: 'One of: deploy_code, send_customer_email, link_venture_repo.' },
+                  target: { type: 'string', description: 'Optional. A path, recipient or repo. Leave it out to cover any target for that action.' },
+                  intent: { type: 'string', description: 'What this achieves — the founder is approving the intent, not the mechanics.' },
+                },
+                required: ['ventureId', 'action', 'intent'],
+              },
+            },
+          },
+          required: ['items'],
+        },
+      },
+      {
+        name: 'check_daily_plan',
+        description: "Where today's plan stands — not submitted, waiting, approved, or rejected — so you never assume you are cleared.",
+        input_schema: { type: 'object', properties: {} },
+      },
+      {
+        name: 'link_venture_repo',
+        description:
+          "Point a venture at a GitHub repo and turn deployment on, so the team can start shipping without waiting for the founder. Only works for repos the founder pre-approved; call list_approved_repos if you don't know which those are. Linking also enables deployment — there is no separate step. Choose allowedPaths deliberately: they are the only paths anyone on the team will be able to write.",
+        input_schema: {
+          type: 'object',
+          properties: {
+            ventureId: { type: 'string', description: 'The venture id, from the business context below.' },
+            owner: { type: 'string', description: 'GitHub owner, e.g. "acme".' },
+            name: { type: 'string', description: 'Repository name, e.g. "doc-intel".' },
+            branch: { type: 'string', description: 'Branch to commit to. Defaults to main.' },
+            allowedPaths: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Paths the team may write, e.g. ["src/", ".github/workflows/"]. Include .github/workflows/ if they need to ship CI, or run_checks will have nothing to run.',
+            },
+            maxPerDay: { type: 'number', description: 'Commits per day cap. Defaults to 1.' },
+            maxPerWeek: { type: 'number', description: 'Commits per week cap. Defaults to 3.' },
+            rationale: { type: 'string', description: 'Why this venture, this repo, these paths — for the founder reading the log later.' },
+          },
+          required: ['ventureId', 'owner', 'name', 'allowedPaths'],
+        },
+      },
+      {
+        name: 'list_approved_repos',
+        description:
+          'List the repos the founder has pre-approved for self-service linking, so you never guess at a name.',
+        input_schema: { type: 'object', properties: {} },
+      },
+      {
         name: 'kill_venture',
         description:
           "End a venture that isn't earning its keep — a missed milestone with no good next step, a market that turned out too small, or one that's quietly absorbing attention better spent elsewhere. This is a real, final call: only make it when the founder has actually decided to stop, not to express doubt.",
@@ -122,6 +182,37 @@ ${BASE_STYLE}`,
     mission: 'Owns technical strategy, architecture, engineering delivery, and the product roadmap.',
     toolDescription:
       'Consult the CTO for technical strategy, architecture decisions, engineering delivery, build-vs-buy calls, or the product roadmap.',
+    actions: [
+      {
+        name: 'link_venture_repo',
+        description:
+          "Point a venture at a GitHub repo and turn deployment on, so the team can start shipping without waiting for the founder. Only works for repos the founder pre-approved; call list_approved_repos if you don't know which those are. Linking also enables deployment — there is no separate step. Choose allowedPaths deliberately: they are the only paths anyone on the team will be able to write, and an agent asking for a path outside them will be refused.",
+        input_schema: {
+          type: 'object',
+          properties: {
+            ventureId: { type: 'string', description: 'The venture id, from the business context below.' },
+            owner: { type: 'string', description: 'GitHub owner, e.g. "acme".' },
+            name: { type: 'string', description: 'Repository name, e.g. "doc-intel".' },
+            branch: { type: 'string', description: 'Branch to commit to. Defaults to main.' },
+            allowedPaths: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Paths the team may write, e.g. ["src/", ".github/workflows/"]. Include .github/workflows/ if they need to ship CI, or run_checks will have nothing to run.',
+            },
+            maxPerDay: { type: 'number', description: 'Commits per day cap. Defaults to 1.' },
+            maxPerWeek: { type: 'number', description: 'Commits per week cap. Defaults to 3.' },
+            rationale: { type: 'string', description: 'Why this venture, this repo, these paths — for the founder reading the log later.' },
+          },
+          required: ['ventureId', 'owner', 'name', 'allowedPaths'],
+        },
+      },
+      {
+        name: 'list_approved_repos',
+        description:
+          'List the repos the founder has pre-approved for self-service linking, so you never guess at a name.',
+        input_schema: { type: 'object', properties: {} },
+      },
+    ],
     systemPrompt: `You are the CTO. You own technology strategy end to end: architecture,
 build-vs-buy decisions, engineering delivery, technical risk, and the
 product roadmap. You care about shipping something real over chasing the

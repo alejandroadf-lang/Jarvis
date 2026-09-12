@@ -21,6 +21,7 @@
 
 import { readJson, writeJson } from '../store.js';
 import { assertRealActionsAllowed } from '../killSwitch.js';
+import { assertInApprovedPlan } from '../dailyPlan.js';
 
 const FILE = 'ventures.json';
 
@@ -172,6 +173,58 @@ function enforceRateLimits({ entries, timestampKey, scope, label }) {
   }
 }
 
+// Self-service deployment, inside a boundary the founder sets once.
+//
+// Linking a repo and enabling deploys were founder-only, which made every
+// venture wait on a person for something the team could otherwise do in
+// seconds. Removing the gate outright would have made the whole scope model
+// decorative — an agent that grants itself a scope has no scope.
+//
+// So the gate moves rather than disappears. The founder names which repos
+// are fair game, once, in AUTONOMOUS_DEPLOY_REPOS. Inside that set the CEO
+// and CTO link, enable and ship without asking. Outside it, nothing, and no
+// amount of reasoning gets past this function.
+//
+// Empty or unset means no change from before: founder-gated, as it was.
+// Autonomy is something you turn on deliberately, not something you get by
+// upgrading.
+export function autonomousRepos() {
+  return (process.env.AUTONOMOUS_DEPLOY_REPOS || '')
+    .split(',')
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+export function isAutonomyEnabled() {
+  return autonomousRepos().length > 0;
+}
+
+/**
+ * Throws unless the founder has pre-approved this exact repo for self-service.
+ * Case-insensitive, because GitHub owners and repo names are.
+ */
+export function assertRepoIsPreApproved(owner, name, ventureId) {
+  assertRealActionsAllowed();
+  if (ventureId) {
+    assertInApprovedPlan({ ventureId, action: 'link_venture_repo', target: `${owner}/${name}` });
+  }
+  const allowed = autonomousRepos();
+  if (!allowed.length) {
+    throw new Error(
+      'Self-service deployment is off. The founder links repos and enables deployment, ' +
+        'or sets AUTONOMOUS_DEPLOY_REPOS to hand that over.'
+    );
+  }
+  const full = `${String(owner).trim()}/${String(name).trim()}`.toLowerCase();
+  if (!allowed.includes(full)) {
+    throw new Error(
+      `"${full}" is not one of the repos the founder pre-approved (${allowed.join(', ')}). ` +
+        'Ask them to add it rather than picking a different one.'
+    );
+  }
+  return full;
+}
+
 export function linkRepo(id, { owner, name, branch, allowedPaths, maxPerWeek, maxPerDay }) {
   if (!owner || !name) throw new Error('owner and name are required to link a repo');
   const data = load();
@@ -218,6 +271,7 @@ function isPathAllowed(repo, targetPath) {
 // per-venture rule it would have hit next.
 export function authorizeDeployment(id, { path }) {
   assertRealActionsAllowed();
+  assertInApprovedPlan({ ventureId: id, action: 'deploy_code', target: path });
   const venture = getVenture(id);
   if (!venture) throw new Error('Venture not found');
   if (venture.status !== 'active') throw new Error(`Venture must be active to deploy (is ${venture.status})`);
@@ -367,6 +421,7 @@ function isRecipientAllowed(outreach, to) {
 
 export function authorizeOutreach(id, { to }) {
   assertRealActionsAllowed();
+  assertInApprovedPlan({ ventureId: id, action: 'send_customer_email', target: to });
   const venture = getVenture(id);
   if (!venture) throw new Error('Venture not found');
   if (venture.status !== 'active') throw new Error(`Venture must be active to send outreach (is ${venture.status})`);
