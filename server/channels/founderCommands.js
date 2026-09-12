@@ -31,6 +31,7 @@ import {
 } from '../finance/ventures.js';
 import { getLatestDailyReport } from '../dailyReports.js';
 import { listAffordableModels } from '../agents/openrouter.js';
+import { describeDegradation } from '../degradation.js';
 
 const COMMANDS = [
   { kind: 'help', re: /^(help|commands|\?)$/i },
@@ -156,9 +157,13 @@ export async function runFounderCommand(command, deps = {}) {
     case 'spend': {
       const { spentUsd, capUsd, date, overCap } = getSpendSummary();
       const pct = capUsd > 0 ? Math.round((spentUsd / capUsd) * 100) : 0;
-      return overCap
+      const headline = overCap
         ? `$${spentUsd.toFixed(2)} of $${capUsd.toFixed(2)} for ${date} — over the cap. Agent turns are being refused until tomorrow.`
         : `$${spentUsd.toFixed(2)} of $${capUsd.toFixed(2)} for ${date} (${pct}%).`;
+      // Spend is exactly where a silent fallback shows up as a number the
+      // founder is already looking at.
+      const degraded = describeDegradation();
+      return degraded ? `${headline}\n\n${degraded}` : headline;
     }
 
     case 'ventures': {
@@ -199,7 +204,9 @@ export async function runFounderCommand(command, deps = {}) {
       const lines = Object.entries(status)
         .filter(([, value]) => value && typeof value === 'object' && 'detail' in value)
         .map(([name, value]) => `${statusIcon(value)} ${name}: ${value.detail}`);
-      return lines.length ? lines.join('\n') : 'Nothing reported a status.';
+      const degraded = describeDegradation();
+      const body = lines.length ? lines.join('\n') : 'Nothing reported a status.';
+      return degraded ? `${body}\n\n${degraded}` : body;
     }
 
     case 'outreach_grant': {

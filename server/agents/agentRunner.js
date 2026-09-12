@@ -26,6 +26,7 @@ import { getAgent } from './registry.js';
 import { assertUnderDailyCap, recordSpend } from '../spend.js';
 import { priceUsage, emptyUsage } from '../usage.js';
 import { resolveModelForAgent, MODELS, OPENAI_TIER, GEMINI_TIER, DEFAULT_TIER, CHEAP_TIER } from './models.js';
+import { recordFallback } from '../degradation.js';
 import { recordContribution } from '../finance/profitShare.js';
 import { skillsFor, getSkill, describeSkillsForAgent } from '../skills/registry.js';
 import { mcpRequestFields, describeMcpForAgent } from './mcp.js';
@@ -216,6 +217,19 @@ const DEGRADED_NOTE =
   '(Answering without the team — the usual model is unavailable, so this is one ' +
   'model working alone rather than the departments weighing in.)\n\n';
 
+// What running somewhere else actually cost, on the tokens that were really
+// used. Negative when the substitute was cheaper than the original, which is
+// why it is floored at zero — a cheaper fallback is still a degradation
+// worth counting, but it is not a surcharge.
+function extraCostUsd(usage, intended, actual) {
+  if (!usage || !intended || !actual) return 0;
+  const inTok = (usage.input_tokens || 0) / 1e6;
+  const outTok = (usage.output_tokens || 0) / 1e6;
+  const was = inTok * intended.inputPricePerMTok + outTok * intended.outputPricePerMTok;
+  const is = inTok * actual.inputPricePerMTok + outTok * actual.outputPricePerMTok;
+  return Math.max(0, is - was);
+}
+
 async function failOverToBackup(anthropic, modelSpec, params, err) {
   if (!isProviderOutage(err)) throw err;
 
@@ -241,6 +255,16 @@ async function failOverToBackup(anthropic, modelSpec, params, err) {
         thinking: { type: 'adaptive' },
       });
       response.__pricedAs = fallback;
+      // The expensive silent case: this succeeds, so nothing surfaces it.
+      // Costed as the difference between what ran and what was meant to, on
+      // the tokens actually used, so the founder sees a number rather than
+      // an adjective.
+      recordFallback({
+        from: modelSpec.model,
+        to: fallback.model,
+        reason: err.message,
+        extraUsd: extraCostUsd(response.usage, modelSpec, fallback),
+      });
       return response;
     } catch (anthropicErr) {
       // Both the tier's provider and the default are down. Rather than give
@@ -278,6 +302,12 @@ async function failOverToBackup(anthropic, modelSpec, params, err) {
       // Priced on the tier that actually ran, not the Anthropic one that
       // failed, so the spend cap meters what was really spent.
       response.__pricedAs = MODELS[provider.tier];
+      recordFallback({
+        from: modelSpec.model,
+        to: provider.model(),
+        reason: err.message,
+        extraUsd: extraCostUsd(response.usage, modelSpec, MODELS[provider.tier]),
+      });
       return response;
     } catch (backupErr) {
       console.error(`${provider.name} could not answer either: ${backupErr.message}`);
