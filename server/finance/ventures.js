@@ -245,6 +245,26 @@ export function linkRepo(id, { owner, name, branch, allowedPaths, maxPerWeek, ma
   return venture;
 }
 
+// Change how often the team may commit, without touching anything else.
+//
+// Deliberately not "call linkRepo again with new caps": linkRepo resets
+// `enabled` to false, so re-linking to raise a cap would silently switch
+// deployments off — the founder would raise the limit and the team would
+// stop shipping entirely, which is the opposite of the intent and would
+// look like the cap change having broken something.
+export function setDeploymentCaps(id, { maxPerDay, maxPerWeek }) {
+  const data = load();
+  const venture = findOrThrow(data, id);
+  if (!venture.repo) throw new Error('Link a repo before setting deployment caps for this venture');
+
+  const weekly = Math.max(1, Number(maxPerWeek) || venture.repo.maxPerWeek || 3);
+  venture.repo.maxPerWeek = weekly;
+  // Same clamp as linkRepo: a daily cap above the weekly one never binds.
+  venture.repo.maxPerDay = Math.min(weekly, Math.max(1, Number(maxPerDay) || venture.repo.maxPerDay || 1));
+  save(data);
+  return venture;
+}
+
 export function setDeploymentEnabled(id, enabled) {
   const data = load();
   const venture = findOrThrow(data, id);
