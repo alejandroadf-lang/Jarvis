@@ -27,6 +27,8 @@ import { assertUnderDailyCap, recordSpend } from '../spend.js';
 import { priceUsage, emptyUsage } from '../usage.js';
 import { resolveModelForAgent, MODELS, OPENAI_TIER, GEMINI_TIER, DEFAULT_TIER, CHEAP_TIER } from './models.js';
 import { recordContribution } from '../finance/profitShare.js';
+import { skillsFor, getSkill, describeSkillsForAgent } from '../skills/registry.js';
+import { mcpRequestFields, describeMcpForAgent } from './mcp.js';
 import { isOpenRouterConfigured, createCompletion, openRouterFallbackModel } from './openrouter.js';
 import { createCompletion as createOpenAiCompletion, isOpenAIConfigured, fallbackModel } from './openai.js';
 import { createCompletion as createGeminiCompletion, isGeminiConfigured, geminiModel } from './gemini.js';
@@ -52,6 +54,15 @@ const MAX_LEAF_TOKENS = Number(process.env.AGENT_MAX_LEAF_TOKENS) > 0
   : 2000;
 
 const MAX_ROUNDS = 6; // safety cap on tool-calling rounds within one agent's turn
+
+// How hard each kind of agent thinks. Effort is a better lever than the token
+// cap above: it reduces how much a specialist reasons rather than truncating
+// what it manages to write. A leaf answering a bounded question — review this
+// copy, poke holes in this idea — rarely needs deep deliberation, and there
+// are sixteen of them per fan-out. Orchestrators decide what the company
+// does, and that is where thinking earns its cost.
+const LEAF_EFFORT = (process.env.AGENT_LEAF_EFFORT || '').trim() || 'low';
+const ORCHESTRATOR_EFFORT = (process.env.AGENT_ORCHESTRATOR_EFFORT || '').trim() || 'high';
 
 // How many delegations run at once. Dispatch used to be strictly sequential,
 // which made a turn's latency proportional to the number of agents consulted
@@ -101,6 +112,42 @@ export function isRetryableError(err) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * The system prompt, as cacheable blocks.
+ *
+ * Two breakpoints, deliberately placed. The shared context gets one so it
+ * survives across the twenty-one agents a single question can reach; the
+ * agent's own prompt gets the second so it survives across turns for whoever
+ * is asked repeatedly. Earnings are last and uncached — they change as the
+ * turn itself records contributions, and a breakpoint behind them would be
+ * invalidated by the work it was meant to speed up.
+ */
+export function buildSystemBlocks({ extraContext, agentPrompt, ownContext }) {
+  const blocks = [];
+  const push = (text, cache) => {
+    if (!text || !text.trim()) return;
+    blocks.push({
+      type: 'text',
+      text,
+      ...(cache ? { cache_control: { type: 'ephemeral' } } : {}),
+    });
+  };
+
+  push(extraContext, true);
+  push(agentPrompt, true);
+  push(ownContext, false);
+  return blocks;
+}
+
+/** Flattened for providers with no notion of content blocks. */
+export function systemBlocksToText(system) {
+  if (typeof system === 'string') return system;
+  return (system || [])
+    .map((block) => block.text)
+    .filter(Boolean)
+    .join('\n\n');
 }
 
 // Every paid call in this app funnels through here, which makes it the one
@@ -188,7 +235,11 @@ async function failOverToBackup(anthropic, modelSpec, params, err) {
       `${modelSpec.provider} rejected the request (${err.message}); running this agent on ${fallback.model} instead.`
     );
     try {
-      const response = await anthropic.messages.create({ ...params, model: fallback.model });
+      const response = await anthropic.messages.create({
+        ...params,
+        model: fallback.model,
+        thinking: { type: 'adaptive' },
+      });
       response.__pricedAs = fallback;
       return response;
     } catch (anthropicErr) {
@@ -212,7 +263,7 @@ async function failOverToBackup(anthropic, modelSpec, params, err) {
       console.warn(`Anthropic unavailable (${err.message}); trying ${provider.name} for this call.`);
       const response = await provider.send({
         model: provider.model(),
-        system: params.system,
+        system: systemBlocksToText(params.system),
         messages: params.messages,
         maxTokens: params.max_tokens,
       });
@@ -247,32 +298,32 @@ async function createMessage(anthropic, modelSpec, params) {
   // Both providers are called through here so neither can slip past the
   // spend cap, and the retry policy is identical because openrouter.js
   // sets the same `.status` the Anthropic SDK does.
+  // Only Anthropic understands content blocks and cache_control; the others
+  // take a plain string, so the same prompt is flattened for them.
+  const { effort, ...rest } = params;
+  const flat = {
+    model: modelSpec.model,
+    system: systemBlocksToText(params.system),
+    messages: params.messages,
+    maxTokens: params.max_tokens,
+  };
+
   const send = () => {
-    if (modelSpec.provider === 'openrouter') {
-      return createCompletion({
-        model: modelSpec.model,
-        system: params.system,
-        messages: params.messages,
-        maxTokens: params.max_tokens,
-      });
-    }
-    if (modelSpec.provider === 'openai') {
-      return createOpenAiCompletion({
-        model: modelSpec.model,
-        system: params.system,
-        messages: params.messages,
-        maxTokens: params.max_tokens,
-      });
-    }
-    if (modelSpec.provider === 'gemini') {
-      return createGeminiCompletion({
-        model: modelSpec.model,
-        system: params.system,
-        messages: params.messages,
-        maxTokens: params.max_tokens,
-      });
-    }
-    return anthropic.messages.create({ ...params, model: modelSpec.model });
+    if (modelSpec.provider === 'openrouter') return createCompletion(flat);
+    if (modelSpec.provider === 'openai') return createOpenAiCompletion(flat);
+    if (modelSpec.provider === 'gemini') return createGeminiCompletion(flat);
+    // MCP requires the beta endpoint and its flag; everything else uses the
+    // stable one, so a company with no MCP servers is unaffected by it.
+    const endpoint = rest.betas?.length ? anthropic.beta.messages : anthropic.messages;
+    return endpoint.create({
+      ...rest,
+      model: modelSpec.model,
+      // Adaptive thinking with a per-role effort level. A leaf answering a
+      // bounded question does not need to deliberate; an orchestrator
+      // deciding what the company does is where thinking earns its cost.
+      thinking: { type: 'adaptive' },
+      ...(effort ? { output_config: { effort } } : {}),
+    });
   };
 
   let response;
@@ -332,7 +383,31 @@ function buildTools(agents, agent) {
 
   const serverTools = agent.serverTools || [];
 
-  return [...delegationTools, ...actionTools, ...serverTools];
+  // Added here rather than per agent, so adding a skill file is the whole
+  // job — no roster edit, no wiring, no chance of a skill existing that
+  // nobody can reach.
+  const skillTools = skillsFor(agent.id).length
+    ? [
+        {
+          name: 'load_skill',
+          description:
+            'Load a procedure by name before doing that kind of work. The list of what is available to you, with one line on each, is in your context. Load the one that fits rather than working from memory — these exist because the details matter and are easy to get subtly wrong.',
+          input_schema: {
+            type: 'object',
+            properties: {
+              name: { type: 'string', description: 'The skill name, exactly as listed.' },
+            },
+            required: ['name'],
+          },
+        },
+      ]
+    : [];
+
+  // MCP toolsets are tools like any other from the model's side; the
+  // connection half travels separately on the request (see mcp.js).
+  const { mcpTools = [] } = mcpRequestFields(agent);
+
+  return [...delegationTools, ...actionTools, ...skillTools, ...mcpTools, ...serverTools];
 }
 
 /**
@@ -378,7 +453,35 @@ export async function runAgent({
   const tokenBudget = isLeaf ? Math.min(MAX_LEAF_TOKENS, MAX_TOKENS) : MAX_TOKENS;
 
   const ownContext = perAgentContext ? perAgentContext(agent.id) : '';
-  const system = [agent.systemPrompt, extraContext, ownContext].filter((part) => part && part.trim()).join('\n\n');
+  // Ordered for the cache, not for reading.
+  //
+  // Caching is a prefix match, so what goes first decides what can be reused.
+  // The shared business context is byte-identical across every agent in a
+  // turn, and one question can fan out to twenty-one of them — putting it
+  // first means twenty cache hits instead of twenty full re-reads. The
+  // agent's own prompt comes next: frozen per agent, so it caches across
+  // turns for whoever is asked repeatedly. Earnings go last, uncached,
+  // because they change as the turn itself records contributions and would
+  // otherwise invalidate everything behind them.
+  //
+  // Reading "here is the company, here is who you are in it" is also the
+  // more natural order, which is luck rather than design.
+  // Appended to the agent's own prompt rather than sent separately: it is
+  // as stable as the prompt is, so it belongs behind the same cache
+  // breakpoint instead of adding a third block that invalidates nothing.
+  const skillMenu = describeSkillsForAgent(agent.id);
+  const mcpNote = describeMcpForAgent(agent);
+  const system = buildSystemBlocks({
+    extraContext,
+    agentPrompt: [agent.systemPrompt, skillMenu, mcpNote].filter(Boolean).join('\n\n'),
+    ownContext,
+  });
+
+  // The connection half of MCP, minus the toolsets already folded into
+  // `tools` above. Empty for an agent with no servers, so its request stays
+  // byte-identical and nothing caches differently.
+  const { mcpTools: _ignored, ...mcpFields } = mcpRequestFields(agent);
+
   const working = [...messages];
 
   let finalText = '';
@@ -388,6 +491,8 @@ export async function runAgent({
       max_tokens: tokenBudget,
       system,
       messages: working,
+      effort: isLeaf ? LEAF_EFFORT : ORCHESTRATOR_EFFORT,
+      ...mcpFields,
       ...(tools.length ? { tools } : {}),
     });
 
@@ -467,7 +572,15 @@ export async function runAgent({
 
     for (const toolUse of others) {
       let resultText;
-      if (actionHandlers[toolUse.name]) {
+      if (toolUse.name === 'load_skill') {
+        // Handled here rather than through actionHandlers: it reads a file
+        // and has no side effect, so there is nothing for a scope to govern
+        // and no reason for every caller to wire it up.
+        const skill = getSkill(agent.id, toolUse.input?.name);
+        resultText = skill
+          ? skill.body
+          : `No skill called "${toolUse.input?.name}" is available to you. Work from what you know rather than guessing at another name.`;
+      } else if (actionHandlers[toolUse.name]) {
         try {
           // The acting agent is passed alongside the input so a handler can
           // attribute what just happened (see finance/profitShare.js). It's
