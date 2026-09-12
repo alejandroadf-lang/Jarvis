@@ -163,3 +163,50 @@ test('an orchestrator answering through OpenRouter still says it is alone', asyn
 
   assert.match(text, /without the team/i);
 });
+
+// --- The catalogue lookup, added after "nousresearch/hermes-4-70b" retired ---
+
+test('listAffordableModels sorts by output price and converts to per-MTok', async () => {
+  const realFetch = global.fetch;
+  global.fetch = async () => ({
+    ok: true,
+    json: async () => ({
+      data: [
+        { id: 'pricey/model', context_length: 8000, pricing: { prompt: '0.000002', completion: '0.00001' } },
+        { id: 'cheap/model', context_length: 32000, pricing: { prompt: '0.00000013', completion: '0.0000004' } },
+        { id: 'broken/model', context_length: 1000, pricing: {} },
+      ],
+    }),
+  });
+  try {
+    const { listAffordableModels } = await import('../agents/openrouter.js');
+    const models = await listAffordableModels();
+    assert.deepEqual(models.map((m) => m.id), ['cheap/model'], 'the $10/MTok model is over the ceiling');
+    assert.equal(models[0].inputPricePerMTok, 0.13, 'per-token strings become per-million-token numbers');
+    assert.equal(models[0].outputPricePerMTok, 0.4);
+  } finally {
+    global.fetch = realFetch;
+  }
+});
+
+test('a search beats the price ceiling', async () => {
+  // Asking for "hermes" and getting nothing because every Hermes is a cent
+  // too expensive would be the tool refusing the question it was asked.
+  const realFetch = global.fetch;
+  global.fetch = async () => ({
+    ok: true,
+    json: async () => ({
+      data: [
+        { id: 'nousresearch/hermes-9-expensive', pricing: { prompt: '0.000003', completion: '0.000015' } },
+        { id: 'someone/else', pricing: { prompt: '0.0000001', completion: '0.0000002' } },
+      ],
+    }),
+  });
+  try {
+    const { listAffordableModels } = await import('../agents/openrouter.js');
+    const models = await listAffordableModels({ search: 'hermes' });
+    assert.deepEqual(models.map((m) => m.id), ['nousresearch/hermes-9-expensive']);
+  } finally {
+    global.fetch = realFetch;
+  }
+});

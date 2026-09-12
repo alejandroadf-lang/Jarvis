@@ -30,6 +30,7 @@ import {
   setDeploymentEnabled,
 } from '../finance/ventures.js';
 import { getLatestDailyReport } from '../dailyReports.js';
+import { listAffordableModels } from '../agents/openrouter.js';
 
 const COMMANDS = [
   { kind: 'help', re: /^(help|commands|\?)$/i },
@@ -38,6 +39,7 @@ const COMMANDS = [
   { kind: 'spend', re: /^(spend|cost|budget)$/i },
   { kind: 'integrations', re: /^(integrations|connections|health)$/i },
   { kind: 'ventures', re: /^(ventures|portfolio|list\s+ventures)$/i },
+  { kind: 'models', re: /^models(?:\s+(\S+))?$/i, arg: 'search' },
   { kind: 'report', re: /^(report|daily\s+report|latest\s+report)$/i },
   // Scope switches. Venture ids are v_<digits>_<suffix>, which is not
   // something a sentence produces by accident — requiring one is most of
@@ -98,6 +100,16 @@ function describeVenture(venture) {
   return `${venture.title}\n  ${venture.id}\n  ${repo}\n  ${outreach}`;
 }
 
+// Three states, not two. ok === null means "set, but deliberately not
+// probed" — Anthropic, email, GitHub — and rendering that as a warning told
+// the founder their working Anthropic key was a problem, right above a line
+// that actually was one.
+function statusIcon(value) {
+  if (value.ok === true) return '✅';
+  if (value.ok === false) return '⚠️';
+  return value.configured ? 'ℹ️' : '—';
+}
+
 const HELP = `Founder controls — send any of these on their own:
 
 HALT <reason> — stop every real action now
@@ -105,6 +117,7 @@ RESUME — lift the halt
 VENTURES — every venture, its id and what it's allowed to do
 SPEND — today's model spend against the cap
 INTEGRATIONS — what's actually connected
+MODELS [search] — live OpenRouter models and their prices
 REPORT — the latest daily report
 PLAN — today's plan (APPROVE / REJECT <reason> to decide it)
 
@@ -164,12 +177,28 @@ export async function runFounderCommand(command, deps = {}) {
       return `Daily report — ${report.date}\n\n${report.leadership.reply}`;
     }
 
+    case 'models': {
+      // A pinned model id is a hostage to someone else's catalogue. When one
+      // retires, this is how the founder finds a live replacement without
+      // leaving the conversation.
+      const models = await listAffordableModels({ search: command.search || '' });
+      if (!models.length) {
+        return command.search
+          ? `Nothing on OpenRouter matches "${command.search}".`
+          : 'OpenRouter returned no models in that price range.';
+      }
+      const lines = models.map(
+        (m) => `${m.id}\n  $${m.inputPricePerMTok.toFixed(2)} in / $${m.outputPricePerMTok.toFixed(2)} out per MTok`
+      );
+      return `${lines.join('\n')}\n\nTo switch, set OPENROUTER_MODEL in Railway to one of these ids — and set OPENROUTER_INPUT_PRICE_PER_MTOK and OPENROUTER_OUTPUT_PRICE_PER_MTOK to match, or the spend cap counts the wrong number.`;
+    }
+
     case 'integrations': {
       if (!deps.probeIntegrations) return 'Integration status is not available on this build.';
       const status = await deps.probeIntegrations();
       const lines = Object.entries(status)
         .filter(([, value]) => value && typeof value === 'object' && 'detail' in value)
-        .map(([name, value]) => `${value.ok ? '✅' : value.configured ? '⚠️' : '—'} ${name}: ${value.detail}`);
+        .map(([name, value]) => `${statusIcon(value)} ${name}: ${value.detail}`);
       return lines.length ? lines.join('\n') : 'Nothing reported a status.';
     }
 

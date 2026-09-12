@@ -151,3 +151,35 @@ test('a command against a venture that does not exist says so', async () => {
     /not found/i
   );
 });
+
+// --- MODELS, and the icon bug that shipped with the first version ---
+
+test('a working-but-unprobed integration is not shown as a warning', async () => {
+  // ok === null means "set, deliberately not probed" (Anthropic, email,
+  // GitHub). The first version rendered that identically to a real failure,
+  // so a healthy Anthropic key read as a problem — directly above a line
+  // that genuinely was one, which is the worst place to cry wolf.
+  const reply = await commands.runFounderCommand(
+    { kind: 'integrations' },
+    {
+      probeIntegrations: async () => ({
+        anthropic: { configured: true, ok: null, detail: 'Required, and set.' },
+        openrouter: { configured: true, ok: false, detail: 'Model retired.' },
+        honcho: { configured: true, ok: true, detail: 'Key accepted.' },
+        gemini: { configured: false, ok: null, detail: 'Not set.' },
+      }),
+    }
+  );
+
+  const line = (name) => reply.split('\n').find((l) => l.includes(name));
+  assert.ok(!line('anthropic').startsWith('⚠️'), 'a healthy key must not read as a warning');
+  assert.ok(line('openrouter').startsWith('⚠️'), 'a real failure still warns');
+  assert.ok(line('honcho').startsWith('✅'));
+  assert.ok(line('gemini').startsWith('—'), 'unset is neither good news nor bad');
+});
+
+test('MODELS parses, but a sentence starting with "models" does not', () => {
+  assert.deepEqual(commands.parseFounderCommand('MODELS'), { kind: 'models', search: null });
+  assert.deepEqual(commands.parseFounderCommand('models hermes'), { kind: 'models', search: 'hermes' });
+  assert.equal(commands.parseFounderCommand('models are getting cheaper every month'), null);
+});
