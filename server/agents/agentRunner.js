@@ -28,6 +28,7 @@ import { priceUsage, emptyUsage } from '../usage.js';
 import { resolveModelForAgent, MODELS, OPENAI_TIER, GEMINI_TIER, DEFAULT_TIER, CHEAP_TIER } from './models.js';
 import { recordContribution } from '../finance/profitShare.js';
 import { skillsFor, getSkill, describeSkillsForAgent } from '../skills/registry.js';
+import { mcpRequestFields, describeMcpForAgent } from './mcp.js';
 import { isOpenRouterConfigured, createCompletion, openRouterFallbackModel } from './openrouter.js';
 import { createCompletion as createOpenAiCompletion, isOpenAIConfigured, fallbackModel } from './openai.js';
 import { createCompletion as createGeminiCompletion, isGeminiConfigured, geminiModel } from './gemini.js';
@@ -311,7 +312,10 @@ async function createMessage(anthropic, modelSpec, params) {
     if (modelSpec.provider === 'openrouter') return createCompletion(flat);
     if (modelSpec.provider === 'openai') return createOpenAiCompletion(flat);
     if (modelSpec.provider === 'gemini') return createGeminiCompletion(flat);
-    return anthropic.messages.create({
+    // MCP requires the beta endpoint and its flag; everything else uses the
+    // stable one, so a company with no MCP servers is unaffected by it.
+    const endpoint = rest.betas?.length ? anthropic.beta.messages : anthropic.messages;
+    return endpoint.create({
       ...rest,
       model: modelSpec.model,
       // Adaptive thinking with a per-role effort level. A leaf answering a
@@ -399,7 +403,11 @@ function buildTools(agents, agent) {
       ]
     : [];
 
-  return [...delegationTools, ...actionTools, ...skillTools, ...serverTools];
+  // MCP toolsets are tools like any other from the model's side; the
+  // connection half travels separately on the request (see mcp.js).
+  const { mcpTools = [] } = mcpRequestFields(agent);
+
+  return [...delegationTools, ...actionTools, ...skillTools, ...mcpTools, ...serverTools];
 }
 
 /**
@@ -462,11 +470,17 @@ export async function runAgent({
   // as stable as the prompt is, so it belongs behind the same cache
   // breakpoint instead of adding a third block that invalidates nothing.
   const skillMenu = describeSkillsForAgent(agent.id);
+  const mcpNote = describeMcpForAgent(agent);
   const system = buildSystemBlocks({
     extraContext,
-    agentPrompt: skillMenu ? `${agent.systemPrompt}\n\n${skillMenu}` : agent.systemPrompt,
+    agentPrompt: [agent.systemPrompt, skillMenu, mcpNote].filter(Boolean).join('\n\n'),
     ownContext,
   });
+
+  // The connection half of MCP, minus the toolsets already folded into
+  // `tools` above. Empty for an agent with no servers, so its request stays
+  // byte-identical and nothing caches differently.
+  const { mcpTools: _ignored, ...mcpFields } = mcpRequestFields(agent);
 
   const working = [...messages];
 
@@ -478,6 +492,7 @@ export async function runAgent({
       system,
       messages: working,
       effort: isLeaf ? LEAF_EFFORT : ORCHESTRATOR_EFFORT,
+      ...mcpFields,
       ...(tools.length ? { tools } : {}),
     });
 
