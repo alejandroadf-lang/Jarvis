@@ -29,6 +29,7 @@ import {
   linkOutreachScope,
   setOutreachEnabled,
   setDeploymentEnabled,
+  setDeploymentCaps,
 } from '../finance/ventures.js';
 import { getLatestDailyReport } from '../dailyReports.js';
 import { listAffordableModels } from '../agents/openrouter.js';
@@ -50,6 +51,8 @@ const COMMANDS = [
   { kind: 'outreach_on', re: /^outreach\s+on\s+(\S+)$/i, arg: 'ventureId' },
   { kind: 'deploy_off', re: /^deploy(?:ments?)?\s+off\s+(\S+)$/i, arg: 'ventureId' },
   { kind: 'deploy_on', re: /^deploy(?:ments?)?\s+on\s+(\S+)$/i, arg: 'ventureId' },
+  // "caps v_123 12 40" — commits per day, then per week.
+  { kind: 'caps', re: /^caps\s+(v_\S+)\s+(\d+)(?:\s+(\d+))?$/i },
 ];
 
 // "outreach v_123 @acme.com, someone@corp.com" — the grant itself, which
@@ -84,6 +87,17 @@ export function parseFounderCommand(text) {
   for (const { kind, re, arg } of COMMANDS) {
     const match = raw.match(re);
     if (match) {
+      if (kind === 'caps') {
+        return {
+          kind,
+          ventureId: match[1],
+          maxPerDay: Number(match[2]),
+          // Default the weekly cap to five working days of the daily one,
+          // rather than leaving a raised daily cap trapped under an old
+          // weekly one it can never reach.
+          maxPerWeek: match[3] ? Number(match[3]) : Number(match[2]) * 5,
+        };
+      }
       // The argument is always the last capture group: some patterns group
       // the verb's synonyms first ("halt|stop|freeze") and some don't, so a
       // fixed index silently reads the wrong group for half the table.
@@ -160,6 +174,7 @@ PLAN — today's plan (APPROVE / REJECT <reason> to decide it)
 LINK <ventureId> <owner/repo> [paths] — grant a repo and turn deploys on
 OUTREACH <ventureId> <emails or @domains> — grant and enable an outreach scope
 OUTREACH OFF <ventureId> — revoke it
+CAPS <ventureId> <per day> [per week] — how often they may commit
 DEPLOY OFF <ventureId> — stop commits for one venture
 DEPLOY ON <ventureId> — allow them again
 
@@ -270,6 +285,14 @@ export async function runFounderCommand(command, deps = {}) {
     case 'outreach_off': {
       const venture = setOutreachEnabled(command.ventureId, false);
       return `Outreach off for "${venture.title}". The allowlist is kept, so OUTREACH ON ${command.ventureId} brings it back.`;
+    }
+
+    case 'caps': {
+      const venture = setDeploymentCaps(command.ventureId, {
+        maxPerDay: command.maxPerDay,
+        maxPerWeek: command.maxPerWeek,
+      });
+      return `"${venture.title}" can now commit ${venture.repo.maxPerDay} time${venture.repo.maxPerDay === 1 ? '' : 's'} a day, ${venture.repo.maxPerWeek} a week. Deployments stay ${venture.repo.enabled ? 'ON' : 'off'}.`;
     }
 
     case 'deploy_on': {

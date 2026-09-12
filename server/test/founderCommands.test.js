@@ -238,3 +238,49 @@ test('"link" in a sentence is not a repo grant', () => {
   assert.equal(commands.parseFounderCommand('link the two ideas together'), null);
   assert.equal(commands.parseFounderCommand('can you link me the PR'), null);
 });
+
+// --- CAPS: deploy_code writes one file per call, so the cap is a file count ---
+
+test('CAPS raises the commit limit without switching deployments off', async () => {
+  // The trap this avoids: re-linking with new caps would work, except
+  // linkRepo resets enabled to false. The founder would raise the limit and
+  // the team would stop shipping entirely.
+  const v = newVenture();
+  await commands.runFounderCommand(commands.parseFounderCommand(`link ${v.id} acme/thing`));
+  assert.equal(ventures.getVenture(v.id).repo.enabled, true);
+
+  await commands.runFounderCommand(commands.parseFounderCommand(`caps ${v.id} 12 40`));
+  const after = ventures.getVenture(v.id);
+  assert.equal(after.repo.maxPerDay, 12);
+  assert.equal(after.repo.maxPerWeek, 40);
+  assert.equal(after.repo.enabled, true, 'raising a cap must not stop deployments');
+  assert.equal(after.repo.name, 'thing', 'and must not disturb the link');
+});
+
+test('a daily cap is defaulted a weekly one it can actually reach', () => {
+  // Raising only the daily cap used to leave it trapped under a weekly cap
+  // of 3, which binds first and looks like the change not working.
+  const parsed = commands.parseFounderCommand('caps v_1 12');
+  assert.equal(parsed.maxPerDay, 12);
+  assert.equal(parsed.maxPerWeek, 60, 'five working days of the daily cap');
+});
+
+test('a daily cap above the weekly one is clamped, not stored', async () => {
+  const v = newVenture();
+  await commands.runFounderCommand(commands.parseFounderCommand(`link ${v.id} acme/thing`));
+  await commands.runFounderCommand(commands.parseFounderCommand(`caps ${v.id} 50 10`));
+  assert.equal(ventures.getVenture(v.id).repo.maxPerDay, 10, 'a cap that can never bind is a lie');
+});
+
+test('CAPS before a repo exists says what is missing', async () => {
+  const v = newVenture();
+  await assert.rejects(
+    async () => commands.runFounderCommand({ kind: 'caps', ventureId: v.id, maxPerDay: 5, maxPerWeek: 25 }),
+    /Link a repo before/
+  );
+});
+
+test('"caps" in a sentence is not a cap change', () => {
+  assert.equal(commands.parseFounderCommand('caps are too low right now'), null);
+  assert.equal(commands.parseFounderCommand('what are the caps'), null);
+});
