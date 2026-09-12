@@ -39,6 +39,18 @@ import { createCompletion as createGeminiCompletion, isGeminiConfigured, geminiM
 // one. Output tokens are billed as generated, so a higher ceiling costs
 // nothing on the replies that don't need it.
 const MAX_TOKENS = Number(process.env.AGENT_MAX_TOKENS) > 0 ? Number(process.env.AGENT_MAX_TOKENS) : 4096;
+// A leaf's answer is one contribution to someone else's synthesis, not the
+// reply the founder reads, and 4096 tokens of it is usually a specialist
+// saying the same thing at greater length. Sixteen of the twenty-one agents
+// are leaves, so their generation dominates the wall clock on any real
+// question — this is the single biggest latency lever in the system.
+//
+// A cap does not force brevity, it only removes the room to ramble. Raise it
+// if answers start stopping mid-sentence.
+const MAX_LEAF_TOKENS = Number(process.env.AGENT_MAX_LEAF_TOKENS) > 0
+  ? Number(process.env.AGENT_MAX_LEAF_TOKENS)
+  : 2000;
+
 const MAX_ROUNDS = 6; // safety cap on tool-calling rounds within one agent's turn
 
 // How many delegations run at once. Dispatch used to be strictly sequential,
@@ -359,6 +371,12 @@ export async function runAgent({
   const modelSpec = resolveModelForAgent(agent, isOpenRouterConfigured());
   // Resolved per agent rather than per run: a delegated specialist gets its
   // own line here, not the CEO's.
+  const startedAt = Date.now();
+  // Leaves are the ones with no reports and no tools to call — the same
+  // condition models.js already uses to decide what may run on a cheap tier.
+  const isLeaf = (agent.reports || []).length === 0 && (agent.actions || []).length === 0;
+  const tokenBudget = isLeaf ? Math.min(MAX_LEAF_TOKENS, MAX_TOKENS) : MAX_TOKENS;
+
   const ownContext = perAgentContext ? perAgentContext(agent.id) : '';
   const system = [agent.systemPrompt, extraContext, ownContext].filter((part) => part && part.trim()).join('\n\n');
   const working = [...messages];
@@ -367,7 +385,7 @@ export async function runAgent({
 
   for (let round = 0; round < MAX_ROUNDS; round++) {
     const response = await createMessage(anthropic, modelSpec, {
-      max_tokens: MAX_TOKENS,
+      max_tokens: tokenBudget,
       system,
       messages: working,
       ...(tools.length ? { tools } : {}),
@@ -420,7 +438,15 @@ export async function runAgent({
           usage,
         });
         const resultText = sub.text;
-        trace.push({ id: report.id, title: report.title, department: report.department, depth: depth + 1 });
+        trace.push({
+          id: report.id,
+          title: report.title,
+          department: report.department,
+          depth: depth + 1,
+          // Without this, "the team is slow" is unanswerable: 21 agents can
+          // be consulted in one turn and any of them could be the reason.
+          ms: sub.durationMs ?? null,
+        });
         // Credit the specialist for answering — but only if it actually said
         // something. A consult that errored or came back empty is not work,
         // and the catch below means a failed one never reaches here.
@@ -467,7 +493,7 @@ export async function runAgent({
   if (!finalText) {
     try {
       const closing = await createMessage(anthropic, modelSpec, {
-        max_tokens: MAX_TOKENS,
+        max_tokens: tokenBudget,
         system,
         messages: [
           ...working,
@@ -502,5 +528,5 @@ export async function runAgent({
       'and I can answer properly.';
   }
 
-  return { text: finalText, trace, usage };
+  return { text: finalText, trace, usage, durationMs: Date.now() - startedAt };
 }

@@ -461,7 +461,25 @@ test('when even the closing pass fails, the reply says what happened', async () 
   assert.match(text, /smaller piece/);
 });
 
-test('the token budget is high enough for a multi-department synthesis', async () => {
+test('an orchestrator gets room for a multi-department synthesis', async () => {
+  const calls = [];
+  const anthropic = {
+    messages: { create: async (params) => { calls.push(params); return textResponse('ok', { input_tokens: 5, output_tokens: 5 }); } },
+  };
+  const agents = {
+    boss: { id: 'boss', title: 'Boss', department: 'E', reportsTo: null, reports: ['aide'], systemPrompt: 'x' },
+    aide: { id: 'aide', title: 'Aide', department: 'E', reportsTo: 'boss', reports: [], systemPrompt: 'y' },
+  };
+
+  await runAgent({ anthropic, agents, agentId: 'boss', messages: [{ role: 'user', content: 'hi' }] });
+
+  assert.ok(calls[0].max_tokens >= 4096, `max_tokens was ${calls[0].max_tokens} — too small for a ranked list`);
+});
+
+test('a leaf gets a tighter budget, because sixteen of them set the wall clock', async () => {
+  // A leaf's answer feeds someone else's synthesis; it is not the reply the
+  // founder reads. Capping it doesn't force brevity, it removes the room to
+  // ramble — and leaf generation dominates the latency of any real question.
   const calls = [];
   const anthropic = {
     messages: { create: async (params) => { calls.push(params); return textResponse('ok', { input_tokens: 5, output_tokens: 5 }); } },
@@ -469,5 +487,43 @@ test('the token budget is high enough for a multi-department synthesis', async (
 
   await runAgent({ anthropic, agents: AGENTS, agentId: 'test_agent', messages: [{ role: 'user', content: 'hi' }] });
 
-  assert.ok(calls[0].max_tokens >= 4096, `max_tokens was ${calls[0].max_tokens} — too small for a ranked list`);
+  assert.ok(calls[0].max_tokens < 4096, 'a leaf must not get the orchestrator budget');
+  // Still enough for a specialist whose job is a list — a truncated security
+  // review is a worse outcome than a slow one.
+  assert.ok(calls[0].max_tokens >= 2000, `max_tokens was ${calls[0].max_tokens} — a findings list needs room`);
+});
+
+test('every agent turn is timed, so a slow turn names who took the time', async () => {
+  const anthropic = {
+    messages: { create: async () => textResponse('ok', { input_tokens: 5, output_tokens: 5 }) },
+  };
+
+  const { durationMs } = await runAgent({
+    anthropic, agents: AGENTS, agentId: 'test_agent', messages: [{ role: 'user', content: 'hi' }],
+  });
+
+  assert.equal(typeof durationMs, 'number');
+  assert.ok(durationMs >= 0);
+});
+
+test('a consulted agent carries its own duration into the trace', async () => {
+  // Twenty-one agents can be consulted in one turn; without this, "the team
+  // is slow" is unanswerable.
+  const anthropic = {
+    messages: {
+      create: async (params) => (params.tools?.length
+        ? toolUseResponse('consult_aide', { task: 'look at this' })
+        : textResponse('done', { input_tokens: 5, output_tokens: 5 })),
+    },
+  };
+  const agents = {
+    boss: { id: 'boss', title: 'Boss', department: 'E', reportsTo: null, reports: ['aide'], systemPrompt: 'x' },
+    aide: { id: 'aide', title: 'Aide', department: 'E', reportsTo: 'boss', reports: [], systemPrompt: 'y' },
+  };
+
+  const { trace } = await runAgent({ anthropic, agents, agentId: 'boss', messages: [{ role: 'user', content: 'hi' }] });
+
+  const consulted = trace.find((entry) => entry.id === 'aide');
+  assert.ok(consulted, 'the consulted agent is in the trace');
+  assert.equal(typeof consulted.ms, 'number');
 });

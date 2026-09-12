@@ -77,6 +77,9 @@ import { startWeeklyReflectionScheduler, runWeeklyReflectionNow, isWeeklyReflect
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3001;
 
+// Above this, a turn is worth a line in the log saying who took the time.
+const SLOW_TURN_MS = Number(process.env.SLOW_TURN_MS) > 0 ? Number(process.env.SLOW_TURN_MS) : 45000;
+
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const SYSTEM_PROMPT = `You are Jarvis, a personal AI assistant. You are helpful, concise,
@@ -222,7 +225,7 @@ async function runCompanyTurn(sessionId, message) {
     readFounderSteering(),
   ]);
 
-  const { text, trace } = await runAgent({
+  const { text, trace, durationMs } = await runAgent({
     anthropic,
     agents: COMPANY_AGENTS,
     agentId: COMPANY_ROOT,
@@ -279,7 +282,23 @@ async function runCompanyTurn(sessionId, message) {
     agentReply: text,
   });
 
-  return { reply: text, trace };
+  // A slow turn is almost always a wide one. Logging the worst offenders
+  // makes "the team is slow" answerable from the deploy log rather than by
+  // guessing at which of twenty-one agents was the reason.
+  if (durationMs > SLOW_TURN_MS) {
+    const slowest = [...trace]
+      .filter((entry) => entry.ms)
+      .sort((a, b) => b.ms - a.ms)
+      .slice(0, 3)
+      .map((entry) => `${entry.title} ${(entry.ms / 1000).toFixed(1)}s`)
+      .join(', ');
+    console.warn(
+      `Slow turn: ${(durationMs / 1000).toFixed(1)}s across ${trace.length} agent${trace.length === 1 ? '' : 's'}` +
+        (slowest ? ` — slowest: ${slowest}` : '')
+    );
+  }
+
+  return { reply: text, trace, durationMs };
 }
 
 app.post('/api/company/chat', async (req, res) => {
@@ -292,8 +311,8 @@ app.post('/api/company/chat', async (req, res) => {
   }
 
   try {
-    const { reply, trace } = await runCompanyTurn(sessionId, message);
-    res.json({ reply, trace });
+    const { reply, trace, durationMs } = await runCompanyTurn(sessionId, message);
+    res.json({ reply, trace, durationMs });
   } catch (err) {
     sendAgentError(res, err, 'Failed to reach the executive team');
   }
