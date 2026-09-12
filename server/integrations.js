@@ -20,6 +20,7 @@ import { isGithubConfigured } from './deploy/github.js';
 import { isWorkspaceConfigured, workspaceConfig } from './workspace/vault.js';
 import { isWhatsAppConfigured, allowedNumbers, GRAPH_API } from './channels/whatsapp.js';
 import { isOpenAIConfigured, chatModel, fallbackModel, transcribeModel } from './agents/openai.js';
+import { isGeminiConfigured, geminiModel, listModelsUrl } from './agents/gemini.js';
 import { MODELS, CHEAP_TIER } from './agents/models.js';
 
 // A probe must never hang a page load. Both services are normally fast; if
@@ -215,16 +216,55 @@ async function probeOpenAI() {
 }
 
 /**
+ * Lists the models the key can see — free, and it catches the same trap as
+ * the OpenAI probe: a pinned model name Google has since retired, which
+ * otherwise surfaces as a 404 at the moment an answer is needed.
+ */
+async function probeGemini() {
+  if (!isGeminiConfigured()) {
+    return notConfigured('Not set — one fewer backup if Anthropic is down or out of credit.');
+  }
+
+  try {
+    const res = await withTimeout(fetch(listModelsUrl()), 'Gemini');
+
+    if (res.status === 400 || res.status === 401 || res.status === 403) {
+      return { configured: true, ok: false, detail: 'Key rejected, so Gemini cannot cover an Anthropic outage.' };
+    }
+    if (!res.ok) {
+      return { configured: true, ok: false, detail: `Gemini returned ${res.status}.` };
+    }
+
+    const body = await res.json().catch(() => ({}));
+    // Google returns names as "models/gemini-…"; compare on the bare name.
+    const available = new Set((body?.models || []).map((m) => String(m.name || '').replace(/^models\//, '')));
+    const wanted = geminiModel().replace(/^models\//, '');
+    if (available.size > 0 && !available.has(wanted)) {
+      return {
+        configured: true,
+        ok: false,
+        detail: `Key works, but this account can't use ${wanted}. Set GEMINI_MODEL to a name it can.`,
+      };
+    }
+
+    return { configured: true, ok: true, detail: `Key accepted — ${wanted} can cover an Anthropic outage.` };
+  } catch (err) {
+    return { configured: true, ok: false, detail: `Couldn't reach Gemini: ${err.message}` };
+  }
+}
+
+/**
  * Everything the founder can switch on, and whether it's actually live.
  * The probes run in parallel — none depends on another, and this is fetched
  * on page load.
  */
 export async function getIntegrationStatus() {
-  const [openrouter, honcho, whatsapp, openai] = await Promise.all([
+  const [openrouter, honcho, whatsapp, openai, gemini] = await Promise.all([
     probeOpenRouter(),
     probeHoncho(),
     probeWhatsApp(),
     probeOpenAI(),
+    probeGemini(),
   ]);
 
   return {
@@ -237,6 +277,7 @@ export async function getIntegrationStatus() {
     },
     openrouter,
     openai,
+    gemini,
     honcho,
     whatsapp,
     // These two predate the probes and fail loudly at the point of use (an

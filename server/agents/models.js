@@ -23,6 +23,7 @@ export const CHEAP_TIER = 'specialist';
 // A third option for leaf agents, for when OpenAI is the provider with credit
 // on it. Same leaf-only rule as the others — see canUseAlternativeModel.
 export const OPENAI_TIER = 'assistant';
+export const GEMINI_TIER = 'analyst';
 
 // Prices are per million tokens and are pinned by hand — same convention as
 // the rest of this app. Anthropic's published pricing for claude-sonnet-5
@@ -55,6 +56,19 @@ export const MODELS = {
     },
     get outputPricePerMTok() {
       return numberFromEnv('OPENAI_OUTPUT_PRICE_PER_MTOK', 0.6);
+    },
+  },
+  // Read at call time for the same reason as the OpenAI tier above.
+  [GEMINI_TIER]: {
+    provider: 'gemini',
+    get model() {
+      return (process.env.GEMINI_MODEL || '').trim() || 'gemini-2.0-flash';
+    },
+    get inputPricePerMTok() {
+      return numberFromEnv('GEMINI_INPUT_PRICE_PER_MTOK', 0.1);
+    },
+    get outputPricePerMTok() {
+      return numberFromEnv('GEMINI_OUTPUT_PRICE_PER_MTOK', 0.4);
     },
   },
 };
@@ -105,5 +119,6 @@ export function resolveModelForAgent(agent, alternativeAvailable) {
 // checked directly rather than threaded through every call site.
 function isProviderAvailable(provider, openRouterAvailable) {
   if (provider === 'openai') return Boolean(process.env.OPENAI_API_KEY);
+  if (provider === 'gemini') return Boolean(process.env.GEMINI_API_KEY);
   return openRouterAvailable;
 }
