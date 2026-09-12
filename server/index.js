@@ -8,7 +8,9 @@ import { runAgent } from './agents/agentRunner.js';
 import { listAgents } from './agents/registry.js';
 import { AGENTS as COMPANY_AGENTS, ROOT_AGENT_ID as COMPANY_ROOT } from './agents/orgChart.js';
 import { AGENTS as STUDIO_AGENTS, ROOT_AGENT_ID as STUDIO_ROOT } from './agents/ideationTeam.js';
-import { loadSessions, saveSession, deleteSession } from './sessionStore.js';
+import { loadSessions, saveSession, deleteSession,
+  trimHistory,
+} from './sessionStore.js';
 import { getLedger } from './finance/ledger.js';
 import {
   listVentures,
@@ -80,7 +82,9 @@ const SYSTEM_PROMPT = `You are Jarvis, a personal AI assistant. You are helpful,
 and quietly witty — never rambling. Address the user directly and skip unnecessary
 preamble. When you don't know something, say so plainly instead of guessing.`;
 
-const MAX_TURNS = 20; // messages kept per session (user+assistant combined)
+// Trimming lives in sessionStore.js so all three chat modes share one policy
+// — they used to share a constant, which is not the same thing as sharing a
+// rule the moment one of them needs different handling.
 // Each Map is seeded from disk at startup and kept in sync on every write
 // via sessionStore.js, so conversation history survives a server restart.
 const sessions = loadSessions('jarvis'); // sessionId -> [{ role, content }]
@@ -142,7 +146,7 @@ app.post('/api/chat', async (req, res) => {
       .join('\n');
 
     history.push({ role: 'assistant', content: reply });
-    const trimmed = history.slice(-MAX_TURNS);
+    const trimmed = trimHistory(history);
     sessions.set(sessionId, trimmed);
     saveSession('jarvis', sessionId, trimmed);
 
@@ -257,7 +261,7 @@ async function runCompanyTurn(sessionId, message) {
 
   history.push({ role: 'user', content: message });
   history.push({ role: 'assistant', content: text });
-  const trimmed = history.slice(-MAX_TURNS);
+  const trimmed = trimHistory(history);
   companySessions.set(sessionId, trimmed);
   saveSession('company', sessionId, trimmed);
 
@@ -332,7 +336,7 @@ app.post('/api/studio/chat', async (req, res) => {
 
     history.push({ role: 'user', content: message });
     history.push({ role: 'assistant', content: text });
-    const trimmed = history.slice(-MAX_TURNS);
+    const trimmed = trimHistory(history);
     studioSessions.set(sessionId, trimmed);
     saveSession('studio', sessionId, trimmed);
 
