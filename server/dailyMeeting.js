@@ -35,12 +35,63 @@ import {
   handleDeployCode,
   handleSendCustomerEmail,
   handleLogContactNote,
+  handleSubmitDailyPlan,
+  handleCheckDailyPlan,
 } from './actionHandlers.js';
 import { todayKey, saveDailyReport } from './dailyReports.js';
 import { sendDailyReportEmail } from './email.js';
 import { publishDailyReport, publishVenture, readFounderSteering } from './workspace/vault.js';
 import { estimateCostUsd, sumUsage, emptyUsage } from './usage.js';
+import { isPlanRequired, getPlan } from './dailyPlan.js';
 
+
+// When the founder requires a daily plan, this cycle is where it comes from.
+//
+// Without this the sync was inert every morning: it can call deploy_code and
+// send_customer_email, both now gated on an approved plan, and it had no way
+// to submit one — so it would be refused on every real action and could not
+// even ask. Nobody designed that; it fell out of two changes made the same
+// day.
+//
+// The resulting shape is better than what either change intended on its own.
+// The cycle runs at 8am, works out what the day needs, and puts that to the
+// founder as one decision on their phone. They approve over coffee and the
+// team executes for the rest of the day without asking again.
+function planningInstruction() {
+  if (!isPlanRequired()) return '';
+
+  const plan = getPlan();
+  if (plan?.status === 'approved') {
+    return `\n\nToday's plan is already approved. Work inside it — anything not
+on it will be refused, and that is the point. Do not submit another; an
+approved plan cannot be edited.`;
+  }
+  if (plan?.status === 'pending') {
+    return `\n\nToday's plan is already submitted and waiting on the founder.
+Do not submit another and do not attempt real actions yet — nothing runs
+until they decide.`;
+  }
+
+  return `\n\nOne more thing, and it comes before any real action: the founder
+requires a daily plan. Nothing real — no commits, no customer emails —
+happens today until they approve one, and right now none has been submitted.
+
+So end this sync by calling submit_daily_plan with everything the team
+genuinely intends to do today. Not aspirations: the specific actions, on the
+specific ventures, that people are actually ready to take. An item naming a
+target binds to it; an item without one covers any target for that action, so
+leave the target off only when you really do mean "whichever three prospects
+the Sales Manager picks".
+
+If today's honest answer is that nothing real is ready, submit nothing and
+say so. A plan padded to look busy is worse than an empty morning, because
+the founder approves it and then the team is licensed for work nobody
+thought through.
+
+Don't attempt deploy_code or send_customer_email before the plan is approved
+— they will be refused, and the refusal will be the founder's first sign that
+the sync wasn't paying attention.`;
+}
 
 function leadershipKickoff(date) {
   return `It's ${date}. Time for today's daily leadership sync.
@@ -76,7 +127,7 @@ Report with these sections, in this order:
 ## Recommended Actions for the Founder
 
 Be concrete and concise — this should read like a real daily standup
-summary a founder could skim in two minutes, not an essay.`;
+summary a founder could skim in two minutes, not an essay.${planningInstruction()}`;
 }
 
 function studioKickoff(leadershipReply) {
@@ -137,6 +188,11 @@ export async function runDailyMeeting({ anthropic }) {
         // 'interactive' counterpart.
         deploy_code: (input) => handleDeployCode(input, 'daily_cycle'),
         send_customer_email: (input) => handleSendCustomerEmail(input, 'daily_cycle'),
+        // The cycle's way of asking. Without it the sync is refused on every
+        // real action and cannot even put a plan up — inert every morning,
+        // which is what these two changes accidentally produced together.
+        submit_daily_plan: (input, ctx) => handleSubmitDailyPlan(input, 'daily_cycle', ctx),
+        check_daily_plan: () => handleCheckDailyPlan(),
         // Safe unattended for the opposite reason to the two above: it has
         // no real-world effect at all, it only writes what the agent learned
         // into memory the next draft will read.
@@ -210,3 +266,7 @@ export async function runDailyMeeting({ anthropic }) {
 
   return report;
 }
+
+// Exported for tests only: the instruction is prompt text with real branching
+// in it, and a branch nobody can assert on is a branch that quietly rots.
+export const __planningInstructionForTests = planningInstruction;

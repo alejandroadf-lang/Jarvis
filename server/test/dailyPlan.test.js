@@ -254,3 +254,50 @@ test('an item with no target is flagged as open-ended in the message', () => {
 
   assert.match(plan.formatPlanForWhatsApp(plan.getPlan()), /any target/);
 });
+
+// --- The autonomous cycle ---------------------------------------------------
+// A regression created by two changes made the same day. The 8am cycle can
+// call deploy_code and send_customer_email; both became gated on an approved
+// plan; and the cycle had no way to submit one. It was refused on every real
+// action and could not even ask — fully autonomous in conversation, inert
+// every morning. Nobody designed that.
+
+test('the cycle is told to submit a plan when none exists', async () => {
+  const { __planningInstructionForTests } = await import('../dailyMeeting.js');
+  process.env.DAILY_PLAN_REQUIRED = 'true';
+
+  const text = __planningInstructionForTests();
+
+  assert.match(text, /submit_daily_plan/);
+  assert.match(text, /will be refused/, 'and told not to try acting first');
+});
+
+test('the cycle is told to work inside a plan already approved', async () => {
+  const { __planningInstructionForTests } = await import('../dailyMeeting.js');
+  plan.submitPlan({ items: [ITEM] });
+  plan.approvePlan();
+
+  const text = __planningInstructionForTests();
+
+  assert.match(text, /already approved/);
+  // An approved plan cannot be edited, so asking would only waste a call.
+  assert.doesNotMatch(text, /call submit_daily_plan with everything/);
+});
+
+test('the cycle does not resubmit over a plan still waiting', async () => {
+  const { __planningInstructionForTests } = await import('../dailyMeeting.js');
+  plan.submitPlan({ items: [ITEM] });
+
+  const text = __planningInstructionForTests();
+
+  assert.match(text, /waiting on the founder/);
+  assert.match(text, /Do not submit another/);
+});
+
+test('with plans not required the cycle is told nothing about them', async () => {
+  const { __planningInstructionForTests } = await import('../dailyMeeting.js');
+  delete process.env.DAILY_PLAN_REQUIRED;
+  delete process.env.AUTONOMOUS_DEPLOY_REPOS;
+
+  assert.equal(__planningInstructionForTests(), '', 'no requirement, no instruction');
+});
