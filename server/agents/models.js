@@ -37,11 +37,22 @@ export const MODELS = {
     inputPricePerMTok: 2.0,
     outputPricePerMTok: 10.0,
   },
+  // Read at call time like the other two alternatives. OpenRouter retires
+  // and renames models as readily as anyone, and a pinned name that stops
+  // existing should be a variable to change rather than a redeploy — the
+  // same reasoning that already applied to OpenAI and Gemini, and no reason
+  // for this one to be the exception.
   [CHEAP_TIER]: {
     provider: 'openrouter',
-    model: 'nousresearch/hermes-4-70b',
-    inputPricePerMTok: 0.13,
-    outputPricePerMTok: 0.4,
+    get model() {
+      return (process.env.OPENROUTER_MODEL || '').trim() || 'nousresearch/hermes-4-70b';
+    },
+    get inputPricePerMTok() {
+      return numberFromEnv('OPENROUTER_INPUT_PRICE_PER_MTOK', 0.13);
+    },
+    get outputPricePerMTok() {
+      return numberFromEnv('OPENROUTER_OUTPUT_PRICE_PER_MTOK', 0.4);
+    },
   },
   // Model name and prices are read at call time rather than frozen here:
   // OpenAI retires and renames models faster than this file gets edited, and
@@ -76,8 +87,17 @@ export const MODELS = {
 
 // Prices feed the daily spend cap, so a wrong one silently mis-meters the
 // company's only real cost. Overridable for exactly that reason.
+//
+// The blank check is not defensive padding. Number('') is 0, and 0 passes a
+// ">= 0" test, so an unset variable read as a price of zero — which meant
+// every OpenAI and Gemini fallback call was metered at nothing and the daily
+// cap quietly stopped counting them. Second time this exact trap has bitten
+// in this codebase; the first was a blank profit-share percentage silently
+// zeroing every agent's earnings.
 function numberFromEnv(name, fallback) {
-  const raw = Number((process.env[name] || '').trim());
+  const configured = (process.env[name] || '').trim();
+  if (!configured) return fallback;
+  const raw = Number(configured);
   return Number.isFinite(raw) && raw >= 0 ? raw : fallback;
 }
 

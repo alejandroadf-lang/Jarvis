@@ -80,8 +80,30 @@ async function probeOpenRouter() {
       };
     }
 
+    // The key working says nothing about the model still existing. A
+    // retired name fails as a 404 at the moment a specialist is consulted,
+    // which is the worst possible time to find out.
+    const wanted = MODELS[CHEAP_TIER].model;
+    try {
+      const models = await withTimeout(fetch('https://openrouter.ai/api/v1/models'), 'OpenRouter models');
+      if (models.ok) {
+        const body = await models.json().catch(() => ({}));
+        const available = new Set((body?.data || []).map((m) => m.id));
+        if (available.size > 0 && !available.has(wanted)) {
+          return {
+            configured: true,
+            ok: false,
+            detail: `Key works, but "${wanted}" is not on OpenRouter any more. Set OPENROUTER_MODEL to a current one — specialists are falling back to Claude meanwhile.`,
+          };
+        }
+      }
+    } catch {
+      // The model list is a nicety; a key that works is the thing that
+      // matters, and failing the whole check over this would be worse.
+    }
+
     const usage = typeof data.usage === 'number' ? ` $${data.usage.toFixed(2)} used so far.` : '';
-    return { configured: true, ok: true, detail: `Key accepted — specialist agents run on ${MODELS[CHEAP_TIER].model}.${usage}` };
+    return { configured: true, ok: true, detail: `Key accepted — specialist agents run on ${wanted}.${usage}` };
   } catch (err) {
     return { configured: true, ok: false, detail: `Couldn't reach OpenRouter: ${err.message}` };
   }
