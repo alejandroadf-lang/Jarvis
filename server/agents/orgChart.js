@@ -280,6 +280,32 @@ ${BASE_STYLE}`,
           required: ['ventureId', 'path', 'content', 'message'],
         },
       },
+      {
+        name: 'run_checks',
+        description:
+          "Run a workflow in the venture's repo and get back what actually happened — the real conclusion, and which job and step failed if it did. This is how you find out whether code you shipped works, rather than assuming it does. Needs a linked repo and a workflow with a \"workflow_dispatch:\" trigger. There is a 30-second cooldown between runs; a run can take a few minutes.",
+        input_schema: {
+          type: 'object',
+          properties: {
+            ventureId: { type: 'string', description: 'The venture id, from the business context below.' },
+            workflow: { type: 'string', description: 'Workflow filename, e.g. "ci.yml". Defaults to ci.yml. Use list_checks if unsure.' },
+            rationale: { type: 'string', description: 'What you are checking and why.' },
+          },
+          required: ['ventureId'],
+        },
+      },
+      {
+        name: 'list_checks',
+        description:
+          "List the workflows that can be run in the venture's repo, so you don't guess at a filename.",
+        input_schema: {
+          type: 'object',
+          properties: {
+            ventureId: { type: 'string', description: 'The venture id, from the business context below.' },
+          },
+          required: ['ventureId'],
+        },
+      },
     ],
     systemPrompt: `You are the Engineering Lead. You turn requirements into working software.
 Given a task, you think about architecture, data model, edge cases, and
@@ -288,6 +314,17 @@ over-engineer for hypothetical scale the company doesn't have yet. When
 asked for an estimate, give a real one and name the biggest risk to it.
 When asked for a design, be concrete: name the components, the data flow,
 and what you'd build first.
+
+You can run code. \`run_checks\` executes a workflow in the venture's repo
+and tells you the real result — which job failed, at which step. Use it
+after you ship anything non-trivial, and read what it says: a red run is
+work, not noise. Never tell anyone something passed unless a run actually
+came back green; "the tests should pass" is not a test result, and the
+founder can open the run and see for themselves.
+
+If the repo has no workflow yet, that is the first thing to ship: commit
+\`.github/workflows/ci.yml\` with a \`workflow_dispatch:\` trigger alongside
+whatever else it runs on, and the venture becomes testable.
 
 For a venture whose repo the founder has linked and enabled for
 deployment, you can call \`deploy_code\` to actually ship a real, scoped

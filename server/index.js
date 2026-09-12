@@ -31,6 +31,8 @@ import {
   handleDeployCode,
   handleSendCustomerEmail,
   handleLogContactNote,
+  handleRunChecks,
+  handleListChecks,
 } from './actionHandlers.js';
 import { listDailyReports, getDailyReport, getLatestDailyReport } from './dailyReports.js';
 import { startDailyMeetingScheduler, runDailyMeetingNow, isDailyMeetingRunning } from './scheduler.js';
@@ -219,6 +221,10 @@ async function runCompanyTurn(sessionId, message) {
       // deployment/outreach log — see dailyMeeting.js for the 'daily_cycle'
       // counterpart.
       deploy_code: (input) => handleDeployCode(input, 'interactive'),
+      // Execution is wired the same way as deploy_code: available in a live
+      // conversation, where the founder is present to see a red run.
+      run_checks: (input, ctx) => handleRunChecks(input, 'interactive', ctx),
+      list_checks: (input) => handleListChecks(input),
       send_customer_email: (input) => handleSendCustomerEmail(input, 'interactive'),
       // Internal memory only — no scope grant or cap, since nothing leaves
       // the building (see actionHandlers.js).

@@ -239,6 +239,61 @@ export function authorizeDeployment(id, { path }) {
   return venture;
 }
 
+// Running the tests is not deploying, and shares none of its limits: no
+// allowlist (a workflow run touches no path), and not counted against the
+// deploy caps, because a team that must spend its one daily commit to find
+// out whether the last one worked will simply stop checking. What it does
+// share is the halt and the requirement that a repo exists — there has to be
+// somewhere to run — plus its own cooldown, which is the check that actually
+// matters here: an agent whose reasoning loops will re-run a suite forever,
+// and a runner costs minutes even when nothing changed.
+const MIN_MS_BETWEEN_RUNS = 30 * 1000;
+
+export function authorizeExecution(id) {
+  assertRealActionsAllowed();
+  const venture = getVenture(id);
+  if (!venture) throw new Error('Venture not found');
+  if (venture.status !== 'active') throw new Error(`Venture must be active to run checks (is ${venture.status})`);
+  if (!venture.repo) throw new Error('No repo linked to this venture yet — the founder needs to link one first.');
+
+  const times = (venture.runs || [])
+    .map((run) => new Date(run.startedAt).getTime())
+    .filter((time) => Number.isFinite(time));
+  if (times.length > 0 && Date.now() - Math.max(...times) < MIN_MS_BETWEEN_RUNS) {
+    const waitS = Math.ceil((MIN_MS_BETWEEN_RUNS - (Date.now() - Math.max(...times))) / 1000);
+    throw new Error(`Too soon after the last check run — ${waitS}s left on the cooldown.`);
+  }
+  return venture;
+}
+
+/**
+ * Records a run whatever its outcome. A red run is the useful one: it is the
+ * evidence that the team saw a failure, and without it "we ran the tests" is
+ * only ever the agent's own account of events.
+ */
+export function recordRun(id, { workflow, runId, url, status, conclusion, failures, triggeredBy, agentId }) {
+  const data = load();
+  const venture = findOrThrow(data, id);
+  venture.runs = venture.runs || [];
+  venture.runs.push({
+    startedAt: new Date().toISOString(),
+    workflow,
+    runId: runId ? String(runId) : null,
+    url: url || null,
+    status: status || null,
+    conclusion: conclusion || null,
+    failures: failures || [],
+    triggeredBy: triggeredBy || 'interactive',
+    agentId: agentId || null,
+  });
+  save(data);
+  return venture;
+}
+
+export function listRuns(id) {
+  return getVenture(id)?.runs || [];
+}
+
 // `triggeredBy` records whether a real deploy happened during a live
 // conversation ('interactive') or the unattended daily cycle
 // ('daily_cycle') — see dailyMeeting.js's "Full autonomy" note. This is the

@@ -180,3 +180,89 @@ test('the tier model and its prices follow the environment', () => {
     if (savedPrice === undefined) delete process.env.OPENAI_INPUT_PRICE_PER_MTOK; else process.env.OPENAI_INPUT_PRICE_PER_MTOK = savedPrice;
   }
 });
+
+// --- A rejected tier provider -----------------------------------------------
+// Reported by the CEO as "security review tool: 401 auth error, confirmed
+// twice, not transient", escalated as a credentials problem needing a
+// re-issued key. There is no security review tool: the Security Reviewer is a
+// leaf agent with no actions and no integrations, running on the cheap tier.
+// The 401 was OpenRouter refusing the key — which took down exactly the
+// specialist agents and nothing else, which is why it looked like one tool
+// being broken.
+
+test('a tier provider that rejects the key falls back to the default model', async () => {
+  const saved = process.env.OPENROUTER_API_KEY;
+  process.env.OPENROUTER_API_KEY = 'stale-key';
+  global.fetch = async () => ({ ok: false, status: 401, text: async () => 'invalid api key' });
+
+  try {
+    const anthropic = {
+      messages: {
+        create: async (params) => {
+          assert.equal(params.model, MODELS[DEFAULT_TIER].model, 'collapses to the default model');
+          return {
+            stop_reason: 'end_turn',
+            content: [{ type: 'text', text: 'Reviewed: no injection risk in that endpoint.' }],
+            usage: { input_tokens: 10, output_tokens: 20 },
+          };
+        },
+      },
+    };
+
+    const agents = {
+      reviewer: {
+        id: 'reviewer',
+        title: 'Security Reviewer',
+        department: 'Technology',
+        reportsTo: null,
+        reports: [],
+        modelTier: 'specialist',
+        systemPrompt: 'You review security.',
+      },
+    };
+
+    const { text } = await runAgent({
+      anthropic,
+      agents,
+      agentId: 'reviewer',
+      messages: [{ role: 'user', content: 'review this endpoint' }],
+    });
+
+    assert.match(text, /no injection risk/);
+  } finally {
+    if (saved === undefined) delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = saved;
+  }
+});
+
+test('the fallback is priced as the model that actually ran', async () => {
+  const saved = process.env.OPENROUTER_API_KEY;
+  process.env.OPENROUTER_API_KEY = 'stale-key';
+  global.fetch = async () => ({ ok: false, status: 401, text: async () => 'nope' });
+
+  try {
+    const anthropic = {
+      messages: {
+        create: async () => ({
+          stop_reason: 'end_turn',
+          content: [{ type: 'text', text: 'ok' }],
+          usage: { input_tokens: 1000, output_tokens: 1000 },
+        }),
+      },
+    };
+    const agents = {
+      leaf: { id: 'leaf', title: 'Leaf', department: 'T', reportsTo: null, reports: [], modelTier: 'specialist', systemPrompt: 'x' },
+    };
+
+    const { usage } = await runAgent({ anthropic, agents, agentId: 'leaf', messages: [{ role: 'user', content: 'hi' }] });
+
+    // Billed at the frontier rate it really used, not the cheap tier it asked
+    // for — otherwise the spend cap under-counts every degraded call.
+    const def = MODELS[DEFAULT_TIER];
+    const expected = (1000 / 1e6) * def.inputPricePerMTok + (1000 / 1e6) * def.outputPricePerMTok;
+    assert.ok(Math.abs(usage.costUsd - expected) < 1e-9, `costUsd was ${usage.costUsd}, expected ${expected}`);
+  } finally {
+    if (saved === undefined) delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = saved;
+  }
+});
