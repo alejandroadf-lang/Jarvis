@@ -29,6 +29,7 @@ const INTEGRATION_LABELS = {
   anthropic: 'Claude',
   openrouter: 'OpenRouter (specialist agents)',
   openai: 'OpenAI (voice notes, fallback)',
+  gemini: 'Gemini (fallback)',
   honcho: 'Honcho (founder memory)',
   email: 'Email',
   github: 'GitHub',

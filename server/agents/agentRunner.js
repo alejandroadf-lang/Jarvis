@@ -25,10 +25,11 @@
 import { getAgent } from './registry.js';
 import { assertUnderDailyCap, recordSpend } from '../spend.js';
 import { priceUsage, emptyUsage } from '../usage.js';
-import { resolveModelForAgent, MODELS, OPENAI_TIER } from './models.js';
+import { resolveModelForAgent, MODELS, OPENAI_TIER, GEMINI_TIER } from './models.js';
 import { recordContribution } from '../finance/profitShare.js';
 import { isOpenRouterConfigured, createCompletion } from './openrouter.js';
 import { createCompletion as createOpenAiCompletion, isOpenAIConfigured, fallbackModel } from './openai.js';
+import { createCompletion as createGeminiCompletion, isGeminiConfigured, geminiModel } from './gemini.js';
 
 // 1024 was far too tight and produced a specific, baffling failure: the CEO
 // would spend its whole budget writing four delegation requests, get cut off
@@ -99,10 +100,10 @@ function sleep(ms) {
 // When Anthropic itself is the thing that's broken — the account out of
 // credit, the key rejected, an outage that outlived the retry — the whole
 // company goes silent at once, including a founder waiting on their phone.
-// If OpenAI is configured, answer on that instead of failing.
+// Any configured backup answers instead.
 //
-// The limit is honest and deliberate: this is a plain completion with no
-// tools, exactly like the OpenRouter path, so an orchestrating agent that
+// The limit is honest and deliberate: every backup is a plain completion with
+// no tools, exactly like the OpenRouter path, so an orchestrating agent that
 // fails over cannot delegate. That's a real loss of quality, not a
 // transparent swap, which is why the reply says so rather than passing off a
 // single model's guess as the team's considered answer.
@@ -117,34 +118,71 @@ function isProviderOutage(err) {
   return status === 400 && /credit balance|billing|quota/i.test(err?.message || '');
 }
 
+// Tried in order. Two backups rather than one because a single backup is
+// still a single point of failure, and the whole point of this path is that
+// the company keeps answering.
+function backupProviders() {
+  return [
+    {
+      name: 'OpenAI',
+      available: isOpenAIConfigured,
+      model: fallbackModel,
+      send: createOpenAiCompletion,
+      tier: OPENAI_TIER,
+    },
+    {
+      name: 'Gemini',
+      available: isGeminiConfigured,
+      model: geminiModel,
+      send: createGeminiCompletion,
+      tier: GEMINI_TIER,
+    },
+  ];
+}
+
 const DEGRADED_NOTE =
   '(Answering without the team — the usual model is unavailable, so this is one ' +
   'model working alone rather than the departments weighing in.)\n\n';
 
-async function failOverToOpenAI(modelSpec, params, err) {
-  if (modelSpec.provider !== 'anthropic' || !isOpenAIConfigured() || !isProviderOutage(err)) {
-    throw err;
+async function failOverToBackup(modelSpec, params, err) {
+  if (modelSpec.provider !== 'anthropic' || !isProviderOutage(err)) throw err;
+
+  const candidates = backupProviders().filter((provider) => provider.available());
+  if (!candidates.length) throw err;
+
+  let lastError = err;
+  for (const provider of candidates) {
+    try {
+      console.warn(`Anthropic unavailable (${err.message}); trying ${provider.name} for this call.`);
+      const response = await provider.send({
+        model: provider.model(),
+        system: params.system,
+        messages: params.messages,
+        maxTokens: params.max_tokens,
+      });
+
+      // Only orchestrators lose something by coming through here. A leaf
+      // agent's turn is a single completion either way, so labelling it
+      // would be noise.
+      if (params.tools?.length) {
+        const first = response.content.find((block) => block.type === 'text');
+        if (first) first.text = DEGRADED_NOTE + first.text;
+      }
+      // Priced on the tier that actually ran, not the Anthropic one that
+      // failed, so the spend cap meters what was really spent.
+      response.__pricedAs = MODELS[provider.tier];
+      return response;
+    } catch (backupErr) {
+      console.error(`${provider.name} could not answer either: ${backupErr.message}`);
+      lastError = backupErr;
+    }
   }
 
-  console.warn(`Anthropic unavailable (${err.message}); falling back to OpenAI for this call.`);
-  const response = await createOpenAiCompletion({
-    model: fallbackModel(),
-    system: params.system,
-    messages: params.messages,
-    maxTokens: params.max_tokens,
-  });
-
-  // Only orchestrators lose something by coming through here. A leaf agent's
-  // turn is a single completion either way, so labelling it would be noise.
-  const delegated = Boolean(params.tools?.length);
-  if (delegated) {
-    const first = response.content.find((block) => block.type === 'text');
-    if (first) first.text = DEGRADED_NOTE + first.text;
-  }
-  // Priced on the OpenAI tier, not the Anthropic one that failed, so the
-  // spend cap meters what was actually spent.
-  response.__pricedAs = MODELS[OPENAI_TIER];
-  return response;
+  // Every backup failed too. The original Anthropic error is the more useful
+  // one to surface — it's the provider the company is actually meant to run
+  // on, and its message names something the founder can act on.
+  console.error(`All backup providers failed; surfacing the original error. Last was: ${lastError.message}`);
+  throw err;
 }
 
 async function createMessage(anthropic, modelSpec, params) {
@@ -170,6 +208,14 @@ async function createMessage(anthropic, modelSpec, params) {
         maxTokens: params.max_tokens,
       });
     }
+    if (modelSpec.provider === 'gemini') {
+      return createGeminiCompletion({
+        model: modelSpec.model,
+        system: params.system,
+        messages: params.messages,
+        maxTokens: params.max_tokens,
+      });
+    }
     return anthropic.messages.create({ ...params, model: modelSpec.model });
   };
 
@@ -182,10 +228,10 @@ async function createMessage(anthropic, modelSpec, params) {
       try {
         response = await send();
       } catch (retryErr) {
-        response = await failOverToOpenAI(modelSpec, params, retryErr);
+        response = await failOverToBackup(modelSpec, params, retryErr);
       }
     } else {
-      response = await failOverToOpenAI(modelSpec, params, err);
+      response = await failOverToBackup(modelSpec, params, err);
     }
   }
 
