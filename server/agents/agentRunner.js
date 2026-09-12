@@ -27,6 +27,7 @@ import { assertUnderDailyCap, recordSpend } from '../spend.js';
 import { priceUsage, emptyUsage } from '../usage.js';
 import { resolveModelForAgent, MODELS, OPENAI_TIER, GEMINI_TIER, DEFAULT_TIER, CHEAP_TIER } from './models.js';
 import { recordContribution } from '../finance/profitShare.js';
+import { skillsFor, getSkill, describeSkillsForAgent } from '../skills/registry.js';
 import { isOpenRouterConfigured, createCompletion, openRouterFallbackModel } from './openrouter.js';
 import { createCompletion as createOpenAiCompletion, isOpenAIConfigured, fallbackModel } from './openai.js';
 import { createCompletion as createGeminiCompletion, isGeminiConfigured, geminiModel } from './gemini.js';
@@ -378,7 +379,27 @@ function buildTools(agents, agent) {
 
   const serverTools = agent.serverTools || [];
 
-  return [...delegationTools, ...actionTools, ...serverTools];
+  // Added here rather than per agent, so adding a skill file is the whole
+  // job — no roster edit, no wiring, no chance of a skill existing that
+  // nobody can reach.
+  const skillTools = skillsFor(agent.id).length
+    ? [
+        {
+          name: 'load_skill',
+          description:
+            'Load a procedure by name before doing that kind of work. The list of what is available to you, with one line on each, is in your context. Load the one that fits rather than working from memory — these exist because the details matter and are easy to get subtly wrong.',
+          input_schema: {
+            type: 'object',
+            properties: {
+              name: { type: 'string', description: 'The skill name, exactly as listed.' },
+            },
+            required: ['name'],
+          },
+        },
+      ]
+    : [];
+
+  return [...delegationTools, ...actionTools, ...skillTools, ...serverTools];
 }
 
 /**
@@ -437,7 +458,15 @@ export async function runAgent({
   //
   // Reading "here is the company, here is who you are in it" is also the
   // more natural order, which is luck rather than design.
-  const system = buildSystemBlocks({ extraContext, agentPrompt: agent.systemPrompt, ownContext });
+  // Appended to the agent's own prompt rather than sent separately: it is
+  // as stable as the prompt is, so it belongs behind the same cache
+  // breakpoint instead of adding a third block that invalidates nothing.
+  const skillMenu = describeSkillsForAgent(agent.id);
+  const system = buildSystemBlocks({
+    extraContext,
+    agentPrompt: skillMenu ? `${agent.systemPrompt}\n\n${skillMenu}` : agent.systemPrompt,
+    ownContext,
+  });
 
   const working = [...messages];
 
@@ -528,7 +557,15 @@ export async function runAgent({
 
     for (const toolUse of others) {
       let resultText;
-      if (actionHandlers[toolUse.name]) {
+      if (toolUse.name === 'load_skill') {
+        // Handled here rather than through actionHandlers: it reads a file
+        // and has no side effect, so there is nothing for a scope to govern
+        // and no reason for every caller to wire it up.
+        const skill = getSkill(agent.id, toolUse.input?.name);
+        resultText = skill
+          ? skill.body
+          : `No skill called "${toolUse.input?.name}" is available to you. Work from what you know rather than guessing at another name.`;
+      } else if (actionHandlers[toolUse.name]) {
         try {
           // The acting agent is passed alongside the input so a handler can
           // attribute what just happened (see finance/profitShare.js). It's
