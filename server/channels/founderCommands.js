@@ -32,6 +32,7 @@ import {
   setDeploymentCaps,
 } from '../finance/ventures.js';
 import { getLatestDailyReport } from '../dailyReports.js';
+import { rejectPlan, getPlan } from '../dailyPlan.js';
 import { listAffordableModels } from '../agents/openrouter.js';
 import { describeDegradation } from '../degradation.js';
 
@@ -43,6 +44,17 @@ const COMMANDS = [
   { kind: 'integrations', re: /^(integrations|connections|health)$/i },
   { kind: 'ventures', re: /^(ventures|portfolio|list\s+ventures)$/i },
   { kind: 'models', re: /^models(?:\s+(\S+))?$/i, arg: 'search' },
+  // Withdrawing an approval the founder already gave.
+  //
+  // approvePlan was a one-way door. submitPlan refuses while today's plan is
+  // APPROVED, and parsePlanCommand only offers APPROVE/REJECT while one is
+  // PENDING — so an approval, once given, locked the whole day with no
+  // founder override anywhere. Approve a plan naming a venture that turns
+  // out not to exist and the company is stuck until midnight UTC, unable to
+  // do the work or to propose different work.
+  //
+  // rejectPlan already handled any status; it simply had no route to it.
+  { kind: 'plan_clear', re: /^plan\s+clear(?:\s+(.+))?$|^(?:withdraw|unapprove)$/i, arg: 'reason' },
   { kind: 'report', re: /^(report|daily\s+report|latest\s+report)$/i },
   // Scope switches. Venture ids are v_<digits>_<suffix>, which is not
   // something a sentence produces by accident — requiring one is most of
@@ -170,6 +182,7 @@ INTEGRATIONS — what's actually connected
 MODELS [search] — live OpenRouter models and their prices
 REPORT — the latest daily report
 PLAN — today's plan (APPROVE / REJECT <reason> to decide it)
+PLAN CLEAR <reason> — withdraw a plan you already approved
 
 LINK <ventureId> <owner/repo> [paths] — grant a repo and turn deploys on
 OUTREACH <ventureId> <emails or @domains> — grant and enable an outreach scope
@@ -231,6 +244,13 @@ export async function runFounderCommand(command, deps = {}) {
       const report = getLatestDailyReport();
       if (!report) return 'No daily report yet — the first one lands after tomorrow morning\'s sync.';
       return `Daily report — ${report.date}\n\n${report.leadership.reply}`;
+    }
+
+    case 'plan_clear': {
+      const current = getPlan();
+      if (!current) return 'There is no plan for today, so there is nothing to withdraw. The team can submit one now.';
+      const plan = rejectPlan({ reason: command.reason || 'Withdrawn by the founder.' });
+      return `Today's plan is withdrawn${plan.note ? `: ${plan.note}` : '.'}\n\nNothing from it runs any more, and the team can submit a new one for you to approve.`;
     }
 
     case 'models': {
