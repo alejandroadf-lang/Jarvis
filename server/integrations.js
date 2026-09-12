@@ -24,6 +24,7 @@ import { isGeminiConfigured, geminiModel, listModelsUrl } from './agents/gemini.
 import { MODELS, CHEAP_TIER } from './agents/models.js';
 import { readSecret } from './env.js';
 import { getStorageStatus } from './storage.js';
+import { accessStatus } from './auth.js';
 
 // A probe must never hang a page load. Both services are normally fast; if
 // one isn't, "couldn't reach it" is a more useful answer than a spinner.
@@ -277,6 +278,9 @@ export async function getIntegrationStatus() {
       ok: null,
       detail: process.env.ANTHROPIC_API_KEY ? 'Required, and set.' : 'Required. Nothing works without this.',
     },
+    // Reported here because it is the one that makes every other guardrail
+    // conditional: a kill switch anyone can resume is not a kill switch.
+    access: accessStatus(),
     // Not an integration, but it belongs on the same panel: it fails exactly
     // the way the others do — silently, and only noticed once something has
     // already been lost.

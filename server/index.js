@@ -60,6 +60,7 @@ import {
 import { recordInbound, recordReceipt, recentInbound, STAGES } from './channels/whatsappLog.js';
 import { privacyPolicyHtml } from './privacy.js';
 import { recordBoot, warnIfEphemeral } from './storage.js';
+import { requireAccess, warnIfUnprotected } from './auth.js';
 import {
   getPlan,
   approvePlan,
@@ -103,6 +104,10 @@ app.use(
     },
   })
 );
+
+// Before every route, so a new endpoint is protected by existing rather than
+// by someone remembering to guard it.
+app.use(requireAccess);
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true, configured: Boolean(process.env.ANTHROPIC_API_KEY) });
@@ -801,6 +806,7 @@ app.listen(PORT, () => {
   // only discoverable by noticing something has gone missing.
   recordBoot();
   warnIfEphemeral();
+  warnIfUnprotected();
   startDailyMeetingScheduler({ anthropic });
   startWeeklyReflectionScheduler({ anthropic });
 });

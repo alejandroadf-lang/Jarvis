@@ -29,6 +29,7 @@ function formatUsd(amount) {
 // in the panel and the loudest thing on screen when engaged: the whole point
 // is that it's reachable without hunting through per-venture settings.
 const INTEGRATION_LABELS = {
+  access: 'Access (is this app locked?)',
   storage: 'Storage (does data survive a redeploy?)',
   anthropic: 'Claude',
   openrouter: 'OpenRouter (specialist agents)',

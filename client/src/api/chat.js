@@ -1,12 +1,74 @@
 import axios from 'axios';
 
+// The access token, kept in this browser only.
+//
+// One shared secret rather than accounts, because there is one user. It is
+// held in localStorage, which means anyone with the device has it — true of a
+// logged-in session too, and the honest trade for an app the founder opens on
+// their phone between other things.
+//
+// The prompt on a 401 is deliberately plain. A styled login screen would be
+// nicer and would also be the only thing standing between the founder and
+// their company at the moment they most want in; this cannot fail to render.
+const TOKEN_KEY = 'jarvis.accessToken';
+
+export function getAccessToken() {
+  try {
+    return localStorage.getItem(TOKEN_KEY) || '';
+  } catch {
+    // Private windows and blocked site data both throw here.
+    return '';
+  }
+}
+
+export function setAccessToken(token) {
+  try {
+    if (token) localStorage.setItem(TOKEN_KEY, token);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    /* nothing to do — the header below still carries it for this page load */
+  }
+}
+
+// Sent on every request rather than attached per call, so a new endpoint is
+// authenticated by existing.
+axios.interceptors.request.use((config) => {
+  const token = getAccessToken();
+  if (token) config.headers.Authorization = `Bearer ${token}`;
+  return config;
+});
+
+// Ask once, retry once. Looping on a wrong token would lock the page into a
+// prompt the founder cannot dismiss.
+axios.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const config = error?.config;
+    if (error?.response?.status !== 401 || !config || config.__askedForToken) {
+      return Promise.reject(error);
+    }
+    config.__askedForToken = true;
+    const token = window.prompt('Access token for this app (set as APP_ACCESS_TOKEN):');
+    if (!token) return Promise.reject(error);
+    setAccessToken(token.trim());
+    config.headers.Authorization = `Bearer ${token.trim()}`;
+    return axios(config);
+  }
+);
+
+/** For fetch() calls, which do not go through the interceptors above. */
+export function authHeaders(base = {}) {
+  const token = getAccessToken();
+  return token ? { ...base, Authorization: `Bearer ${token}` } : base;
+}
+
 // Streams the reply as it's generated. `onChunk(delta, fullTextSoFar)` fires
 // for each piece of text received; the returned promise resolves with the
 // complete reply once the stream ends.
 export async function sendMessage(sessionId, message, onChunk) {
   const res = await fetch('/api/chat', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ sessionId, message }),
   });
 
