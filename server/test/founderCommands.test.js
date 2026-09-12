@@ -183,3 +183,58 @@ test('MODELS parses, but a sentence starting with "models" does not', () => {
   assert.deepEqual(commands.parseFounderCommand('models hermes'), { kind: 'models', search: 'hermes' });
   assert.equal(commands.parseFounderCommand('models are getting cheaper every month'), null);
 });
+
+// --- LINK: the command whose absence blocked a company with a ready spec ---
+
+test('LINK grants a repo and enables deploys in one message', async () => {
+  const v = newVenture();
+  const parsed = commands.parseFounderCommand(`link ${v.id} alejandroadf-lang/circadian-api`);
+  assert.deepEqual(parsed, {
+    kind: 'link_repo',
+    ventureId: v.id,
+    owner: 'alejandroadf-lang',
+    name: 'circadian-api',
+    allowedPaths: ['src/', '.github/workflows/'],
+  });
+
+  await commands.runFounderCommand(parsed);
+  const after = ventures.getVenture(v.id);
+  assert.equal(after.repo.owner, 'alejandroadf-lang');
+  assert.equal(after.repo.enabled, true, 'linking without enabling would just move the blocker');
+  assert.doesNotThrow(() => ventures.authorizeDeployment(v.id, { path: 'src/main.py' }));
+  assert.throws(() => ventures.authorizeDeployment(v.id, { path: 'secrets/keys.env' }), /outside the allowed/);
+});
+
+test('LINK defaults include the workflow directory', () => {
+  // Without .github/workflows/ the team can ship code but never run CI on
+  // it, which is a subtler dead end than being refused outright.
+  const parsed = commands.parseFounderCommand('link v_1 acme/thing');
+  assert.ok(parsed.allowedPaths.includes('.github/workflows/'));
+});
+
+test('LINK takes explicit paths when given them', () => {
+  const parsed = commands.parseFounderCommand('link v_1 acme/thing src/ tests/');
+  assert.deepEqual(parsed.allowedPaths, ['src/', 'tests/']);
+});
+
+test('the founder path does not need AUTONOMOUS_DEPLOY_REPOS', async () => {
+  // The pre-approval list bounds what *agents* may grant themselves. The
+  // founder granting a scope in person is the thing it was always deferring
+  // to, so requiring an env var here would be the list checking its own
+  // author's permission.
+  const before = process.env.AUTONOMOUS_DEPLOY_REPOS;
+  delete process.env.AUTONOMOUS_DEPLOY_REPOS;
+  try {
+    const v = newVenture();
+    await commands.runFounderCommand(commands.parseFounderCommand(`link ${v.id} nobody/approved-this`));
+    assert.equal(ventures.getVenture(v.id).repo.name, 'approved-this');
+  } finally {
+    if (before === undefined) delete process.env.AUTONOMOUS_DEPLOY_REPOS;
+    else process.env.AUTONOMOUS_DEPLOY_REPOS = before;
+  }
+});
+
+test('"link" in a sentence is not a repo grant', () => {
+  assert.equal(commands.parseFounderCommand('link the two ideas together'), null);
+  assert.equal(commands.parseFounderCommand('can you link me the PR'), null);
+});

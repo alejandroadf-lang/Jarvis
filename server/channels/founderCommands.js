@@ -25,6 +25,7 @@ import { haltRealActions, resumeRealActions } from '../killSwitch.js';
 import { getSpendSummary } from '../spend.js';
 import {
   listVentures,
+  linkRepo,
   linkOutreachScope,
   setOutreachEnabled,
   setDeploymentEnabled,
@@ -55,6 +56,22 @@ const COMMANDS = [
 // needs two captures and so doesn't fit the table above.
 const OUTREACH_GRANT = /^outreach\s+(v_\S+)\s+(.+)$/i;
 
+// "link v_123 owner/repo [src/ .github/workflows/]" — the founder granting a
+// repo scope directly.
+//
+// This is the command that should have existed from the start. Without it,
+// granting a repo was reachable only from the Ventures panel in a browser,
+// or by an agent calling link_venture_repo — and the agent path runs through
+// assertRepoIsPreApproved, so it needs AUTONOMOUS_DEPLOY_REPOS set in the
+// environment first. Both routes mean leaving the conversation, which is how
+// a company with a ready spec and a real repo spent a day blocked on the act
+// of pointing one at the other.
+//
+// The founder path deliberately skips the pre-approval list: that list exists
+// to bound what agents may grant themselves, and the founder granting a scope
+// in person is the thing it was always deferring to.
+const LINK_GRANT = /^link\s+(v_\S+)\s+([\w.-]+\/[\w.-]+)(?:\s+(.+))?$/i;
+
 /**
  * Reads a founder's message as a control command, or null when it isn't one.
  * Null is the overwhelmingly common case: anything that isn't an exact match
@@ -73,6 +90,24 @@ export function parseFounderCommand(text) {
       const value = (match[match.length - 1] || '').trim();
       return arg ? { kind, [arg]: value || null } : { kind };
     }
+  }
+
+  const link = raw.match(LINK_GRANT);
+  if (link) {
+    const [owner, name] = link[2].split('/');
+    const paths = (link[3] || '')
+      .split(/[,\s]+/)
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+    return {
+      kind: 'link_repo',
+      ventureId: link[1],
+      owner,
+      name,
+      // Defaults that match what the team actually needs: source, and the
+      // workflow directory, without which run_checks has nothing to run.
+      allowedPaths: paths.length ? paths : ['src/', '.github/workflows/'],
+    };
   }
 
   const grant = raw.match(OUTREACH_GRANT);
@@ -122,6 +157,7 @@ MODELS [search] — live OpenRouter models and their prices
 REPORT — the latest daily report
 PLAN — today's plan (APPROVE / REJECT <reason> to decide it)
 
+LINK <ventureId> <owner/repo> [paths] — grant a repo and turn deploys on
 OUTREACH <ventureId> <emails or @domains> — grant and enable an outreach scope
 OUTREACH OFF <ventureId> — revoke it
 DEPLOY OFF <ventureId> — stop commits for one venture
@@ -207,6 +243,17 @@ export async function runFounderCommand(command, deps = {}) {
       const degraded = describeDegradation();
       const body = lines.length ? lines.join('\n') : 'Nothing reported a status.';
       return degraded ? `${body}\n\n${degraded}` : body;
+    }
+
+    case 'link_repo': {
+      linkRepo(command.ventureId, {
+        owner: command.owner,
+        name: command.name,
+        branch: 'main',
+        allowedPaths: command.allowedPaths,
+      });
+      const venture = setDeploymentEnabled(command.ventureId, true);
+      return `"${venture.title}" is linked to ${command.owner}/${command.name} (branch main) and deployments are ON.\n\nThey may write: ${command.allowedPaths.join(', ')}\nCaps: ${venture.repo.maxPerDay}/day, ${venture.repo.maxPerWeek}/week.\n\nDEPLOY OFF ${command.ventureId} stops it.`;
     }
 
     case 'outreach_grant': {
