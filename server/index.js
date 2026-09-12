@@ -60,6 +60,15 @@ import {
 import { recordInbound, recordReceipt, recentInbound, waitingMessage, STAGES } from './channels/whatsappLog.js';
 import { privacyPolicyHtml } from './privacy.js';
 import { recordBoot, warnIfEphemeral } from './storage.js';
+import {
+  enqueue as enqueueDeepDive,
+  nextQueued,
+  markRunning,
+  complete as completeDeepDive,
+  fail as failDeepDive,
+  listDeepDives,
+  queueDepth,
+} from './deepDives.js';
 import { requireAccess, warnIfUnprotected } from './auth.js';
 import {
   getPlan,
@@ -79,6 +88,12 @@ const PORT = process.env.PORT || 3001;
 
 // Above this, a turn is worth a line in the log saying who took the time.
 const SLOW_TURN_MS = Number(process.env.SLOW_TURN_MS) > 0 ? Number(process.env.SLOW_TURN_MS) : 45000;
+
+// How long a conversational turn gets before it stops widening and answers
+// with what it has. Two minutes is about the limit of what someone holding a
+// phone reads as thinking rather than broken. The question is not dropped —
+// it goes to the deep-dive queue and comes back properly later.
+const TURN_DEADLINE_MS = Number(process.env.TURN_DEADLINE_MS) > 0 ? Number(process.env.TURN_DEADLINE_MS) : 120000;
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -211,7 +226,7 @@ function joinContext(...parts) {
   return parts.filter((part) => part && part.trim()).join('\n\n');
 }
 
-async function runCompanyTurn(sessionId, message) {
+async function runCompanyTurn(sessionId, message, { deadlineAt = null } = {}) {
   const history = companySessions.get(sessionId) || [];
   const workingMessages = [...history, { role: 'user', content: message }];
   // Awaited because it shapes the prompt, but it can only ever return a
@@ -225,9 +240,10 @@ async function runCompanyTurn(sessionId, message) {
     readFounderSteering(),
   ]);
 
-  const { text, trace, durationMs } = await runAgent({
+  const { text, trace, durationMs, ranOutOfTime } = await runAgent({
     anthropic,
     agents: COMPANY_AGENTS,
+    deadlineAt,
     agentId: COMPANY_ROOT,
     messages: workingMessages,
     actionHandlers: {
@@ -298,7 +314,7 @@ async function runCompanyTurn(sessionId, message) {
     );
   }
 
-  return { reply: text, trace, durationMs };
+  return { reply: text, trace, durationMs, ranOutOfTime };
 }
 
 app.post('/api/company/chat', async (req, res) => {
@@ -648,7 +664,36 @@ async function handleWhatsAppMessage(message) {
   try {
     // The sender's number is the session key, so a WhatsApp conversation has
     // its own continuous history rather than colliding with the web app's.
-    const { reply } = await runCompanyTurn(`whatsapp-${message.from}`, text);
+    const { reply, ranOutOfTime } = await runCompanyTurn(`whatsapp-${message.from}`, text, {
+      deadlineAt: Date.now() + TURN_DEADLINE_MS,
+    });
+
+    if (ranOutOfTime) {
+      // The question was bigger than the clock. Send what the team has, say
+      // plainly that it is the quick version, and queue the real one —
+      // rather than letting a rushed answer pass for a considered one.
+      const dive = enqueueDeepDive({
+        question: text,
+        sessionId: `whatsapp-${message.from}`,
+        deliverTo: message.from,
+        reason: 'ran past the conversational deadline',
+      });
+      await sendWhatsAppMessage(
+        message.from,
+        `${reply}\n\n— That's the quick read; the question was bigger than the two minutes I give a chat reply. ` +
+          'The team is working it through properly now and I\'ll send the full answer when it lands.'
+      );
+      drainDeepDives();
+      recordInbound({
+        stage: STAGES.ANSWERED,
+        from: message.from,
+        text,
+        detail: `answered briefly; queued ${dive.id} for the full version`,
+        durationMs: Date.now() - startedAt,
+      });
+      return;
+    }
+
     await sendWhatsAppMessage(message.from, reply);
     recordInbound({
       stage: STAGES.ANSWERED,
@@ -723,6 +768,63 @@ app.post('/api/plan/reject', (req, res) => {
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
+});
+
+// --- Deep dives -------------------------------------------------------------
+
+// One at a time, deliberately. A dive is a full fan-out across the company;
+// running several at once is the fastest way to hit a rate limit and turn one
+// slow answer into several failed ones. They are not urgent by definition —
+// they exist because the founder already has a quick answer.
+let draining = false;
+
+async function drainDeepDives() {
+  if (draining) return;
+  draining = true;
+  try {
+    for (let dive = nextQueued(); dive; dive = nextQueued()) {
+      markRunning(dive.id);
+      try {
+        // No deadline here. The whole point is that this one gets the time
+        // the conversational turn could not give it.
+        const { reply } = await runCompanyTurn(dive.sessionId || `dive-${dive.id}`, dive.question);
+        completeDeepDive(dive.id, reply);
+
+        if (dive.deliverTo) {
+          try {
+            await sendWhatsAppMessage(
+              dive.deliverTo,
+              `Here's the full answer on: "${dive.question.slice(0, 80)}"\n\n${reply}`
+            );
+          } catch (err) {
+            // The work is done and saved; only the delivery failed. Worth
+            // saying loudly, because from the phone this is indistinguishable
+            // from the dive never having run.
+            console.error(`Deep dive ${dive.id} finished but could not be delivered: ${err.message}`);
+          }
+        }
+      } catch (err) {
+        failDeepDive(dive.id, err.message);
+        console.error(`Deep dive ${dive.id} failed: ${err.message}`);
+        if (dive.deliverTo) {
+          try {
+            await sendWhatsAppMessage(
+              dive.deliverTo,
+              `I couldn't finish the deeper answer on "${dive.question.slice(0, 80)}" — ${err.message}`
+            );
+          } catch {
+            /* already logged above */
+          }
+        }
+      }
+    }
+  } finally {
+    draining = false;
+  }
+}
+
+app.get('/api/deep-dives', (_req, res) => {
+  res.json({ queued: queueDepth(), dives: listDeepDives() });
 });
 
 app.get('/api/spend', (_req, res) => {

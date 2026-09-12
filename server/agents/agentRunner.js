@@ -438,6 +438,12 @@ export async function runAgent({
   extraContext = '',
   perAgentContext = null,
   usage = emptyUsage(),
+  // A wall-clock moment after which this turn stops widening. Not a hard
+  // abort: work already in flight finishes, and the agent is then asked to
+  // answer with what it has. Cutting an agent off mid-thought produces
+  // nothing useful, while stopping it from consulting three more people
+  // produces a shorter answer to the same question.
+  deadlineAt = null,
 }) {
   const agent = getAgent(agents, agentId);
   const tools = buildTools(agents, agent);
@@ -485,8 +491,21 @@ export async function runAgent({
   const working = [...messages];
 
   let finalText = '';
+  // True when the turn ran out of time and finished early. Carried up so the
+  // caller can offer the deeper version rather than passing off a rushed
+  // answer as the considered one.
+  let ranOutOfTime = false;
 
   for (let round = 0; round < MAX_ROUNDS; round++) {
+    // Checked between rounds rather than mid-call: a round already underway
+    // is cheaper to finish than to abandon, and its result is already paid
+    // for. Round 0 always runs — a deadline that produces no answer at all
+    // is worse than a late one.
+    if (deadlineAt && round > 0 && Date.now() > deadlineAt) {
+      ranOutOfTime = true;
+      break;
+    }
+
     const response = await createMessage(anthropic, modelSpec, {
       max_tokens: tokenBudget,
       system,
@@ -541,6 +560,10 @@ export async function runAgent({
           extraContext,
           perAgentContext,
           usage,
+          // The whole tree shares one deadline. A specialist that starts a
+          // fan-out of its own with two seconds left is how a turn that was
+          // supposed to take two minutes takes six.
+          deadlineAt,
         });
         const resultText = sub.text;
         trace.push({
@@ -641,5 +664,5 @@ export async function runAgent({
       'and I can answer properly.';
   }
 
-  return { text: finalText, trace, usage, durationMs: Date.now() - startedAt };
+  return { text: finalText, trace, usage, ranOutOfTime, durationMs: Date.now() - startedAt };
 }
