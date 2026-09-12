@@ -53,6 +53,15 @@ const MAX_LEAF_TOKENS = Number(process.env.AGENT_MAX_LEAF_TOKENS) > 0
 
 const MAX_ROUNDS = 6; // safety cap on tool-calling rounds within one agent's turn
 
+// How hard each kind of agent thinks. Effort is a better lever than the token
+// cap above: it reduces how much a specialist reasons rather than truncating
+// what it manages to write. A leaf answering a bounded question — review this
+// copy, poke holes in this idea — rarely needs deep deliberation, and there
+// are sixteen of them per fan-out. Orchestrators decide what the company
+// does, and that is where thinking earns its cost.
+const LEAF_EFFORT = (process.env.AGENT_LEAF_EFFORT || '').trim() || 'low';
+const ORCHESTRATOR_EFFORT = (process.env.AGENT_ORCHESTRATOR_EFFORT || '').trim() || 'high';
+
 // How many delegations run at once. Dispatch used to be strictly sequential,
 // which made a turn's latency proportional to the number of agents consulted
 // rather than to the depth of the chart — around eight minutes for a
@@ -101,6 +110,42 @@ export function isRetryableError(err) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * The system prompt, as cacheable blocks.
+ *
+ * Two breakpoints, deliberately placed. The shared context gets one so it
+ * survives across the twenty-one agents a single question can reach; the
+ * agent's own prompt gets the second so it survives across turns for whoever
+ * is asked repeatedly. Earnings are last and uncached — they change as the
+ * turn itself records contributions, and a breakpoint behind them would be
+ * invalidated by the work it was meant to speed up.
+ */
+export function buildSystemBlocks({ extraContext, agentPrompt, ownContext }) {
+  const blocks = [];
+  const push = (text, cache) => {
+    if (!text || !text.trim()) return;
+    blocks.push({
+      type: 'text',
+      text,
+      ...(cache ? { cache_control: { type: 'ephemeral' } } : {}),
+    });
+  };
+
+  push(extraContext, true);
+  push(agentPrompt, true);
+  push(ownContext, false);
+  return blocks;
+}
+
+/** Flattened for providers with no notion of content blocks. */
+export function systemBlocksToText(system) {
+  if (typeof system === 'string') return system;
+  return (system || [])
+    .map((block) => block.text)
+    .filter(Boolean)
+    .join('\n\n');
 }
 
 // Every paid call in this app funnels through here, which makes it the one
@@ -188,7 +233,11 @@ async function failOverToBackup(anthropic, modelSpec, params, err) {
       `${modelSpec.provider} rejected the request (${err.message}); running this agent on ${fallback.model} instead.`
     );
     try {
-      const response = await anthropic.messages.create({ ...params, model: fallback.model });
+      const response = await anthropic.messages.create({
+        ...params,
+        model: fallback.model,
+        thinking: { type: 'adaptive' },
+      });
       response.__pricedAs = fallback;
       return response;
     } catch (anthropicErr) {
@@ -212,7 +261,7 @@ async function failOverToBackup(anthropic, modelSpec, params, err) {
       console.warn(`Anthropic unavailable (${err.message}); trying ${provider.name} for this call.`);
       const response = await provider.send({
         model: provider.model(),
-        system: params.system,
+        system: systemBlocksToText(params.system),
         messages: params.messages,
         maxTokens: params.max_tokens,
       });
@@ -247,32 +296,29 @@ async function createMessage(anthropic, modelSpec, params) {
   // Both providers are called through here so neither can slip past the
   // spend cap, and the retry policy is identical because openrouter.js
   // sets the same `.status` the Anthropic SDK does.
+  // Only Anthropic understands content blocks and cache_control; the others
+  // take a plain string, so the same prompt is flattened for them.
+  const { effort, ...rest } = params;
+  const flat = {
+    model: modelSpec.model,
+    system: systemBlocksToText(params.system),
+    messages: params.messages,
+    maxTokens: params.max_tokens,
+  };
+
   const send = () => {
-    if (modelSpec.provider === 'openrouter') {
-      return createCompletion({
-        model: modelSpec.model,
-        system: params.system,
-        messages: params.messages,
-        maxTokens: params.max_tokens,
-      });
-    }
-    if (modelSpec.provider === 'openai') {
-      return createOpenAiCompletion({
-        model: modelSpec.model,
-        system: params.system,
-        messages: params.messages,
-        maxTokens: params.max_tokens,
-      });
-    }
-    if (modelSpec.provider === 'gemini') {
-      return createGeminiCompletion({
-        model: modelSpec.model,
-        system: params.system,
-        messages: params.messages,
-        maxTokens: params.max_tokens,
-      });
-    }
-    return anthropic.messages.create({ ...params, model: modelSpec.model });
+    if (modelSpec.provider === 'openrouter') return createCompletion(flat);
+    if (modelSpec.provider === 'openai') return createOpenAiCompletion(flat);
+    if (modelSpec.provider === 'gemini') return createGeminiCompletion(flat);
+    return anthropic.messages.create({
+      ...rest,
+      model: modelSpec.model,
+      // Adaptive thinking with a per-role effort level. A leaf answering a
+      // bounded question does not need to deliberate; an orchestrator
+      // deciding what the company does is where thinking earns its cost.
+      thinking: { type: 'adaptive' },
+      ...(effort ? { output_config: { effort } } : {}),
+    });
   };
 
   let response;
@@ -378,7 +424,21 @@ export async function runAgent({
   const tokenBudget = isLeaf ? Math.min(MAX_LEAF_TOKENS, MAX_TOKENS) : MAX_TOKENS;
 
   const ownContext = perAgentContext ? perAgentContext(agent.id) : '';
-  const system = [agent.systemPrompt, extraContext, ownContext].filter((part) => part && part.trim()).join('\n\n');
+  // Ordered for the cache, not for reading.
+  //
+  // Caching is a prefix match, so what goes first decides what can be reused.
+  // The shared business context is byte-identical across every agent in a
+  // turn, and one question can fan out to twenty-one of them — putting it
+  // first means twenty cache hits instead of twenty full re-reads. The
+  // agent's own prompt comes next: frozen per agent, so it caches across
+  // turns for whoever is asked repeatedly. Earnings go last, uncached,
+  // because they change as the turn itself records contributions and would
+  // otherwise invalidate everything behind them.
+  //
+  // Reading "here is the company, here is who you are in it" is also the
+  // more natural order, which is luck rather than design.
+  const system = buildSystemBlocks({ extraContext, agentPrompt: agent.systemPrompt, ownContext });
+
   const working = [...messages];
 
   let finalText = '';
@@ -388,6 +448,7 @@ export async function runAgent({
       max_tokens: tokenBudget,
       system,
       messages: working,
+      effort: isLeaf ? LEAF_EFFORT : ORCHESTRATOR_EFFORT,
       ...(tools.length ? { tools } : {}),
     });
 

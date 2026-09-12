@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { runAgent, isRetryableError } from '../agents/agentRunner.js';
+import { runAgent, isRetryableError, buildSystemBlocks, systemBlocksToText } from '../agents/agentRunner.js';
 
 // runAgent records real spend against the ledger on every call (see
 // spend.js), so this file needs its own data dir like every other test —
@@ -348,8 +348,9 @@ test('a failed consultation does not take down the ones beside it', async () => 
             ? consultAll(['a', 'b'])
             : textResponse('done', { input_tokens: 5, output_tokens: 5 });
         }
-        // 'a' is asked first; fail whichever asks first.
-        if (params.system.includes('You are a.')) throw apiError(400, 'bad request');
+        // 'a' is asked first; fail whichever asks first. The system prompt
+        // is content blocks now, for caching — flatten before matching.
+        if (systemBlocksToText(params.system).includes('You are a.')) throw apiError(400, 'bad request');
         return textResponse('b answered', { input_tokens: 5, output_tokens: 5 });
       },
     },
@@ -526,4 +527,90 @@ test('a consulted agent carries its own duration into the trace', async () => {
   const consulted = trace.find((entry) => entry.id === 'aide');
   assert.ok(consulted, 'the consulted agent is in the trace');
   assert.equal(typeof consulted.ms, 'number');
+});
+
+// --- Prompt caching --------------------------------------------------------
+// Caching is a prefix match, so the order of the system prompt decides what
+// can be reused. One question can reach twenty-one agents, and the shared
+// business context is byte-identical in every one of those calls.
+
+test('the shared context comes first, so it caches across every agent in a turn', () => {
+  const blocks = buildSystemBlocks({
+    extraContext: 'The company, its ventures and its books.',
+    agentPrompt: 'You are the CFO.',
+    ownContext: 'You have earned $12.',
+  });
+
+  assert.equal(blocks[0].text, 'The company, its ventures and its books.');
+  assert.equal(blocks[1].text, 'You are the CFO.');
+});
+
+test('two breakpoints: the shared prefix and the agent prompt', () => {
+  const blocks = buildSystemBlocks({
+    extraContext: 'shared',
+    agentPrompt: 'mine',
+    ownContext: 'volatile',
+  });
+
+  assert.ok(blocks[0].cache_control, 'shared context survives across agents');
+  assert.ok(blocks[1].cache_control, 'the agent prompt survives across turns');
+  // Earnings change as the turn itself records contributions; a breakpoint
+  // behind them would be invalidated by the work it was meant to speed up.
+  assert.equal(blocks[2].cache_control, undefined);
+});
+
+test('empty parts are dropped rather than cached as blank blocks', () => {
+  const blocks = buildSystemBlocks({ extraContext: '', agentPrompt: 'mine', ownContext: '   ' });
+
+  assert.equal(blocks.length, 1);
+  assert.equal(blocks[0].text, 'mine');
+  assert.ok(blocks[0].cache_control);
+});
+
+test('never more than the four breakpoints a request allows', () => {
+  const blocks = buildSystemBlocks({ extraContext: 'a', agentPrompt: 'b', ownContext: 'c' });
+  assert.ok(blocks.filter((b) => b.cache_control).length <= 4);
+});
+
+test('providers without content blocks get the same prompt as text', () => {
+  const blocks = buildSystemBlocks({ extraContext: 'shared', agentPrompt: 'mine', ownContext: 'volatile' });
+
+  assert.equal(systemBlocksToText(blocks), 'shared\n\nmine\n\nvolatile');
+  assert.equal(systemBlocksToText('already a string'), 'already a string');
+});
+
+// --- Effort ----------------------------------------------------------------
+
+test('leaves think less than orchestrators', async () => {
+  const byModel = [];
+  const anthropic = {
+    messages: {
+      create: async (params) => {
+        byModel.push(params.output_config?.effort);
+        return params.tools?.length && byModel.length === 1
+          ? toolUseResponse('consult_aide', { task: 'look' })
+          : textResponse('ok', { input_tokens: 5, output_tokens: 5 });
+      },
+    },
+  };
+  const agents = {
+    boss: { id: 'boss', title: 'Boss', department: 'E', reportsTo: null, reports: ['aide'], systemPrompt: 'x' },
+    aide: { id: 'aide', title: 'Aide', department: 'E', reportsTo: 'boss', reports: [], systemPrompt: 'y' },
+  };
+
+  await runAgent({ anthropic, agents, agentId: 'boss', messages: [{ role: 'user', content: 'hi' }] });
+
+  assert.equal(byModel[0], 'high', 'the orchestrator deliberates');
+  assert.ok(byModel.includes('low'), 'the leaf does not');
+});
+
+test('adaptive thinking is on, so effort has something to scale', async () => {
+  let seen;
+  const anthropic = {
+    messages: { create: async (params) => { seen = params; return textResponse('ok', { input_tokens: 1, output_tokens: 1 }); } },
+  };
+
+  await runAgent({ anthropic, agents: AGENTS, agentId: 'test_agent', messages: [{ role: 'user', content: 'hi' }] });
+
+  assert.deepEqual(seen.thinking, { type: 'adaptive' });
 });
