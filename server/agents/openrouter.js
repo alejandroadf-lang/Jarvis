@@ -19,6 +19,19 @@ export function isOpenRouterConfigured() {
 }
 
 /**
+ * Which model OpenRouter serves when it is standing in for Anthropic, rather
+ * than running a leaf agent on the cheap tier. Defaults to the cheap-tier
+ * model because that one is pinned and known to work; set
+ * OPENROUTER_FALLBACK_MODEL to an Anthropic model on OpenRouter (they are
+ * offered there) and this becomes the closest substitute in the chain — the
+ * same model, billed through a different account, which is exactly what you
+ * want when the direct account is the thing that ran out.
+ */
+export function openRouterFallbackModel() {
+  return (process.env.OPENROUTER_FALLBACK_MODEL || '').trim() || 'nousresearch/hermes-4-70b';
+}
+
+/**
  * One completion. Returns the same shape agentRunner already handles from
  * the Anthropic SDK, so the caller doesn't branch on provider to read a
  * result — content blocks and snake_case usage included.
