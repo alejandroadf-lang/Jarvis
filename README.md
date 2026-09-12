@@ -112,6 +112,13 @@ be. [Railway](https://railway.app) is a simple way to keep it running
    `JARVIS_DATA_DIR` points at. Without a volume, that state lives in the
    container's writable layer and is wiped on every redeploy; with one,
    it survives.
+
+   **Check that it worked**, because this fails silently and is otherwise
+   only discovered by noticing something has gone missing. The
+   Integrations panel has a **Storage** line: after your *second* deploy
+   it should say data has survived a restart. If it still says "first
+   boot", the volume isn't mounted where `JARVIS_DATA_DIR` points and the
+   company is losing its memory every time you deploy.
 3. **Set environment variables** on the service:
    - `ANTHROPIC_API_KEY` — required for any of this to work at all.
    - `JARVIS_DATA_DIR=/data` — points persistence at the volume from
