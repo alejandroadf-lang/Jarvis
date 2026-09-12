@@ -1,3 +1,4 @@
+import { readSecret, hasSecret } from '../env.js';
 // Thin wrapper around GitHub's Contents API for committing a single real
 // file change to a real repo — the actual mechanism behind "real code
 // deployment" (see finance/ventures.js's authorizeDeployment/recordDeployment
@@ -19,14 +20,14 @@
 const GITHUB_API = 'https://api.github.com';
 
 export function isGithubConfigured() {
-  return Boolean(process.env.GITHUB_TOKEN);
+  return hasSecret('GITHUB_TOKEN');
 }
 
 async function githubRequest(path, options = {}) {
   const res = await fetch(`${GITHUB_API}${path}`, {
     ...options,
     headers: {
-      Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
+      Authorization: `Bearer ${readSecret('GITHUB_TOKEN')}`,
       Accept: 'application/vnd.github+json',
       'X-GitHub-Api-Version': '2022-11-28',
       ...options.headers,

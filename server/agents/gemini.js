@@ -1,3 +1,4 @@
+import { readSecret, hasSecret } from '../env.js';
 // A Gemini client for the one call shape this app needs: system prompt +
 // messages in, text out. Same scope and the same reasons as openrouter.js and
 // openai.js — raw fetch, no SDK, no tool calling.
@@ -11,7 +12,7 @@
 const BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
 
 export function isGeminiConfigured() {
-  return Boolean(process.env.GEMINI_API_KEY);
+  return hasSecret('GEMINI_API_KEY');
 }
 
 export function geminiModel() {
@@ -19,7 +20,7 @@ export function geminiModel() {
 }
 
 export function listModelsUrl() {
-  return `${BASE_URL}/models?key=${encodeURIComponent(process.env.GEMINI_API_KEY || '')}`;
+  return `${BASE_URL}/models?key=${encodeURIComponent(readSecret('GEMINI_API_KEY') || '')}`;
 }
 
 /**
@@ -27,7 +28,7 @@ export function listModelsUrl() {
  * SDK — content blocks and snake_case usage included.
  */
 export async function createCompletion({ model, system, messages, maxTokens }) {
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = readSecret('GEMINI_API_KEY');
   if (!apiKey) throw new Error('GEMINI_API_KEY is not set');
 
   const name = (model || geminiModel()).replace(/^models\//, '');

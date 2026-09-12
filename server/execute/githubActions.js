@@ -1,3 +1,4 @@
+import { readSecret, hasSecret } from '../env.js';
 // The execution environment. Agents write code, and this is how they find out
 // whether it works.
 //
@@ -33,14 +34,14 @@ const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
 const POLL_INTERVAL_MS = Number(process.env.EXECUTION_POLL_MS) > 0 ? Number(process.env.EXECUTION_POLL_MS) : 5000;
 
 export function isExecutionConfigured() {
-  return Boolean(process.env.GITHUB_TOKEN);
+  return hasSecret('GITHUB_TOKEN');
 }
 
 async function githubRequest(path, options = {}) {
   const res = await fetch(`${GITHUB_API}${path}`, {
     ...options,
     headers: {
-      Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
+      Authorization: `Bearer ${readSecret('GITHUB_TOKEN')}`,
       Accept: 'application/vnd.github+json',
       'X-GitHub-Api-Version': '2022-11-28',
       ...options.headers,
