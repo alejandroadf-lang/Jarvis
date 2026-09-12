@@ -19,6 +19,7 @@ import { isEmailConfigured } from './email.js';
 import { isGithubConfigured } from './deploy/github.js';
 import { isWorkspaceConfigured, workspaceConfig } from './workspace/vault.js';
 import { isWhatsAppConfigured, allowedNumbers, GRAPH_API } from './channels/whatsapp.js';
+import { isOpenAIConfigured, chatModel, fallbackModel, transcribeModel } from './agents/openai.js';
 import { MODELS, CHEAP_TIER } from './agents/models.js';
 
 // A probe must never hang a page load. Both services are normally fast; if
@@ -164,12 +165,67 @@ async function probeWhatsApp() {
 }
 
 /**
+ * Lists the models the key can see. It proves the credential and, unlike a
+ * completion, costs nothing — which matters for something fetched on every
+ * page load. It also catches the failure this app is most exposed to: a
+ * pinned model name that OpenAI has since retired, which would otherwise
+ * surface as a 404 only at the moment the founder needed an answer.
+ */
+async function probeOpenAI() {
+  if (!isOpenAIConfigured()) {
+    return notConfigured('Not set — no voice notes, and no fallback if Anthropic is down or out of credit.');
+  }
+
+  try {
+    const res = await withTimeout(
+      fetch('https://api.openai.com/v1/models', {
+        headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+      }),
+      'OpenAI'
+    );
+
+    if (res.status === 401 || res.status === 403) {
+      return { configured: true, ok: false, detail: 'Key rejected. Voice notes and the Anthropic fallback are both unavailable.' };
+    }
+    if (!res.ok) {
+      return { configured: true, ok: false, detail: `OpenAI returned ${res.status}.` };
+    }
+
+    const body = await res.json().catch(() => ({}));
+    const available = new Set((body?.data || []).map((m) => m.id));
+    const missing = [chatModel(), fallbackModel(), transcribeModel()].filter(
+      (name) => available.size > 0 && !available.has(name)
+    );
+    if (missing.length) {
+      return {
+        configured: true,
+        ok: false,
+        detail: `Key works, but this account can't use ${missing.join(', ')}. Set OPENAI_MODEL / OPENAI_FALLBACK_MODEL / OPENAI_TRANSCRIBE_MODEL to names it can.`,
+      };
+    }
+
+    return {
+      configured: true,
+      ok: true,
+      detail: `Key accepted — voice notes transcribe with ${transcribeModel()}, and ${fallbackModel()} covers an Anthropic outage.`,
+    };
+  } catch (err) {
+    return { configured: true, ok: false, detail: `Couldn't reach OpenAI: ${err.message}` };
+  }
+}
+
+/**
  * Everything the founder can switch on, and whether it's actually live.
  * The probes run in parallel — none depends on another, and this is fetched
  * on page load.
  */
 export async function getIntegrationStatus() {
-  const [openrouter, honcho, whatsapp] = await Promise.all([probeOpenRouter(), probeHoncho(), probeWhatsApp()]);
+  const [openrouter, honcho, whatsapp, openai] = await Promise.all([
+    probeOpenRouter(),
+    probeHoncho(),
+    probeWhatsApp(),
+    probeOpenAI(),
+  ]);
 
   return {
     // Not optional: without it nothing runs at all, so it's reported for
@@ -180,6 +236,7 @@ export async function getIntegrationStatus() {
       detail: process.env.ANTHROPIC_API_KEY ? 'Required, and set.' : 'Required. Nothing works without this.',
     },
     openrouter,
+    openai,
     honcho,
     whatsapp,
     // These two predate the probes and fail loudly at the point of use (an

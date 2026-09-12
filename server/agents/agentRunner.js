@@ -25,9 +25,10 @@
 import { getAgent } from './registry.js';
 import { assertUnderDailyCap, recordSpend } from '../spend.js';
 import { priceUsage, emptyUsage } from '../usage.js';
-import { resolveModelForAgent } from './models.js';
+import { resolveModelForAgent, MODELS, OPENAI_TIER } from './models.js';
 import { recordContribution } from '../finance/profitShare.js';
 import { isOpenRouterConfigured, createCompletion } from './openrouter.js';
+import { createCompletion as createOpenAiCompletion, isOpenAIConfigured, fallbackModel } from './openai.js';
 
 // 1024 was far too tight and produced a specific, baffling failure: the CEO
 // would spend its whole budget writing four delegation requests, get cut off
@@ -95,29 +96,97 @@ function sleep(ms) {
 // someone notices), and recorded from the response's real token counts
 // immediately after. See spend.js for why a per-venture action cap doesn't
 // cover this.
+// When Anthropic itself is the thing that's broken — the account out of
+// credit, the key rejected, an outage that outlived the retry — the whole
+// company goes silent at once, including a founder waiting on their phone.
+// If OpenAI is configured, answer on that instead of failing.
+//
+// The limit is honest and deliberate: this is a plain completion with no
+// tools, exactly like the OpenRouter path, so an orchestrating agent that
+// fails over cannot delegate. That's a real loss of quality, not a
+// transparent swap, which is why the reply says so rather than passing off a
+// single model's guess as the team's considered answer.
+function isProviderOutage(err) {
+  const status = err?.status;
+  if (status === undefined || status === 401 || status === 403 || status === 429 || status >= 500) {
+    return true;
+  }
+  // The exact failure that took the company down the first time it was asked
+  // a real question over WhatsApp: a 400 whose body explains the account has
+  // no credit. Other 400s are genuine bad requests and must keep throwing.
+  return status === 400 && /credit balance|billing|quota/i.test(err?.message || '');
+}
+
+const DEGRADED_NOTE =
+  '(Answering without the team — the usual model is unavailable, so this is one ' +
+  'model working alone rather than the departments weighing in.)\n\n';
+
+async function failOverToOpenAI(modelSpec, params, err) {
+  if (modelSpec.provider !== 'anthropic' || !isOpenAIConfigured() || !isProviderOutage(err)) {
+    throw err;
+  }
+
+  console.warn(`Anthropic unavailable (${err.message}); falling back to OpenAI for this call.`);
+  const response = await createOpenAiCompletion({
+    model: fallbackModel(),
+    system: params.system,
+    messages: params.messages,
+    maxTokens: params.max_tokens,
+  });
+
+  // Only orchestrators lose something by coming through here. A leaf agent's
+  // turn is a single completion either way, so labelling it would be noise.
+  const delegated = Boolean(params.tools?.length);
+  if (delegated) {
+    const first = response.content.find((block) => block.type === 'text');
+    if (first) first.text = DEGRADED_NOTE + first.text;
+  }
+  // Priced on the OpenAI tier, not the Anthropic one that failed, so the
+  // spend cap meters what was actually spent.
+  response.__pricedAs = MODELS[OPENAI_TIER];
+  return response;
+}
+
 async function createMessage(anthropic, modelSpec, params) {
   assertUnderDailyCap();
 
   // Both providers are called through here so neither can slip past the
   // spend cap, and the retry policy is identical because openrouter.js
   // sets the same `.status` the Anthropic SDK does.
-  const send = () =>
-    modelSpec.provider === 'openrouter'
-      ? createCompletion({
-          model: modelSpec.model,
-          system: params.system,
-          messages: params.messages,
-          maxTokens: params.max_tokens,
-        })
-      : anthropic.messages.create({ ...params, model: modelSpec.model });
+  const send = () => {
+    if (modelSpec.provider === 'openrouter') {
+      return createCompletion({
+        model: modelSpec.model,
+        system: params.system,
+        messages: params.messages,
+        maxTokens: params.max_tokens,
+      });
+    }
+    if (modelSpec.provider === 'openai') {
+      return createOpenAiCompletion({
+        model: modelSpec.model,
+        system: params.system,
+        messages: params.messages,
+        maxTokens: params.max_tokens,
+      });
+    }
+    return anthropic.messages.create({ ...params, model: modelSpec.model });
+  };
 
   let response;
   try {
     response = await send();
   } catch (err) {
-    if (!isRetryableError(err)) throw err;
-    await sleep(EXTRA_RETRY_DELAY_MS + Math.random() * 250);
-    response = await send();
+    if (isRetryableError(err)) {
+      await sleep(EXTRA_RETRY_DELAY_MS + Math.random() * 250);
+      try {
+        response = await send();
+      } catch (retryErr) {
+        response = await failOverToOpenAI(modelSpec, params, retryErr);
+      }
+    } else {
+      response = await failOverToOpenAI(modelSpec, params, err);
+    }
   }
 
   if (response?.usage) {
@@ -126,7 +195,7 @@ async function createMessage(anthropic, modelSpec, params) {
         inputTokens: response.usage.input_tokens || 0,
         outputTokens: response.usage.output_tokens || 0,
       },
-      modelSpec
+      response.__pricedAs || modelSpec
     );
     recordSpend(response.costUsd);
   }

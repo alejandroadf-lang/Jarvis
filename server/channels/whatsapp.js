@@ -98,6 +98,45 @@ export function extractMessage(body) {
     from: message.from,
     type: message.type,
     text: message.type === 'text' ? message.text?.body || '' : '',
+    // Voice notes arrive as an id to fetch, never as bytes. Captured here so
+    // the caller can hand it to downloadMedia() without knowing Meta's
+    // payload shape. `voice` and `audio` differ only by whether it was
+    // recorded in the app or attached as a file.
+    mediaId: message.type === 'audio' || message.type === 'voice'
+      ? message.audio?.id || message.voice?.id || null
+      : null,
+  };
+}
+
+/**
+ * Fetches a media attachment. Two calls by Meta's design: the first resolves
+ * the id to a short-lived URL, the second downloads it — and that second URL
+ * still requires the token, which is easy to miss and fails as a 401 on what
+ * looks like a plain download.
+ */
+export async function downloadMedia(mediaId) {
+  const token = process.env.WHATSAPP_TOKEN;
+  if (!token) throw new Error('WHATSAPP_TOKEN is not set');
+
+  const lookup = await fetch(`${GRAPH_API}/${mediaId}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!lookup.ok) {
+    const detail = await lookup.text().catch(() => '');
+    throw new Error(`Could not resolve the voice note (${lookup.status}): ${detail.slice(0, 200)}`);
+  }
+
+  const { url, mime_type: mimeType } = await lookup.json();
+  if (!url) throw new Error('WhatsApp returned no download URL for that voice note');
+
+  const media = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!media.ok) throw new Error(`Could not download the voice note (${media.status})`);
+
+  return {
+    buffer: Buffer.from(await media.arrayBuffer()),
+    // WhatsApp voice notes are opus in an ogg container; the extension is
+    // what the transcription API reads to pick a decoder.
+    filename: (mimeType || '').includes('mp4') ? 'voice.mp4' : 'voice.ogg',
   };
 }
 
@@ -177,7 +216,9 @@ export function __resetDedupForTests() {
 // the company ignoring you.
 export function unsupportedTypeReply(type) {
   if (type === 'audio' || type === 'voice') {
-    return "I can't listen to voice notes yet — no transcription is set up. Send it as text and the team will pick it up.";
+    // Only reachable now when OPENAI_API_KEY is missing, so it names the
+    // reason rather than implying the feature doesn't exist.
+    return "I can't listen to voice notes — transcription needs OPENAI_API_KEY set. Send it as text and the team will pick it up.";
   }
   return `I can only read text messages right now (that one was "${type}").`;
 }

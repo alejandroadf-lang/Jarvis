@@ -47,9 +47,11 @@ import {
   sendWhatsAppMessage,
   isDuplicate,
   unsupportedTypeReply,
+  downloadMedia,
 } from './channels/whatsapp.js';
 import { recordInbound, recordReceipt, recentInbound, STAGES } from './channels/whatsappLog.js';
 import { privacyPolicyHtml } from './privacy.js';
+import { isOpenAIConfigured, transcribeAudio } from './agents/openai.js';
 import { listWeeklyReflections, getWeeklyReflection, getLatestWeeklyReflection } from './weeklyReflections.js';
 import { startWeeklyReflectionScheduler, runWeeklyReflectionNow, isWeeklyReflectionRunning } from './weeklyScheduler.js';
 
@@ -511,7 +513,30 @@ app.post('/api/whatsapp/webhook', (req, res) => {
 });
 
 async function handleWhatsAppMessage(message) {
-  if (message.type !== 'text' || !message.text.trim()) {
+  let text = message.text.trim();
+
+  // A voice note is the natural way to brief a team while walking, and it
+  // used to get an apology. Transcribed here rather than inside the company
+  // turn so everything downstream — session history, the profit share, the
+  // inbound log — sees an ordinary text message.
+  if (isVoiceNote(message) && message.mediaId && isOpenAIConfigured()) {
+    try {
+      const { buffer, filename } = await downloadMedia(message.mediaId);
+      text = (await transcribeAudio(buffer, filename)).trim();
+      if (!text) {
+        recordInbound({ stage: STAGES.UNSUPPORTED_TYPE, from: message.from, detail: 'Voice note had no speech in it' });
+        await sendWhatsAppMessage(message.from, "I couldn't make out any words in that one — try again?");
+        return;
+      }
+    } catch (err) {
+      // The founder is holding their phone waiting. The reason beats silence.
+      recordInbound({ stage: STAGES.FAILED, from: message.from, detail: err.message });
+      await sendWhatsAppMessage(message.from, `I couldn't transcribe that voice note — ${err.message}`);
+      return;
+    }
+  }
+
+  if (!text) {
     recordInbound({ stage: STAGES.UNSUPPORTED_TYPE, from: message.from, detail: `Type: ${message.type}` });
     await sendWhatsAppMessage(message.from, unsupportedTypeReply(message.type));
     return;
@@ -520,9 +545,9 @@ async function handleWhatsAppMessage(message) {
   try {
     // The sender's number is the session key, so a WhatsApp conversation has
     // its own continuous history rather than colliding with the web app's.
-    const { reply } = await runCompanyTurn(`whatsapp-${message.from}`, message.text.trim());
+    const { reply } = await runCompanyTurn(`whatsapp-${message.from}`, text);
     await sendWhatsAppMessage(message.from, reply);
-    recordInbound({ stage: STAGES.ANSWERED, from: message.from, text: message.text });
+    recordInbound({ stage: STAGES.ANSWERED, from: message.from, text });
   } catch (err) {
     // The founder asked a question and is waiting on their phone. Silence is
     // the worst possible answer, so the real reason goes back to them — the
@@ -530,9 +555,13 @@ async function handleWhatsAppMessage(message) {
     //
     // Recorded before the apology is sent, because the send is the other
     // thing that fails here and it would otherwise take the reason with it.
-    recordInbound({ stage: STAGES.FAILED, from: message.from, text: message.text, detail: err.message });
+    recordInbound({ stage: STAGES.FAILED, from: message.from, text, detail: err.message });
     await sendWhatsAppMessage(message.from, `The team couldn't answer that — ${err.message}`);
   }
+}
+
+function isVoiceNote(message) {
+  return message.type === 'audio' || message.type === 'voice';
 }
 
 // What the webhook has actually seen. An empty list here is a diagnosis in
