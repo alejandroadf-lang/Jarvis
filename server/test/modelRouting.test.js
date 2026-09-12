@@ -239,3 +239,61 @@ test('spend from an OpenRouter call is recorded against the same daily ledger', 
     fs.rmSync(path.join(tmpDir, 'spend.json'), { force: true });
   }
 });
+
+// --- Prices that actually meter ---------------------------------------------
+// Number('') is 0, and 0 passes a ">= 0" check, so an unset price variable
+// read as a price of zero. Every OpenAI and Gemini fallback call was metered
+// at nothing and the daily spend cap quietly stopped counting them — the one
+// guardrail standing between a runaway loop and a real bill.
+//
+// Second time this exact trap has bitten here. The first was a blank
+// profit-share percentage silently zeroing every agent's earnings.
+
+test('every tier has a real price with nothing configured', async () => {
+  const { MODELS } = await import('../agents/models.js');
+
+  for (const [tier, spec] of Object.entries(MODELS)) {
+    assert.ok(spec.inputPricePerMTok > 0, `${tier} input price was ${spec.inputPricePerMTok}`);
+    assert.ok(spec.outputPricePerMTok > 0, `${tier} output price was ${spec.outputPricePerMTok}`);
+  }
+});
+
+test('a blank price variable falls back rather than reading as free', async () => {
+  const { MODELS, CHEAP_TIER } = await import('../agents/models.js');
+  const saved = process.env.OPENROUTER_INPUT_PRICE_PER_MTOK;
+  try {
+    // What a dashboard leaves behind when someone types a value and clears it.
+    process.env.OPENROUTER_INPUT_PRICE_PER_MTOK = '';
+    assert.equal(MODELS[CHEAP_TIER].inputPricePerMTok, 0.13);
+
+    process.env.OPENROUTER_INPUT_PRICE_PER_MTOK = '   ';
+    assert.equal(MODELS[CHEAP_TIER].inputPricePerMTok, 0.13);
+  } finally {
+    if (saved === undefined) delete process.env.OPENROUTER_INPUT_PRICE_PER_MTOK;
+    else process.env.OPENROUTER_INPUT_PRICE_PER_MTOK = saved;
+  }
+});
+
+test('a real override is honoured, which is the point of the variable', async () => {
+  const { MODELS, CHEAP_TIER } = await import('../agents/models.js');
+  const saved = process.env.OPENROUTER_MODEL;
+  try {
+    process.env.OPENROUTER_MODEL = 'some/newer-model';
+    assert.equal(MODELS[CHEAP_TIER].model, 'some/newer-model');
+  } finally {
+    if (saved === undefined) delete process.env.OPENROUTER_MODEL;
+    else process.env.OPENROUTER_MODEL = saved;
+  }
+});
+
+test('a nonsense price falls back instead of metering at NaN', async () => {
+  const { MODELS, CHEAP_TIER } = await import('../agents/models.js');
+  const saved = process.env.OPENROUTER_OUTPUT_PRICE_PER_MTOK;
+  try {
+    process.env.OPENROUTER_OUTPUT_PRICE_PER_MTOK = 'free please';
+    assert.equal(MODELS[CHEAP_TIER].outputPricePerMTok, 0.4);
+  } finally {
+    if (saved === undefined) delete process.env.OPENROUTER_OUTPUT_PRICE_PER_MTOK;
+    else process.env.OPENROUTER_OUTPUT_PRICE_PER_MTOK = saved;
+  }
+});
