@@ -35,6 +35,7 @@ import { getLatestDailyReport } from '../dailyReports.js';
 import { withdrawPlan, getApprovedPlan } from '../dailyPlan.js';
 import { listAffordableModels } from '../agents/openrouter.js';
 import { describeDegradation } from '../degradation.js';
+import { isEvalRunning } from '../eval/run.js';
 
 const COMMANDS = [
   { kind: 'help', re: /^(help|commands|\?)$/i },
@@ -56,6 +57,9 @@ const COMMANDS = [
   // rejectPlan already handled any status; it simply had no route to it.
   { kind: 'plan_clear', re: /^plan\s+clear(?:\s+(.+))?$|^(?:withdraw|unapprove)$/i, arg: 'reason' },
   { kind: 'report', re: /^(report|daily\s+report|latest\s+report)$/i },
+  // Running the behavioural eval. It costs real money and takes minutes, so
+  // it is started here and delivered when it finishes rather than awaited.
+  { kind: 'eval', re: /^eval(?:\s+(\S+))?$/i, arg: 'scenarioId' },
   // Scope switches. Venture ids are v_<digits>_<suffix>, which is not
   // something a sentence produces by accident — requiring one is most of
   // what keeps these from firing on ordinary prose.
@@ -181,6 +185,7 @@ SPEND — today's model spend against the cap
 INTEGRATIONS — what's actually connected
 MODELS [search] — live OpenRouter models and their prices
 REPORT — the latest daily report
+EVAL [scenario] — grade the agents' judgment against the eval scenarios
 PLAN — today's plan (APPROVE / REJECT <reason> to decide it)
 PLAN CLEAR <reason> — withdraw clearance you already gave
 
@@ -238,6 +243,15 @@ export async function runFounderCommand(command, deps = {}) {
       return `${ventures.length} active venture${ventures.length === 1 ? '' : 's'}:\n\n${ventures
         .map(describeVenture)
         .join('\n\n')}`;
+    }
+
+    case 'eval': {
+      if (!deps.startEval) return 'Running the eval is not available on this build.';
+      if (isEvalRunning()) return 'An eval is already running. I\'ll send the result when it lands.';
+      deps.startEval(command.scenarioId || null);
+      return command.scenarioId
+        ? `Running the "${command.scenarioId}" scenario against the real agents. This makes billed API calls; I'll send the result when it finishes.`
+        : 'Running all eval scenarios against the real agents. This takes a few minutes and makes billed API calls — it counts against today\'s spend cap like any other work. I\'ll send the score and every failure when it finishes.';
     }
 
     case 'report': {

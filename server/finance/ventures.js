@@ -289,6 +289,66 @@ function isPathAllowed(repo, targetPath) {
 // The global halt is checked first: when everything is stopped, the reason
 // the agent gets back should be "everything is stopped", not whichever
 // per-venture rule it would have hit next.
+// How many commits may land without anyone finding out whether they work.
+//
+// run_checks existed and nothing required it, so "the tests pass" was a claim
+// an agent could make about code no one had run. Worse, a red run stopped
+// nothing: the team could keep committing on top of a broken build, and each
+// commit made the eventual diagnosis harder.
+//
+// The gate is not "check before every commit" — that's impossible, since the
+// code has to land before CI can run it. It's "don't go far without looking".
+// A shorter leash after a failure, because commits piled on a known-red build
+// are the ones most likely to be wrong.
+// Read per call rather than frozen at import, matching autonomousRepos() and
+// every other env-backed setting in this file. A limit that only takes effect
+// after a restart is a limit whose value silently disagrees with the variable
+// the founder just changed.
+function maxDeploysWithoutChecks() {
+  return Math.max(1, Number(process.env.MAX_DEPLOYS_WITHOUT_CHECKS) || 5);
+}
+function maxDeploysAfterFailure() {
+  return Math.max(1, Number(process.env.MAX_DEPLOYS_AFTER_RED) || 3);
+}
+
+function lastRun(venture) {
+  const runs = venture.runs || [];
+  return runs.length ? runs[runs.length - 1] : null;
+}
+
+function deploysSinceLastRun(venture) {
+  const run = lastRun(venture);
+  const since = run ? Date.parse(run.startedAt) : 0;
+  return (venture.deployments || []).filter((d) => Date.parse(d.deployedAt) > since).length;
+}
+
+/**
+ * Throws when the team has committed too far without finding out whether the
+ * build works. Exported for tests and for the same reason every other rule in
+ * this file is enforced here: a prompt asking an agent to check its work is a
+ * request, and this is not.
+ */
+export function assertChecksNotOverdue(venture) {
+  const run = lastRun(venture);
+  const since = deploysSinceLastRun(venture);
+  const red = run && run.conclusion && run.conclusion !== 'success';
+  const limit = red ? maxDeploysAfterFailure() : maxDeploysWithoutChecks();
+
+  if (since < limit) return;
+
+  if (red) {
+    throw new Error(
+      `The last check run on this venture failed (${run.conclusion}) and ${since} commit(s) have landed since ` +
+        'without re-running it. Call run_checks now: either the fix worked, or you are building on a broken base ' +
+        'and every further commit makes the cause harder to find.'
+    );
+  }
+  throw new Error(
+    `${since} commit(s) have landed without running the checks. Call run_checks before committing more — ` +
+      '"the tests pass" is not something anyone knows yet.'
+  );
+}
+
 export function authorizeDeployment(id, { path }) {
   assertRealActionsAllowed();
   assertInApprovedPlan({ ventureId: id, action: 'deploy_code', target: path });
@@ -310,6 +370,9 @@ export function authorizeDeployment(id, { path }) {
     scope: venture.repo,
     label: 'deployment',
   });
+  // Last, so a refusal names the interesting reason. Scope and caps are
+  // configuration problems; this one is "you don't know if your code works".
+  assertChecksNotOverdue(venture);
   return venture;
 }
 
