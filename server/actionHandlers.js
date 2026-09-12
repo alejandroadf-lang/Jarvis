@@ -17,6 +17,7 @@ import {
   authorizeOutreach,
   recordOutreach,
   recordContactNote,
+  recordVentureNote,
   authorizeExecution,
   recordRun,
   assertRepoIsPreApproved,
@@ -26,6 +27,14 @@ import {
 } from './finance/ventures.js';
 import { recordContribution } from './finance/profitShare.js';
 import { submitPlan, getPlan, formatPlanForWhatsApp } from './dailyPlan.js';
+import {
+  enqueueTasks,
+  nextTask,
+  startTask,
+  completeTask,
+  failTask,
+  listTasks,
+} from './tasks.js';
 import { allowedNumbers, sendWhatsAppMessage, isWhatsAppConfigured } from './channels/whatsapp.js';
 import {
   sendVentureProposedEmail,
@@ -34,7 +43,7 @@ import {
   sendOutreachAlertEmail,
   isEmailConfigured,
 } from './email.js';
-import { commitFile, isGithubConfigured } from './deploy/github.js';
+import { commitFile, readFile as readRepoFile, isGithubConfigured } from './deploy/github.js';
 import {
   isExecutionConfigured,
   dispatchWorkflow,
@@ -237,6 +246,114 @@ export async function handleSendCustomerEmail(input, triggeredBy = 'interactive'
 // nothing leaves the building. It's the counterpart to send_customer_email:
 // what the agent learned, recorded where the next draft will actually see it
 // (see finance/context.js's buildOutreachContext).
+// --- Durable work ------------------------------------------------------------
+//
+// See tasks.js for why this exists. In short: an agent decided on seven files,
+// produced none, and the intent died with the turn because nothing had written
+// it down. These let the team write work down first and pick it up again after
+// a turn ends for any reason.
+//
+// None of them grant anything. A queued task still has to pass the scope
+// model, the approved plan, the rate limits and the kill switch when it is
+// actually carried out — a queue that bypassed those would dissolve them.
+
+export function handleQueueWork(input, ctx = {}) {
+  try {
+    const items = Array.isArray(input.tasks) ? input.tasks : [];
+    if (!items.length) return 'Could not queue work: give at least one task.';
+    const queued = enqueueTasks(input.ventureId, items, ctx.agentId || null);
+    return `Wrote down ${queued.length} task${queued.length === 1 ? '' : 's'}. They survive this turn, so a run that stops early costs one task rather than the whole plan:\n${queued
+      .map((t) => `  [${t.id}] ${t.title}`)
+      .join('\n')}\n\nClaim the first with start_task.`;
+  } catch (err) {
+    return `Could not queue the work: ${err.message}`;
+  }
+}
+
+export function handleNextTask(input) {
+  try {
+    const task = nextTask(input.ventureId);
+    if (!task) return 'Nothing is queued for that venture. If there is work to do, write it down with queue_work first.';
+    return `Next: [${task.id}] ${task.title}${task.detail ? `\n${task.detail}` : ''}${
+      task.attempts ? `\n\nThis has been attempted ${task.attempts} time(s). Last failure: ${task.error}` : ''
+    }\n\nCall start_task with this id before doing it.`;
+  } catch (err) {
+    return `Could not read the queue: ${err.message}`;
+  }
+}
+
+export function handleStartTask(input) {
+  try {
+    const task = startTask(input.taskId);
+    return `Claimed [${task.id}] ${task.title} (attempt ${task.attempts}). Report the outcome with complete_task or fail_task — a task left claimed blocks the queue.`;
+  } catch (err) {
+    return `Could not start that task: ${err.message}`;
+  }
+}
+
+export function handleCompleteTask(input, ctx = {}) {
+  try {
+    const task = completeTask(input.taskId, input.result);
+    recordContribution({ agentId: ctx.agentId, kind: 'complete_task', ventureId: task.ventureId, detail: task.title });
+    const left = listTasks({ ventureId: task.ventureId }).filter((t) => t.status === 'queued').length;
+    return `Done: ${task.title}.${left ? ` ${left} task(s) still queued — call next_task.` : ' Nothing else is queued.'}`;
+  } catch (err) {
+    return `Could not complete that task: ${err.message}`;
+  }
+}
+
+export function handleFailTask(input) {
+  try {
+    const task = failTask(input.taskId, input.error);
+    return task.status === 'queued'
+      ? `Recorded the failure on "${task.title}" and put it back in the queue (attempt ${task.attempts}). The reason is kept, so the next attempt starts knowing what went wrong rather than repeating it.`
+      : `"${task.title}" has now failed ${task.attempts} times and stays failed. Retrying identically would only spend money to learn the same thing — say what is actually blocking it.`;
+  } catch (err) {
+    return `Could not record that failure: ${err.message}`;
+  }
+}
+
+// --- Reading the repo --------------------------------------------------------
+//
+// The team could write files and never read them. On a second commit it was
+// working from its own memory of what it wrote in a previous turn, which is
+// exactly where a model confabulates — and the contradiction only surfaces
+// when CI goes red, long after the cheap moment to catch it.
+
+export async function handleReadRepoFile(input) {
+  const { ventureId, path } = input;
+  if (!isGithubConfigured()) {
+    return 'Could not read the file: this server has no GITHUB_TOKEN configured.';
+  }
+  try {
+    const venture = getVenture(ventureId);
+    if (!venture) return `Could not read the file: no venture with id "${ventureId}".`;
+    if (!venture.repo) return 'Could not read the file: no repo is linked to this venture yet.';
+
+    const content = await readRepoFile({
+      owner: venture.repo.owner,
+      repo: venture.repo.name,
+      branch: venture.repo.branch || 'main',
+      path,
+    });
+    if (content === null) {
+      return `"${path}" does not exist in ${venture.repo.owner}/${venture.repo.name} yet. That is an answer, not an error — write it rather than assuming what is in it.`;
+    }
+    return `${venture.repo.owner}/${venture.repo.name}:${path}\n\n${content}`;
+  } catch (err) {
+    return `Could not read the file: ${err.message}`;
+  }
+}
+
+export function handleLogVentureNote(input, ctx = {}) {
+  try {
+    const note = recordVentureNote(input.ventureId, { note: input.note, agentId: ctx.agentId });
+    return `Noted against this venture: "${note.note}". Every agent working on it reads this before the next attempt.`;
+  } catch (err) {
+    return `Could not log the note: ${err.message}`;
+  }
+}
+
 export async function handleLogContactNote(input, ctx = {}) {
   try {
     const { note } = recordContactNote(input.ventureId, { email: input.email, note: input.note });

@@ -9,6 +9,7 @@ import { getLatestWeeklyReflection } from '../weeklyReflections.js';
 import { getAgentEarnings, sharePct } from './profitShare.js';
 import { buildOperationsContext } from '../agents/operations.js';
 import { describePlanForAgents } from '../dailyPlan.js';
+import { describeTasksForAgents } from '../tasks.js';
 
 function describeMilestones(venture) {
   if (!venture.milestones.length) return 'none listed';
@@ -84,6 +85,29 @@ reply so the next email isn't written blind:
 ${sections.join('\n')}`;
 }
 
+// What the team has already learned on each active venture.
+//
+// Without this an agent returning to a venture starts from the venture record
+// and whatever is in the repo, never from "we tried X and it failed because
+// Y" — so the same dead end gets walked into twice, and the second walk looks
+// exactly as confident as the first.
+export function buildVentureNotesContext() {
+  const withNotes = listVentures().filter((v) => v.status === 'active' && (v.notes || []).length);
+  if (!withNotes.length) return '';
+
+  const sections = withNotes.map((venture) => {
+    const lines = venture.notes
+      .slice(-10)
+      .map((n) => `  · ${n.at.slice(0, 10)}${n.agentId ? ` (${n.agentId})` : ''}: ${n.note}`);
+    return `"${venture.title}" [id: ${venture.id}]:\n${lines.join('\n')}`;
+  });
+
+  return `What has already been learned on these ventures — read before deciding an
+approach, and add to it with log_venture_note when you learn something the
+next attempt would otherwise rediscover:
+${sections.join('\n')}`;
+}
+
 // What the Executive Team sees: the business picture plus who has already
 // been contacted. The Venture Studio deliberately doesn't get the
 // contact history — it's an execution concern, and ideation doesn't send
@@ -92,7 +116,15 @@ export function buildCompanyContext() {
   // The plan goes first when there is one. An agent that reads it last has
   // already decided what it intends to do, and the plan then reads as an
   // obstacle rather than the brief.
-  return [describePlanForAgents(), buildBusinessContext(), buildOutreachContext()]
+  return [
+    describePlanForAgents(),
+    // Outstanding work comes high up for the same reason the plan does: an
+    // agent that reads it after deciding what to do has already duplicated it.
+    describeTasksForAgents(),
+    buildBusinessContext(),
+    buildVentureNotesContext(),
+    buildOutreachContext(),
+  ]
     .filter((part) => part && part.trim())
     .join('\n\n');
 }
