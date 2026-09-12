@@ -271,6 +271,17 @@ async function runCompanyTurn(sessionId, message, { deadlineAt = null } = {}) {
       submit_daily_plan: (input, ctx) => handleSubmitDailyPlan(input, 'interactive', ctx),
       check_daily_plan: () => handleCheckDailyPlan(),
       link_venture_repo: (input, ctx) => handleLinkVentureRepo(input, 'interactive', ctx),
+      // Starting a venture is what made WhatsApp a complete interface rather
+      // than an almost-complete one. The CEO could already end a venture here
+      // but not begin one, so the founder had to open the Venture Studio in a
+      // browser for the one step that every other step depends on. Safe to
+      // wire in for the same reason the daily cycle's Studio phase already
+      // creates ventures unattended: a new venture has no repo and no
+      // outreach list until the founder grants it one, so starting it costs
+      // nothing and grants nothing. Interactive-only, like every other
+      // action here — the leadership sync is told not to manufacture
+      // real-world activity, and a venture nobody asked for is exactly that.
+      propose_venture: handleProposeVenture,
       list_approved_repos: () => handleListApprovedRepos(),
       run_checks: (input, ctx) => handleRunChecks(input, 'interactive', ctx),
       list_checks: (input) => handleListChecks(input),

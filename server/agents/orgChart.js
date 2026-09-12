@@ -124,6 +124,53 @@ export const AGENTS = {
         input_schema: { type: 'object', properties: {} },
       },
       {
+        name: 'propose_venture',
+        description:
+          "Start a venture. The CEO could already end one with kill_venture but had no way to begin one, which left the founder unable to start anything without opening the Venture Studio in a browser \u2014 so this exists to make a conversation a complete interface. It activates the venture immediately, so only call it for a real, thought-through idea that clears the ambition bar (a believable path to $1M+ in revenue). Starting one costs nothing and grants it nothing: a new venture has no repo and no outreach list until the founder gives it one. That makes the bar your judgment rather than a budget \u2014 don't start something merely because trying is free. For open-ended brainstorming, the Venture Studio is still the better room; this is for an idea the founder has already landed on.",
+        input_schema: {
+          type: 'object',
+          properties: {
+            title: { type: 'string', description: 'Short venture name.' },
+            oneLiner: { type: 'string', description: 'One sentence: what it is and who it is for.' },
+            problem: { type: 'string', description: 'The real problem being solved, and for whom.' },
+            targetCustomer: { type: 'string', description: 'Who pays, specifically.' },
+            businessModel: { type: 'string', description: 'How it makes money: pricing, channel, unit economics.' },
+            marketSize: {
+              type: 'string',
+              description:
+                'The size of the addressable market and why it is large enough to support a venture-scale outcome \u2014 a rough TAM figure or a defensible comparable, not just "big."',
+            },
+            pathToMillions: {
+              type: 'string',
+              description:
+                'A concrete explanation of how this specific idea could plausibly reach $1M+ in annual revenue within a few years \u2014 name the mechanism (price x volume, expansion revenue, a network or platform effect), not just optimism.',
+            },
+            agentNativeEdge: {
+              type: 'string',
+              description:
+                "Why an agent-run company wins at THIS specifically \u2014 the structural advantage, not enthusiasm: labour that costs cents rather than salaries, always-on response, thousands of instances in parallel, per-customer bespoke work at volume, or perfect recall. If the honest answer is 'a normal software company could do this too', say so.",
+            },
+            milestones: {
+              type: 'array',
+              items: { type: 'string' },
+              description:
+                "3-5 concrete, sequenced early milestones \u2014 checkable outcomes, not activities.",
+            },
+          },
+          required: [
+            'title',
+            'oneLiner',
+            'problem',
+            'targetCustomer',
+            'businessModel',
+            'marketSize',
+            'pathToMillions',
+            'agentNativeEdge',
+            'milestones',
+          ],
+        },
+      },
+      {
         name: 'kill_venture',
         description:
           "End a venture that isn't earning its keep — a missed milestone with no good next step, a market that turned out too small, or one that's quietly absorbing attention better spent elsewhere. This is a real, final call: only make it when the founder has actually decided to stop, not to express doubt.",
