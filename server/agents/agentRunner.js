@@ -29,7 +29,14 @@ import { resolveModelForAgent } from './models.js';
 import { recordContribution } from '../finance/profitShare.js';
 import { isOpenRouterConfigured, createCompletion } from './openrouter.js';
 
-const MAX_TOKENS = 1024;
+// 1024 was far too tight and produced a specific, baffling failure: the CEO
+// would spend its whole budget writing four delegation requests, get cut off
+// mid-tool-call, and come back with no text at all — which the loop below
+// read as "nothing to say". A synthesis across several departments is a few
+// thousand tokens on its own, and a truncated answer is worse than a slow
+// one. Output tokens are billed as generated, so a higher ceiling costs
+// nothing on the replies that don't need it.
+const MAX_TOKENS = Number(process.env.AGENT_MAX_TOKENS) > 0 ? Number(process.env.AGENT_MAX_TOKENS) : 4096;
 const MAX_ROUNDS = 6; // safety cap on tool-calling rounds within one agent's turn
 
 // How many delegations run at once. Dispatch used to be strictly sequential,
@@ -293,8 +300,47 @@ export async function runAgent({
     working.push({ role: 'user', content: toolResults });
   }
 
+  // Reaching here with nothing to say means the turn ended without a written
+  // answer — the round budget ran out mid-delegation, or a response spent its
+  // whole token budget on tool calls. The agent has usually done the work by
+  // this point and simply never got to write it up, so asking once more with
+  // the tools removed turns "I can't" into the answer it already had.
   if (!finalText) {
-    finalText = "I wasn't able to land on a final answer — could you narrow the ask?";
+    try {
+      const closing = await createMessage(anthropic, modelSpec, {
+        max_tokens: MAX_TOKENS,
+        system,
+        messages: [
+          ...working,
+          {
+            role: 'user',
+            content:
+              'Answer now, in full, using what you already have. Do not consult anyone else — ' +
+              'summarise what you have gathered and give your recommendation.',
+          },
+        ],
+      });
+      if (closing.usage) {
+        usage.inputTokens += closing.usage.input_tokens || 0;
+        usage.outputTokens += closing.usage.output_tokens || 0;
+        usage.costUsd = (usage.costUsd || 0) + (closing.costUsd || 0);
+      }
+      finalText = (closing.content || [])
+        .filter((block) => block.type === 'text')
+        .map((block) => block.text)
+        .join('\n')
+        .trim();
+    } catch (err) {
+      // Falls through to the message below, which is more useful than the
+      // raw error for someone reading this on their phone.
+      console.error(`Agent ${agent.id} could not close out its turn:`, err.message);
+    }
+  }
+
+  if (!finalText) {
+    finalText =
+      "I ran out of room working through that one. Ask me for a smaller piece of it " +
+      'and I can answer properly.';
   }
 
   return { text: finalText, trace, usage };
