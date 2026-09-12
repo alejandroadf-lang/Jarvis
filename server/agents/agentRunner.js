@@ -25,9 +25,9 @@
 import { getAgent } from './registry.js';
 import { assertUnderDailyCap, recordSpend } from '../spend.js';
 import { priceUsage, emptyUsage } from '../usage.js';
-import { resolveModelForAgent, MODELS, OPENAI_TIER, GEMINI_TIER, DEFAULT_TIER } from './models.js';
+import { resolveModelForAgent, MODELS, OPENAI_TIER, GEMINI_TIER, DEFAULT_TIER, CHEAP_TIER } from './models.js';
 import { recordContribution } from '../finance/profitShare.js';
-import { isOpenRouterConfigured, createCompletion } from './openrouter.js';
+import { isOpenRouterConfigured, createCompletion, openRouterFallbackModel } from './openrouter.js';
 import { createCompletion as createOpenAiCompletion, isOpenAIConfigured, fallbackModel } from './openai.js';
 import { createCompletion as createGeminiCompletion, isGeminiConfigured, geminiModel } from './gemini.js';
 
@@ -137,6 +137,19 @@ function backupProviders() {
       send: createGeminiCompletion,
       tier: GEMINI_TIER,
     },
+    // Last by default only because its default model is the smallest of the
+    // three. Point OPENROUTER_FALLBACK_MODEL at an Anthropic model on
+    // OpenRouter and it becomes the truest substitute in the chain: the same
+    // model, billed through a different account — which is the case that
+    // actually took this company down.
+    {
+      name: 'OpenRouter',
+      provider: 'openrouter',
+      available: isOpenRouterConfigured,
+      model: openRouterFallbackModel,
+      send: createCompletion,
+      tier: CHEAP_TIER,
+    },
   ];
 }
 
@@ -162,12 +175,23 @@ async function failOverToBackup(anthropic, modelSpec, params, err) {
     console.warn(
       `${modelSpec.provider} rejected the request (${err.message}); running this agent on ${fallback.model} instead.`
     );
-    const response = await anthropic.messages.create({ ...params, model: fallback.model });
-    response.__pricedAs = fallback;
-    return response;
+    try {
+      const response = await anthropic.messages.create({ ...params, model: fallback.model });
+      response.__pricedAs = fallback;
+      return response;
+    } catch (anthropicErr) {
+      // Both the tier's provider and the default are down. Rather than give
+      // up where a plain Anthropic agent would have had two more options,
+      // fall through to the same chain everything else uses.
+      if (!isProviderOutage(anthropicErr)) throw anthropicErr;
+      console.error(`${fallback.model} could not answer either: ${anthropicErr.message}`);
+    }
   }
 
-  const candidates = backupProviders().filter((provider) => provider.available());
+  const candidates = backupProviders().filter(
+    // No point asking the provider that just refused us to try again.
+    (provider) => provider.available() && provider.provider !== modelSpec.provider
+  );
   if (!candidates.length) throw err;
 
   let lastError = err;

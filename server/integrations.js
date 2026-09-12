@@ -23,6 +23,7 @@ import { isOpenAIConfigured, chatModel, fallbackModel, transcribeModel } from '.
 import { isGeminiConfigured, geminiModel, listModelsUrl } from './agents/gemini.js';
 import { MODELS, CHEAP_TIER } from './agents/models.js';
 import { readSecret } from './env.js';
+import { getStorageStatus } from './storage.js';
 
 // A probe must never hang a page load. Both services are normally fast; if
 // one isn't, "couldn't reach it" is a more useful answer than a spinner.
@@ -276,6 +277,13 @@ export async function getIntegrationStatus() {
       ok: null,
       detail: process.env.ANTHROPIC_API_KEY ? 'Required, and set.' : 'Required. Nothing works without this.',
     },
+    // Not an integration, but it belongs on the same panel: it fails exactly
+    // the way the others do — silently, and only noticed once something has
+    // already been lost.
+    storage: (() => {
+      const status = getStorageStatus();
+      return { configured: status.dirConfigured, ok: status.persistent, detail: status.detail };
+    })(),
     openrouter,
     openai,
     gemini,

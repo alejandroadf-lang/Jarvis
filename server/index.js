@@ -53,6 +53,7 @@ import {
 } from './channels/whatsapp.js';
 import { recordInbound, recordReceipt, recentInbound, STAGES } from './channels/whatsappLog.js';
 import { privacyPolicyHtml } from './privacy.js';
+import { recordBoot, warnIfEphemeral } from './storage.js';
 import { isOpenAIConfigured, transcribeAudio } from './agents/openai.js';
 import { listWeeklyReflections, getWeeklyReflection, getLatestWeeklyReflection } from './weeklyReflections.js';
 import { startWeeklyReflectionScheduler, runWeeklyReflectionNow, isWeeklyReflectionRunning } from './weeklyScheduler.js';
@@ -717,6 +718,11 @@ app.get('*', (_req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Jarvis server listening on port ${PORT}`);
+  // Leaves a mark and counts the ones already there. A count still at 1 after
+  // a redeploy is proof the data directory was emptied — which is otherwise
+  // only discoverable by noticing something has gone missing.
+  recordBoot();
+  warnIfEphemeral();
   startDailyMeetingScheduler({ anthropic });
   startWeeklyReflectionScheduler({ anthropic });
 });
