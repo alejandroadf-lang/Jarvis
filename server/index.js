@@ -66,6 +66,7 @@ import {
 } from './channels/whatsapp.js';
 import { recordInbound, recordReceipt, recentInbound, waitingMessage, STAGES } from './channels/whatsappLog.js';
 import { parseFounderCommand, runFounderCommand } from './channels/founderCommands.js';
+import { runEval } from './eval/run.js';
 import { privacyPolicyHtml } from './privacy.js';
 import { recordBoot, warnIfEphemeral } from './storage.js';
 import {
@@ -684,6 +685,15 @@ async function handleWhatsAppMessage(message) {
     try {
       const reply = await runFounderCommand(founderCommand, {
         probeIntegrations: getIntegrationStatus,
+        // Started, not awaited: the eval takes minutes of real API calls, and
+        // holding the webhook open for it would time out long before it
+        // finished. The result finds the founder when it exists.
+        startEval: (scenarioId) => {
+          runEval({ scenarioId })
+            .then(({ summary }) => sendWhatsAppMessage(message.from, `Eval finished.\n\n${summary}`))
+            .catch((evalErr) => sendWhatsAppMessage(message.from, `The eval could not finish — ${evalErr.message}`))
+            .catch((sendErr) => console.error('Could not deliver the eval result:', sendErr));
+        },
       });
       recordInbound({ stage: STAGES.ANSWERED, from: message.from, text, detail: `founder command: ${founderCommand.kind}` });
       await sendWhatsAppMessage(message.from, reply);
