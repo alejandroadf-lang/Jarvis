@@ -57,7 +57,7 @@ import {
   unsupportedTypeReply,
   downloadMedia,
 } from './channels/whatsapp.js';
-import { recordInbound, recordReceipt, recentInbound, STAGES } from './channels/whatsappLog.js';
+import { recordInbound, recordReceipt, recentInbound, waitingMessage, STAGES } from './channels/whatsappLog.js';
 import { privacyPolicyHtml } from './privacy.js';
 import { recordBoot, warnIfEphemeral } from './storage.js';
 import { requireAccess, warnIfUnprotected } from './auth.js';
@@ -628,12 +628,34 @@ async function handleWhatsAppMessage(message) {
     return;
   }
 
+  // Acknowledge before thinking. A real turn takes minutes — the CEO asks
+  // around before replying — and from a phone that is indistinguishable from
+  // the thing being broken, which it has been more than once. The estimate is
+  // the median of turns that actually completed, so it is a measurement
+  // rather than a number someone guessed and never revisited.
+  //
+  // Failing to acknowledge must never cost the answer: if this send fails the
+  // turn still runs, and the reply carries its own send attempt.
+  if (!ackDisabled()) {
+    try {
+      await sendWhatsAppMessage(message.from, waitingMessage());
+    } catch (err) {
+      console.warn(`WhatsApp: could not send the acknowledgement: ${err.message}`);
+    }
+  }
+
+  const startedAt = Date.now();
   try {
     // The sender's number is the session key, so a WhatsApp conversation has
     // its own continuous history rather than colliding with the web app's.
     const { reply } = await runCompanyTurn(`whatsapp-${message.from}`, text);
     await sendWhatsAppMessage(message.from, reply);
-    recordInbound({ stage: STAGES.ANSWERED, from: message.from, text });
+    recordInbound({
+      stage: STAGES.ANSWERED,
+      from: message.from,
+      text,
+      durationMs: Date.now() - startedAt,
+    });
   } catch (err) {
     // The founder asked a question and is waiting on their phone. Silence is
     // the worst possible answer, so the real reason goes back to them — the
@@ -641,9 +663,32 @@ async function handleWhatsAppMessage(message) {
     //
     // Recorded before the apology is sent, because the send is the other
     // thing that fails here and it would otherwise take the reason with it.
-    recordInbound({ stage: STAGES.FAILED, from: message.from, text, detail: err.message });
-    await sendWhatsAppMessage(message.from, `The team couldn't answer that — ${err.message}`);
+    // The elapsed time goes in too: a config error that fails instantly and a
+    // turn that ran for four minutes and then broke are different problems,
+    // and the message alone does not tell them apart.
+    const elapsed = Date.now() - startedAt;
+    recordInbound({ stage: STAGES.FAILED, from: message.from, text, detail: err.message, durationMs: elapsed });
+    try {
+      await sendWhatsAppMessage(
+        message.from,
+        `The team couldn't answer that — ${err.message}\n\n(Failed after ${Math.round(elapsed / 1000)}s.)`
+      );
+    } catch (sendErr) {
+      // Both the answer and the apology failed. Nothing reaches the phone, so
+      // the log is the only record there is — say so where it will be read.
+      console.error(
+        `WhatsApp: could not deliver the failure to ${message.from} either: ${sendErr.message}. ` +
+          `Original failure: ${err.message}`
+      );
+    }
   }
+}
+
+// Some people would rather have silence than a message every time they ask
+// something. Off by default because not knowing whether it is working has
+// cost more than an extra line ever will.
+function ackDisabled() {
+  return (process.env.WHATSAPP_ACK_DISABLED || '').trim().toLowerCase() === 'true';
 }
 
 function isVoiceNote(message) {

@@ -69,7 +69,7 @@ function read() {
  * Never throws: this is instrumentation, and a failure to write a diagnostic
  * must not be the reason the founder's question goes unanswered.
  */
-export function recordInbound({ stage, from = null, text = '', detail = null }) {
+export function recordInbound({ stage, from = null, text = '', detail = null, durationMs = null }) {
   try {
     const data = read();
     data.events.push({
@@ -78,6 +78,10 @@ export function recordInbound({ stage, from = null, text = '', detail = null }) 
       from,
       preview: text ? String(text).slice(0, PREVIEW_CHARS) : null,
       detail,
+      // Kept so the next message can be told how long this usually takes.
+      // An estimate drawn from what actually happened beats a number someone
+      // guessed once and never revisited.
+      durationMs,
     });
     if (data.events.length > MAX_EVENTS) data.events = data.events.slice(-MAX_EVENTS);
     writeJson(FILE, data);
@@ -104,6 +108,54 @@ export function recentInbound(limit = MAX_EVENTS) {
     events: data.events.slice(-limit).reverse().map((e) => ({ ...e, summary: summarize(e.stage) })),
     receipts: data.receipts,
   };
+}
+
+/**
+ * How long a turn usually takes, in milliseconds, or null when there isn't
+ * enough history to say.
+ *
+ * The median rather than the mean: one turn that hit a retry storm and took
+ * eight minutes should not move the number anyone is quoted. Two samples is a
+ * low bar, but quoting a real figure from two turns beats inventing one, and
+ * the estimate improves on its own with use.
+ */
+export function typicalTurnMs(samples = 10) {
+  try {
+    const durations = read()
+      .events.filter((e) => e.stage === STAGES.ANSWERED && Number.isFinite(e.durationMs))
+      .slice(-samples)
+      .map((e) => e.durationMs)
+      .sort((a, b) => a - b);
+
+    if (durations.length < 2) return null;
+    const mid = Math.floor(durations.length / 2);
+    return durations.length % 2
+      ? durations[mid]
+      : Math.round((durations[mid - 1] + durations[mid]) / 2);
+  } catch {
+    return null;
+  }
+}
+
+/** What to tell someone who has just asked something and is now waiting. */
+export function waitingMessage() {
+  const typical = typicalTurnMs();
+  if (!typical) {
+    // Said plainly rather than with a made-up number. The first few messages
+    // on a new deployment genuinely have nothing to go on.
+    return "On it — the team is working on that. A real answer usually takes a minute or two, since the CEO is asking around before replying.";
+  }
+
+  const seconds = Math.round(typical / 1000);
+  // Rounded up past a minute, deliberately. An answer arriving sooner than
+  // quoted is a pleasant surprise; one arriving later feels like the thing
+  // has broken, which is the impression this message exists to prevent.
+  const minutes = Math.ceil(seconds / 60);
+  const readable =
+    seconds < 60
+      ? `about ${Math.max(15, Math.round(seconds / 15) * 15)} seconds`
+      : `about ${minutes} minute${minutes === 1 ? '' : 's'}`;
+  return `On it — recent answers have taken ${readable}.`;
 }
 
 export function __resetLogForTests() {

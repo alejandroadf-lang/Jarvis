@@ -107,3 +107,81 @@ test('a failure to write is swallowed, so instrumentation never breaks the webho
     process.env.JARVIS_DATA_DIR = saved;
   }
 });
+
+// --- Telling someone how long to wait ---------------------------------------
+// A real turn takes minutes, and from a phone that is indistinguishable from
+// the thing being broken — which it has been more than once this week.
+
+test('with no history it says so plainly rather than inventing a number', () => {
+  assert.match(log.waitingMessage(), /minute or two/);
+  assert.equal(log.typicalTurnMs(), null);
+});
+
+test('one sample is not enough to quote a figure', () => {
+  log.recordInbound({ stage: log.STAGES.ANSWERED, from: '1', text: 'x', durationMs: 60_000 });
+  assert.equal(log.typicalTurnMs(), null);
+});
+
+test('the estimate is measured from turns that actually completed', () => {
+  for (const ms of [40_000, 60_000, 80_000]) {
+    log.recordInbound({ stage: log.STAGES.ANSWERED, from: '1', text: 'x', durationMs: ms });
+  }
+
+  assert.equal(log.typicalTurnMs(), 60_000);
+  assert.match(log.waitingMessage(), /about 1 minute/);
+});
+
+test('a single disastrous turn does not move the number', () => {
+  // The median, not the mean: one turn that hit a retry storm and took eight
+  // minutes should not change what anyone is quoted.
+  for (const ms of [30_000, 30_000, 30_000, 480_000]) {
+    log.recordInbound({ stage: log.STAGES.ANSWERED, from: '1', text: 'x', durationMs: ms });
+  }
+
+  assert.equal(log.typicalTurnMs(), 30_000);
+});
+
+test('failed turns are not counted — they say nothing about how long an answer takes', () => {
+  log.recordInbound({ stage: log.STAGES.ANSWERED, from: '1', text: 'x', durationMs: 60_000 });
+  log.recordInbound({ stage: log.STAGES.ANSWERED, from: '1', text: 'x', durationMs: 60_000 });
+  log.recordInbound({ stage: log.STAGES.FAILED, from: '1', text: 'x', durationMs: 1 });
+
+  assert.equal(log.typicalTurnMs(), 60_000);
+});
+
+test('sub-minute answers are quoted in seconds, rounded so as not to imply precision', () => {
+  log.recordInbound({ stage: log.STAGES.ANSWERED, from: '1', text: 'x', durationMs: 22_000 });
+  log.recordInbound({ stage: log.STAGES.ANSWERED, from: '1', text: 'x', durationMs: 26_000 });
+
+  assert.match(log.waitingMessage(), /about 30 seconds/);
+});
+
+test('past a minute the estimate rounds up, never down', () => {
+  // An answer arriving sooner than quoted is a pleasant surprise; one
+  // arriving later feels like the thing has broken, which is the impression
+  // this message exists to prevent.
+  log.recordInbound({ stage: log.STAGES.ANSWERED, from: '1', text: 'x', durationMs: 70_000 });
+  log.recordInbound({ stage: log.STAGES.ANSWERED, from: '1', text: 'x', durationMs: 80_000 });
+
+  assert.match(log.waitingMessage(), /about 2 minutes/);
+});
+
+test('a failure records how long it ran before breaking', () => {
+  // A config error that fails instantly and a turn that ran four minutes and
+  // then broke are different problems; the message alone cannot tell them apart.
+  log.recordInbound({ stage: log.STAGES.FAILED, from: '1', text: 'x', detail: 'credit balance too low', durationMs: 240_000 });
+
+  const [entry] = log.recentInbound().events;
+  assert.equal(entry.durationMs, 240_000);
+});
+
+test('only the most recent turns count, so the estimate tracks reality', () => {
+  for (let i = 0; i < 12; i++) {
+    log.recordInbound({ stage: log.STAGES.ANSWERED, from: '1', text: 'x', durationMs: 300_000 });
+  }
+  for (let i = 0; i < 10; i++) {
+    log.recordInbound({ stage: log.STAGES.ANSWERED, from: '1', text: 'x', durationMs: 30_000 });
+  }
+
+  assert.equal(log.typicalTurnMs(), 30_000, 'yesterday\'s slowness must not haunt today');
+});
