@@ -359,3 +359,115 @@ test('a failed consultation does not take down the ones beside it', async () => 
   // b still got through and is credited; a failed and isn't.
   assert.deepEqual(trace.map((t) => t.id), ['b']);
 });
+
+// --- Running out of room ---------------------------------------------------
+// A real WhatsApp failure: the CEO was asked for a top ten, spent its entire
+// output budget writing delegation requests, and came back with "I wasn't able
+// to land on a final answer". It had understood the question perfectly — it
+// was cut off mid-sentence and had no way to say so.
+
+test('a turn that ends on max_tokens with no text still produces an answer', async () => {
+  const calls = [];
+  const anthropic = {
+    messages: {
+      create: async (params) => {
+        calls.push(params);
+        // First call: the model spends its whole budget emitting tool calls
+        // and never writes a word of prose. stop_reason is max_tokens, not
+        // tool_use, so the loop treats the turn as finished.
+        if (calls.length === 1) {
+          return {
+            stop_reason: 'max_tokens',
+            content: [{ type: 'tool_use', id: 'tu_1', name: 'consult_worker', input: { question: 'a very long question' } }],
+            usage: { input_tokens: 50, output_tokens: 1024 },
+          };
+        }
+        return textResponse('Here are the ten ideas, ranked.', { input_tokens: 60, output_tokens: 200 });
+      },
+    },
+  };
+
+  const agents = {
+    boss: { id: 'boss', title: 'Boss', department: 'Exec', reportsTo: null, reports: ['worker'], systemPrompt: 'You are the boss.' },
+    worker: { id: 'worker', title: 'Worker', department: 'Exec', reportsTo: 'boss', reports: [], systemPrompt: 'You are a worker.' },
+  };
+
+  const { text } = await runAgent({
+    anthropic,
+    agents,
+    agentId: 'boss',
+    messages: [{ role: 'user', content: 'Give me the top ten ideas.' }],
+  });
+
+  assert.equal(text, 'Here are the ten ideas, ranked.');
+  assert.match(text, /ten ideas/);
+});
+
+test('the closing pass asks without tools, so it cannot delegate again', async () => {
+  const calls = [];
+  const anthropic = {
+    messages: {
+      create: async (params) => {
+        calls.push(params);
+        if (calls.length === 1) {
+          return {
+            stop_reason: 'max_tokens',
+            content: [{ type: 'tool_use', id: 'tu_1', name: 'consult_worker', input: {} }],
+            usage: { input_tokens: 10, output_tokens: 1024 },
+          };
+        }
+        return textResponse('Final answer.', { input_tokens: 10, output_tokens: 20 });
+      },
+    },
+  };
+
+  const agents = {
+    boss: { id: 'boss', title: 'Boss', department: 'Exec', reportsTo: null, reports: ['worker'], systemPrompt: 'You are the boss.' },
+    worker: { id: 'worker', title: 'Worker', department: 'Exec', reportsTo: 'boss', reports: [], systemPrompt: 'You are a worker.' },
+  };
+
+  await runAgent({ anthropic, agents, agentId: 'boss', messages: [{ role: 'user', content: 'Go.' }] });
+
+  assert.ok(calls[0].tools?.length, 'the first call offers delegation tools');
+  assert.equal(calls[1].tools, undefined, 'the closing call offers none — it must answer, not delegate');
+  assert.match(
+    JSON.stringify(calls[1].messages.at(-1)),
+    /using what you already have/,
+    'the closing call tells the agent to answer from what it gathered'
+  );
+});
+
+test('when even the closing pass fails, the reply says what happened', async () => {
+  const anthropic = {
+    messages: {
+      create: async () => ({
+        stop_reason: 'max_tokens',
+        content: [{ type: 'tool_use', id: 'tu_1', name: 'consult_worker', input: {} }],
+        usage: { input_tokens: 10, output_tokens: 1024 },
+      }),
+    },
+  };
+
+  const agents = {
+    boss: { id: 'boss', title: 'Boss', department: 'Exec', reportsTo: null, reports: ['worker'], systemPrompt: 'You are the boss.' },
+    worker: { id: 'worker', title: 'Worker', department: 'Exec', reportsTo: 'boss', reports: [], systemPrompt: 'You are a worker.' },
+  };
+
+  const { text } = await runAgent({ anthropic, agents, agentId: 'boss', messages: [{ role: 'user', content: 'Go.' }] });
+
+  // Names the real cause and what to do about it, rather than implying the
+  // question was unclear.
+  assert.match(text, /ran out of room/);
+  assert.match(text, /smaller piece/);
+});
+
+test('the token budget is high enough for a multi-department synthesis', async () => {
+  const calls = [];
+  const anthropic = {
+    messages: { create: async (params) => { calls.push(params); return textResponse('ok', { input_tokens: 5, output_tokens: 5 }); } },
+  };
+
+  await runAgent({ anthropic, agents: AGENTS, agentId: 'test_agent', messages: [{ role: 'user', content: 'hi' }] });
+
+  assert.ok(calls[0].max_tokens >= 4096, `max_tokens was ${calls[0].max_tokens} — too small for a ranked list`);
+});
