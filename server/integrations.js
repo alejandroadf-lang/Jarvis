@@ -280,6 +280,22 @@ async function probeGemini() {
         .filter((name) => !name.includes('embedding'))
         .slice(0, 6);
 
+      // A value with a comma in it is a pasted list, not a model name — which
+      // is exactly what the previous version of this message invited, since
+      // it printed several names and said "set it to one of". Diagnosed as a
+      // list rather than reported as an unusable model, or the reply reads as
+      // self-contradictory: the same name appearing in "can't use" and in
+      // "set it to".
+      if (wanted.includes(',')) {
+        return {
+          configured: true,
+          ok: false,
+          detail: `GEMINI_MODEL holds a list, not a model name. Set it to exactly one${
+            usable.length ? `, for example ${usable[0]}` : ''
+          }.`,
+        };
+      }
+
       return {
         configured: true,
         ok: false,

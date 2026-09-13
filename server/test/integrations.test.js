@@ -185,3 +185,38 @@ test('when the Gemini model is unavailable, the probe names ones that are', asyn
     else process.env.GEMINI_MODEL = savedModel;
   }
 });
+
+test('a pasted list is diagnosed as a list, not as an unusable model', async () => {
+  // The previous message printed several names and said "set it to one of",
+  // which invited exactly this. Treating the whole string as a model name
+  // then produced a self-contradictory reply: the same name appearing in
+  // "can't use" and in "set it to".
+  const savedKey = process.env.GEMINI_API_KEY;
+  const savedModel = process.env.GEMINI_MODEL;
+  const savedFetch = global.fetch;
+  process.env.GEMINI_API_KEY = 'k';
+  process.env.GEMINI_MODEL = 'gemini-flash-latest, gemini-2.5-flash';
+  global.fetch = async (url) =>
+    String(url).includes('generativelanguage')
+      ? {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            models: [{ name: 'models/gemini-2.5-flash', supportedGenerationMethods: ['generateContent'] }],
+          }),
+        }
+      : { ok: false, status: 404, text: async () => '' };
+
+  try {
+    const { getIntegrationStatus } = await import('../integrations.js');
+    const { gemini } = await getIntegrationStatus();
+    assert.match(gemini.detail, /holds a list, not a model name/);
+    assert.match(gemini.detail, /exactly one/);
+  } finally {
+    global.fetch = savedFetch;
+    if (savedKey === undefined) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = savedKey;
+    if (savedModel === undefined) delete process.env.GEMINI_MODEL;
+    else process.env.GEMINI_MODEL = savedModel;
+  }
+});
