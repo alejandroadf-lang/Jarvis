@@ -11,6 +11,7 @@ import { buildOperationsContext } from '../agents/operations.js';
 import { describePlanForAgents } from '../dailyPlan.js';
 import { describeTasksForAgents } from '../tasks.js';
 import { buildCultureContext } from '../culture.js';
+import { buildFounderProfile } from '../founder.js';
 
 function describeMilestones(venture) {
   if (!venture.milestones.length) return 'none listed';
@@ -122,6 +123,10 @@ export function buildCompanyContext() {
     // number; this is the only part that says what the numbers are for, and
     // an agent that reads it last has already decided.
     buildCultureContext(),
+    // Who the reply is for. Near the top because it shapes everything an
+    // agent writes, and an agent that learns its audience after composing
+    // has already written for the wrong one.
+    buildFounderProfile(),
     describePlanForAgents(),
     // Outstanding work comes high up for the same reason the plan does: an
     // agent that reads it after deciding what to do has already duplicated it.
@@ -179,6 +184,7 @@ export function buildStudioContext() {
   // should" come apart most often.
   return [
     buildCultureContext(),
+    buildFounderProfile(),
     buildBusinessContext(),
     buildPastLessonsContext(),
     buildWeeklyReflectionContext(),
