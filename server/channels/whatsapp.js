@@ -97,14 +97,24 @@ export function extractMessage(body) {
     id: message.id,
     from: message.from,
     type: message.type,
-    text: message.type === 'text' ? message.text?.body || '' : '',
-    // Voice notes arrive as an id to fetch, never as bytes. Captured here so
-    // the caller can hand it to downloadMedia() without knowing Meta's
-    // payload shape. `voice` and `audio` differ only by whether it was
-    // recorded in the app or attached as a file.
+    // An image can carry a caption, and the caption is usually the actual
+    // question — "is this the right setting?" over a screenshot. Treated as
+    // the message text so everything downstream works unchanged.
+    text:
+      message.type === 'text'
+        ? message.text?.body || ''
+        : message.type === 'image'
+          ? message.image?.caption || ''
+          : '',
+    // Media arrives as an id to fetch, never as bytes. Captured here so the
+    // caller can hand it to downloadMedia() without knowing Meta's payload
+    // shape. `voice` and `audio` differ only by whether it was recorded in
+    // the app or attached as a file.
     mediaId: message.type === 'audio' || message.type === 'voice'
       ? message.audio?.id || message.voice?.id || null
-      : null,
+      : message.type === 'image'
+        ? message.image?.id || null
+        : null,
   };
 }
 
@@ -134,6 +144,10 @@ export async function downloadMedia(mediaId) {
 
   return {
     buffer: Buffer.from(await media.arrayBuffer()),
+    // Carried through for images, where the model needs the exact media
+    // type — guessing jpeg for a png is a rejected request, not a blurry
+    // picture.
+    mimeType: mimeType || '',
     // WhatsApp voice notes are opus in an ogg container; the extension is
     // what the transcription API reads to pick a decoder.
     filename: (mimeType || '').includes('mp4') ? 'voice.mp4' : 'voice.ogg',
@@ -214,11 +228,21 @@ export function __resetDedupForTests() {
 // No transcription service is wired into this app, so a voice note can't be
 // turned into a question. Saying so is better than silence, which reads as
 // the company ignoring you.
+// Claude reads these; anything else has to be described rather than shown.
+export const SUPPORTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+
+export function isImage(message) {
+  return message?.type === 'image' && Boolean(message.mediaId);
+}
+
 export function unsupportedTypeReply(type) {
   if (type === 'audio' || type === 'voice') {
     // Only reachable now when OPENAI_API_KEY is missing, so it names the
     // reason rather than implying the feature doesn't exist.
     return "I can't listen to voice notes — transcription needs OPENAI_API_KEY set. Send it as text and the team will pick it up.";
   }
-  return `I can only read text messages right now (that one was "${type}").`;
+  if (type === 'image') {
+    return "I couldn't read that image. JPEG, PNG, GIF and WebP work — a screenshot usually is one of those.";
+  }
+  return `I can read text, voice notes and images (that one was "${type}").`;
 }

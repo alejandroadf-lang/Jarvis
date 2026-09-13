@@ -65,6 +65,7 @@ import {
   downloadMedia,
 } from './channels/whatsapp.js';
 import { recordInbound, recordReceipt, recentInbound, waitingMessage, STAGES } from './channels/whatsappLog.js';
+import { isImage, SUPPORTED_IMAGE_TYPES } from './channels/whatsapp.js';
 import { parseFounderCommand, runFounderCommand } from './channels/founderCommands.js';
 import { runEval } from './eval/run.js';
 import { listTasks } from './tasks.js';
@@ -237,9 +238,21 @@ function joinContext(...parts) {
   return parts.filter((part) => part && part.trim()).join('\n\n');
 }
 
-async function runCompanyTurn(sessionId, message, { deadlineAt = null } = {}) {
+async function runCompanyTurn(sessionId, message, { deadlineAt = null, image = null } = {}) {
   const history = companySessions.get(sessionId) || [];
-  const workingMessages = [...history, { role: 'user', content: message }];
+  // An image goes to the CEO as a real image block. Delegation downstream is
+  // text, which is the right shape anyway: the orchestrator looks at the
+  // picture and tells its specialists what is in it, exactly as a person
+  // would. That also keeps leaf agents on cheaper text-only models working.
+  const content = image
+    ? [
+        { type: 'image', source: { type: 'base64', media_type: image.mediaType, data: image.data } },
+        // The caption after the picture: the question usually refers to what
+        // was just shown, and a model reads it the same way a person does.
+        { type: 'text', text: message },
+      ]
+    : message;
+  const workingMessages = [...history, { role: 'user', content }];
   // Awaited because it shapes the prompt, but it can only ever return a
   // string — buildFounderContext swallows its own failures (see
   // memory/honcho.js) rather than taking the turn down.
@@ -317,7 +330,11 @@ async function runCompanyTurn(sessionId, message, { deadlineAt = null } = {}) {
     perAgentContext: buildPerAgentContext,
   });
 
-  history.push({ role: 'user', content: message });
+  // The image itself is not kept in history. Every later turn would resend
+  // those bytes to every agent, and a few screenshots would quietly become
+  // the most expensive thing in the session. What the CEO said about it is
+  // in its reply, which is the part worth remembering.
+  history.push({ role: 'user', content: image ? `[sent an image] ${message}`.trim() : message });
   history.push({ role: 'assistant', content: text });
   const trimmed = trimHistory(history);
   companySessions.set(sessionId, trimmed);
@@ -641,6 +658,30 @@ async function handleWhatsAppMessage(message) {
     }
   }
 
+  // A screenshot is how a founder explains something faster than they can
+  // describe it — a settings page, an error, a competitor's pricing. The
+  // company could not see one, so the fastest input channel they have was
+  // closed to the team that works for them.
+  let image = null;
+  if (isImage(message)) {
+    try {
+      const { buffer, mimeType } = await downloadMedia(message.mediaId);
+      if (!SUPPORTED_IMAGE_TYPES.includes(mimeType)) {
+        recordInbound({ stage: STAGES.UNSUPPORTED_TYPE, from: message.from, detail: `Image type: ${mimeType}` });
+        await sendWhatsAppMessage(message.from, unsupportedTypeReply('image'));
+        return;
+      }
+      image = { data: buffer.toString('base64'), mediaType: mimeType };
+      // An image with no caption is still a question — "look at this" — so
+      // it gets one rather than reaching the team as an empty message.
+      if (!text) text = 'Have a look at this and tell me what you make of it.';
+    } catch (err) {
+      recordInbound({ stage: STAGES.FAILED, from: message.from, detail: err.message });
+      await sendWhatsAppMessage(message.from, `I couldn't open that image — ${err.message}`);
+      return;
+    }
+  }
+
   if (!text) {
     recordInbound({ stage: STAGES.UNSUPPORTED_TYPE, from: message.from, detail: `Type: ${message.type}` });
     await sendWhatsAppMessage(message.from, unsupportedTypeReply(message.type));
@@ -729,6 +770,7 @@ async function handleWhatsAppMessage(message) {
     // its own continuous history rather than colliding with the web app's.
     const { reply, ranOutOfTime } = await runCompanyTurn(`whatsapp-${message.from}`, text, {
       deadlineAt: Date.now() + TURN_DEADLINE_MS,
+      image,
     });
 
     if (ranOutOfTime) {

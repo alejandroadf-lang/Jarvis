@@ -150,7 +150,11 @@ test('a retried delivery is recognised as a duplicate', () => {
 test('a voice note gets an explanation rather than silence', () => {
   assert.match(unsupportedTypeReply('audio'), /voice notes/);
   assert.match(unsupportedTypeReply('audio'), /Send it as text/);
-  assert.match(unsupportedTypeReply('image'), /only read text/);
+  // Images are read now. This used to assert the opposite, and a test that
+  // pins a limitation is how a stale capability message survives the release
+  // that lifted it.
+  assert.match(unsupportedTypeReply('image'), /JPEG, PNG/);
+  assert.match(unsupportedTypeReply('document'), /text, voice notes and images/i);
 });
 
 // A synthesised team answer can run past WhatsApp's 4096-character limit,
