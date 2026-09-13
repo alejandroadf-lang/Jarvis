@@ -25,6 +25,7 @@ import { haltRealActions, resumeRealActions } from '../killSwitch.js';
 import { getSpendSummary } from '../spend.js';
 import {
   listVentures,
+  getVenture,
   linkRepo,
   linkOutreachScope,
   setOutreachEnabled,
@@ -34,6 +35,7 @@ import {
 import { getLatestDailyReport } from '../dailyReports.js';
 import { withdrawPlan, getApprovedPlan } from '../dailyPlan.js';
 import { listAffordableModels } from '../agents/openrouter.js';
+import { listTasks } from '../tasks.js';
 import { describeDegradation } from '../degradation.js';
 import { isEvalRunning } from '../eval/run.js';
 
@@ -57,6 +59,9 @@ const COMMANDS = [
   // rejectPlan already handled any status; it simply had no route to it.
   { kind: 'plan_clear', re: /^plan\s+clear(?:\s+(.+))?$|^(?:withdraw|unapprove)$/i, arg: 'reason' },
   { kind: 'report', re: /^(report|daily\s+report|latest\s+report)$/i },
+  // The Build tab, as text. The tab is the better view; this is the one that
+  // works without leaving the conversation the founder is already in.
+  { kind: 'build', re: /^build(?:\s+(v_\S+))?$/i, arg: 'ventureId' },
   // Running the behavioural eval. It costs real money and takes minutes, so
   // it is started here and delivered when it finishes rather than awaited.
   { kind: 'eval', re: /^eval(?:\s+(\S+))?$/i, arg: 'scenarioId' },
@@ -166,6 +171,71 @@ function describeVenture(venture) {
   return `${venture.title}\n  ${venture.id}\n  ${repo}\n  ${outreach}`;
 }
 
+// The build, as a phone message.
+//
+// The Build tab in the app shows the same thing and shows it better. This
+// exists because the founder lives in WhatsApp, and a view that requires
+// opening another app is a view that gets checked once a day instead of
+// whenever they wonder.
+//
+// Ordered the way the tab is, for the same reason: what is happening now,
+// what landed, what broke. Symbols rather than words for the task states —
+// on a narrow screen a column of ticks is scannable in a way that "done /
+// done / in progress" is not.
+const TASK_SYMBOL = {
+  done: '✅',
+  running: '⏳',
+  queued: '⬜',
+  failed: '❌',
+  cancelled: '⊘',
+};
+
+function formatBuildForWhatsApp(venture) {
+  const tasks = listTasks({ ventureId: venture.id });
+  const done = tasks.filter((t) => t.status === 'done').length;
+  const open = tasks.filter((t) => t.status === 'queued' || t.status === 'running').length;
+  const { spentUsd, capUsd } = getSpendSummary();
+
+  const repo = venture.repo
+    ? `${venture.repo.owner}/${venture.repo.name}${venture.repo.enabled ? '' : ' (deploys OFF)'}`
+    : 'no repo linked — nothing can ship until there is one';
+
+  const lines = [`${venture.title} — ${repo}`];
+  lines.push(`${done} done · ${open} to go · $${spentUsd.toFixed(2)} of $${capUsd.toFixed(2)} today`);
+
+  if (tasks.length) {
+    lines.push('');
+    for (const t of tasks) {
+      // The failure reason is the whole reason to look at this on a phone:
+      // it is what decides between waiting and stepping in.
+      const why = t.error ? `\n     ${t.error}` : '';
+      lines.push(`${TASK_SYMBOL[t.status] || '⬜'} ${t.title}${why}`);
+    }
+  } else {
+    lines.push('', 'No work written down yet.');
+  }
+
+  const lastCommit = (venture.deployments || []).slice(-1)[0];
+  if (lastCommit) {
+    lines.push('', `Last commit: ${lastCommit.path}`);
+    if (lastCommit.commitUrl) lines.push(lastCommit.commitUrl);
+  }
+
+  const lastRun = (venture.runs || []).slice(-1)[0];
+  if (lastRun) {
+    const ok = lastRun.conclusion === 'success';
+    lines.push('', `Checks: ${ok ? '✅' : '❌'} ${lastRun.workflow} — ${lastRun.conclusion || lastRun.status}`);
+    for (const failure of (lastRun.failures || []).slice(0, 3)) lines.push(`   ${failure}`);
+  } else {
+    lines.push('', 'Checks have never run — nobody knows yet whether this works.');
+  }
+
+  const degraded = describeDegradation();
+  if (degraded) lines.push('', degraded);
+
+  return lines.join('\n');
+}
+
 // Three states, not two. ok === null means "set, but deliberately not
 // probed" — Anthropic, email, GitHub — and rendering that as a warning told
 // the founder their working Anthropic key was a problem, right above a line
@@ -181,6 +251,7 @@ const HELP = `Founder controls — send any of these on their own:
 HALT <reason> — stop every real action now
 RESUME — lift the halt
 VENTURES — every venture, its id and what it's allowed to do
+BUILD [ventureId] — what the team is building right now
 SPEND — today's model spend against the cap
 INTEGRATIONS — what's actually connected
 MODELS [search] — live OpenRouter models and their prices
@@ -252,6 +323,18 @@ export async function runFounderCommand(command, deps = {}) {
       return command.scenarioId
         ? `Running the "${command.scenarioId}" scenario against the real agents. This makes billed API calls; I'll send the result when it finishes.`
         : 'Running all eval scenarios against the real agents. This takes a few minutes and makes billed API calls — it counts against today\'s spend cap like any other work. I\'ll send the score and every failure when it finishes.';
+    }
+
+    case 'build': {
+      const venture = command.ventureId
+        ? getVenture(command.ventureId)
+        : listVentures().filter((v) => v.status === 'active').slice(-1)[0];
+      if (!venture) {
+        return command.ventureId
+          ? `No venture with id ${command.ventureId}.`
+          : 'No active ventures yet. Ask the team to start one.';
+      }
+      return formatBuildForWhatsApp(venture);
     }
 
     case 'report': {

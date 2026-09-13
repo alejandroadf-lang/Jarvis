@@ -377,3 +377,52 @@ test('a clean eval says so in one line', async () => {
   assert.match(text, /Every scenario passed/);
   assert.match(text, /12 \/ 12/);
 });
+
+// --- BUILD: the Build tab, for someone who lives in WhatsApp ---
+
+test('BUILD shows the work, the last commit and what failed', async () => {
+  const tasksMod = await import('../tasks.js');
+  const v = newVenture();
+  ventures.linkRepo(v.id, { owner: 'acme', name: 'circadian-api', allowedPaths: ['src/'] });
+  ventures.setDeploymentEnabled(v.id, true);
+
+  const [engine, tests] = tasksMod.enqueueTasks(v.id, ['core engine', 'tests', 'auth']);
+  tasksMod.startTask(engine.id);
+  tasksMod.completeTask(engine.id, 'ok');
+  tasksMod.startTask(tests.id);
+  tasksMod.failTask(tests.id, 'ran out of output tokens');
+  ventures.recordDeployment(v.id, {
+    path: 'src/shift_logic.py',
+    message: 'engine',
+    commitSha: '63e8f6f',
+    commitUrl: 'https://github.com/acme/circadian-api/commit/63e8f6f',
+  });
+
+  const reply = await commands.runFounderCommand({ kind: 'build', ventureId: v.id });
+  assert.match(reply, /acme\/circadian-api/);
+  assert.match(reply, /1 done · 2 to go/);
+  assert.match(reply, /✅ core engine/);
+  assert.match(reply, /ran out of output tokens/, 'the failure reason is the point of looking');
+  assert.match(reply, /commit\/63e8f6f/, 'and the commit is tappable');
+  assert.match(reply, /Checks have never run/, 'silence about CI would read as green');
+});
+
+test('BUILD defaults to the venture in play', async () => {
+  const v = newVenture();
+  const reply = await commands.runFounderCommand({ kind: 'build', ventureId: null });
+  assert.match(reply, new RegExp(v.title));
+});
+
+test('BUILD on a venture with no repo says what is missing', async () => {
+  newVenture();
+  const reply = await commands.runFounderCommand({ kind: 'build', ventureId: null });
+  assert.match(reply, /no repo linked/i);
+  assert.match(reply, /nothing can ship/i);
+});
+
+test('"build" parses; "build the landing page" does not', () => {
+  assert.deepEqual(commands.parseFounderCommand('BUILD'), { kind: 'build', ventureId: null });
+  assert.deepEqual(commands.parseFounderCommand('build v_123'), { kind: 'build', ventureId: 'v_123' });
+  assert.equal(commands.parseFounderCommand('build the landing page next'), null);
+  assert.equal(commands.parseFounderCommand('can you build this'), null);
+});
