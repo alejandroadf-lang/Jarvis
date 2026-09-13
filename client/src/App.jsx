@@ -4,6 +4,7 @@ import VoiceButton from './components/VoiceButton.jsx';
 import OrgChart from './components/OrgChart.jsx';
 import VenturesPanel from './components/VenturesPanel.jsx';
 import PortfolioView from './components/PortfolioView.jsx';
+import BuildView from './components/BuildView.jsx';
 import DailyReportView from './components/DailyReportView.jsx';
 import { useSpeechRecognition } from './hooks/useSpeechRecognition.js';
 import { useSpeechSynthesis } from './hooks/useSpeechSynthesis.js';
@@ -83,7 +84,8 @@ export default function App() {
 
   const isPortfolio = mode === 'portfolio';
   const isDailyReport = mode === 'dailyReport';
-  const isFullWidthTab = isPortfolio || isDailyReport;
+  const isBuild = mode === 'build';
+  const isFullWidthTab = isPortfolio || isDailyReport || isBuild;
   const messages = messagesByMode[mode] || [];
   const modeConfig = MODES[mode] || null;
 
@@ -219,6 +221,14 @@ export default function App() {
               Portfolio
             </button>
             <button
+              onClick={() => setMode('build')}
+              className={`px-3 py-1 transition-colors ${
+                isBuild ? 'bg-cyan-600 text-white' : 'text-cyan-400/80 hover:text-cyan-300'
+              }`}
+            >
+              Build
+            </button>
+            <button
               onClick={() => setMode('dailyReport')}
               className={`px-3 py-1 transition-colors ${
                 isDailyReport ? 'bg-cyan-600 text-white' : 'text-cyan-400/80 hover:text-cyan-300'
@@ -262,6 +272,8 @@ export default function App() {
 
       {isPortfolio ? (
         <PortfolioView reloadKey={venturesReloadKey} />
+      ) : isBuild ? (
+        <BuildView reloadKey={venturesReloadKey} />
       ) : isDailyReport ? (
         <DailyReportView />
       ) : (

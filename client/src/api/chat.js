@@ -227,6 +227,11 @@ export async function fetchProfitShare() {
   return data; // { net, sharePct, poolUsd, totalWeight, agents, contributions }
 }
 
+export async function fetchBuild(ventureId) {
+  const { data } = await axios.get(`/api/ventures/${ventureId}/build`);
+  return data; // { venture, tasks, deployments, runs, notes, milestones, spend, degradation }
+}
+
 export async function fetchSpend() {
   const { data } = await axios.get('/api/spend');
   return data; // { spentUsd, capUsd, date, overCap }
