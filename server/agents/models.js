@@ -156,26 +156,55 @@ export function getModelSpec(tier) {
   return MODELS[tier] || MODELS[DEFAULT_TIER];
 }
 
-// An agent can only leave the default model if its turn is a single
-// request in and text out. The alternative provider is deliberately a
-// plain completion call with no tool-use loop (see openrouter.js), so an
-// agent with reports, actions, or server tools would silently lose the
-// ability to delegate, act, or search — a far worse failure than a bigger
-// bill, and one that would show up as a vague answer rather than an error.
-// Enforcing it here rather than trusting each agent definition means a
-// future edit that adds an action to a tiered agent can't quietly break it.
+// What still cannot leave the default model, and why the list got much shorter.
+//
+// This used to refuse any agent with reports, actions *or* server tools,
+// because the alternative providers were plain completion calls with no
+// tool-use loop — so an orchestrator routed to one would silently lose the
+// ability to delegate, which shows up as a vague answer rather than an error.
+// That was the right rule for the code as it stood, and its cost was that
+// every manager in the chart — the whole C-suite, ten of twenty-two agents —
+// ran on the most expensive model available. The company's bill was
+// Anthropic-shaped by accident of plumbing, not by choice.
+//
+// The clients now carry tools (see toolTranslation.js and
+// openaiCompatible.js), so reports and actions travel fine. What remains is
+// the one thing that genuinely cannot: Anthropic's **server** tools.
+// web_search executes inside Anthropic's own infrastructure, so there is
+// nothing to translate and no equivalent to send — an agent that searches the
+// web has to run on Anthropic.
+//
+// Still enforced here rather than trusted to each agent definition, for the
+// same reason as before: a future edit that gives a tiered agent a server tool
+// would otherwise break it silently.
 export function canUseAlternativeModel(agent) {
-  return (
-    (agent.reports || []).length === 0 &&
-    (agent.actions || []).length === 0 &&
-    (agent.serverTools || []).length === 0
-  );
+  return (agent.serverTools || []).length === 0;
 }
 
-// What an agent runs on when nothing says otherwise. An orchestrator has to be
-// the frontier model; a leaf has no reason to be.
+// Whether an agent's turn is a single request in and text out.
+//
+// Distinct from canUseAlternativeModel, which asks what is *possible*. This asks
+// what is bounded. The two were the same question until the clients learned to
+// carry tools; conflating them now would move the entire C-suite onto a cheap
+// model the moment this deploys, which is not a default anyone chose.
+function isLeafAgent(agent) {
+  return (agent.reports || []).length === 0 && (agent.actions || []).length === 0;
+}
+
+// What an agent runs on when nothing says otherwise.
+//
+// A leaf defaults cheap: its turn is bounded, and a forgotten `modelTier`
+// should cost quality rather than 15x the money (see resolveModelForAgent).
+//
+// An orchestrator defaults to the frontier model even though it *can* now run
+// elsewhere. The capability is new and the judgement is the founder's: moving
+// the agent that decides what the company does is a decision to make
+// deliberately, with AGENT_MODEL_TIERS, and then to check the results of — not
+// something that should happen silently on the next deploy because a gate was
+// relaxed. "It became possible" is not "it became the default".
 function defaultTierFor(agent) {
-  return canUseAlternativeModel(agent) ? CHEAP_TIER : DEFAULT_TIER;
+  if (!canUseAlternativeModel(agent)) return DEFAULT_TIER;
+  return isLeafAgent(agent) ? CHEAP_TIER : DEFAULT_TIER;
 }
 
 /**

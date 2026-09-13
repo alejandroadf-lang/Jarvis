@@ -1,17 +1,23 @@
-// DeepSeek, as a fourth provider for leaf agents.
+// DeepSeek, the cheapest of the four providers by a wide margin.
 //
-// Same shape as openrouter.js and for the same reasons: one call, text in
-// and text out, no tool-use loop. Only leaf agents route here (see models.js
-// and canUseAlternativeModel), so a plain completion is all that is ever
-// needed — and keeping it plain is what stops a cheaper model silently
-// losing the ability to delegate or act.
+// This file used to say: "three near-identical clients is less trouble than one
+// that has to be correct for three providers' divergences at once; when a
+// fourth arrives, that is the moment to extract, not before."
 //
-// The API is OpenAI-compatible, which is why this is a near-copy rather than
-// a shared abstraction. Three near-identical clients is less trouble than
-// one that has to be correct for three providers' divergences at once; when
-// a fourth arrives, that is the moment to extract, not before.
+// A fourth arrived, and with it the need for tool calling in all of them —
+// which would have meant four copies of the same tool_call_id translation. So
+// the extraction happened: the HTTP call is in openaiCompatible.js and the
+// Anthropic-to-OpenAI translation is in toolTranslation.js. What is left here
+// is the only thing genuinely specific to DeepSeek: its URL, its key, and its
+// model default.
+//
+// Tool calling means this is no longer leaf-only. An orchestrator can run here
+// and still delegate, which is the whole point — ten agents were locked to
+// Anthropic because the clients could not carry tools, not because they needed
+// Claude.
 
 import { readSecret, hasSecret } from '../env.js';
+import { createChatCompletion } from './openaiCompatible.js';
 
 const BASE_URL = 'https://api.deepseek.com/v1/chat/completions';
 
@@ -30,59 +36,18 @@ export function deepSeekModel() {
  *
  * @param {{model: string, system: string, messages: Array<{role: string, content: any}>, maxTokens: number}} opts
  */
-export async function createCompletion({ model, system, messages, maxTokens }) {
+export async function createCompletion({ model, system, messages, maxTokens, tools }) {
   const apiKey = readSecret('DEEPSEEK_API_KEY');
   if (!apiKey) throw new Error('DEEPSEEK_API_KEY is not set');
 
-  const response = await fetch(BASE_URL, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: model || deepSeekModel(),
-      max_tokens: maxTokens,
-      messages: [
-        ...(system ? [{ role: 'system', content: system }] : []),
-        ...messages.map(toOpenAiMessage),
-      ],
-    }),
+  return createChatCompletion({
+    url: BASE_URL,
+    apiKey,
+    label: 'DeepSeek',
+    model: model || deepSeekModel(),
+    system,
+    messages,
+    maxTokens,
+    tools,
   });
-
-  if (!response.ok) {
-    const detail = await response.text().catch(() => '');
-    const err = new Error(`DeepSeek request failed (${response.status}): ${detail.slice(0, 300)}`);
-    // agentRunner's retry predicate reads `.status`, the same property the
-    // Anthropic SDK sets, so a 429 here retries exactly like a 429 there.
-    err.status = response.status;
-    throw err;
-  }
-
-  const data = await response.json();
-
-  return {
-    stop_reason: 'end_turn',
-    content: [{ type: 'text', text: data?.choices?.[0]?.message?.content ?? '' }],
-    usage: {
-      input_tokens: data?.usage?.prompt_tokens || 0,
-      output_tokens: data?.usage?.completion_tokens || 0,
-    },
-  };
-}
-
-// A leaf agent's history is plain text in practice, but the Anthropic message
-// shape allows an array of content blocks. Flatten those to the text the
-// OpenAI schema expects rather than sending an object it would reject.
-//
-// Images are dropped here, deliberately and harmlessly: an image only ever
-// reaches the orchestrator, which is always on the frontier model, and it
-// describes what it saw when it delegates.
-function toOpenAiMessage(message) {
-  if (typeof message.content === 'string') return { role: message.role, content: message.content };
-  const text = (message.content || [])
-    .filter((block) => block.type === 'text')
-    .map((block) => block.text)
-    .join('\n');
-  return { role: message.role, content: text };
 }

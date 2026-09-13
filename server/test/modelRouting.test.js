@@ -44,10 +44,15 @@ beforeEach(() => {
 
 const leaf = { id: 'leaf', reports: [], actions: [], serverTools: [], modelTier: CHEAP_TIER };
 
-test('canUseAlternativeModel admits a bare leaf and refuses anything with tools', () => {
+// The gate used to refuse reports and actions too, because the alternative
+// clients were plain completions with no tool loop. They carry tools now (see
+// toolTranslation.js), so delegation and actions travel fine and the rule
+// shrank to the one thing that genuinely cannot cross: an Anthropic *server*
+// tool executes inside Anthropic's infrastructure, so there is nothing to send.
+test('only an Anthropic server tool still locks an agent to the default model', () => {
   assert.equal(canUseAlternativeModel(leaf), true);
-  assert.equal(canUseAlternativeModel({ ...leaf, reports: ['someone'] }), false);
-  assert.equal(canUseAlternativeModel({ ...leaf, actions: [{ name: 'log_revenue' }] }), false);
+  assert.equal(canUseAlternativeModel({ ...leaf, reports: ['someone'] }), true);
+  assert.equal(canUseAlternativeModel({ ...leaf, actions: [{ name: 'log_revenue' }] }), true);
   assert.equal(canUseAlternativeModel({ ...leaf, serverTools: [{ type: 'web_search_20250305' }] }), false);
 });
 
@@ -56,13 +61,29 @@ test('the cheap tier is ignored entirely until OpenRouter is configured', () => 
   assert.equal(resolveModelForAgent(leaf, true).model, MODELS[CHEAP_TIER].model);
 });
 
-// The important one. An agent that delegates or acts would lose those tools
-// on the alternative path, which fails as a vague answer rather than an
-// error — so the tier is overridden in code, not just discouraged in a
-// comment on the agent definition.
-test('a tiered agent that gained an action falls back to the default model', () => {
+// An agent that gained an action keeps its tier now, because the tools go with
+// it. This is the change the whole translation layer exists for.
+test('a tiered agent that gained an action keeps its tier, tools and all', () => {
   const grew = { ...leaf, actions: [{ name: 'deploy_code' }] };
-  assert.equal(resolveModelForAgent(grew, true).model, MODELS[DEFAULT_TIER].model);
+  assert.equal(resolveModelForAgent(grew, true).model, MODELS[CHEAP_TIER].model);
+});
+
+// A server tool is still a hard lock, whatever the tier says.
+test('a tiered agent with a server tool is still forced onto Anthropic', () => {
+  const searcher = { ...leaf, serverTools: [{ type: 'web_search_20250305' }] };
+  assert.equal(resolveModelForAgent(searcher, true).model, MODELS[DEFAULT_TIER].model);
+});
+
+// "It became possible" is not "it became the default". An orchestrator with no
+// tier stays on the frontier model: moving the agent that decides what the
+// company does is a deliberate choice for the founder to make and then check,
+// not something that happens silently on the next deploy because a gate was
+// relaxed.
+test('an orchestrator with no tier still defaults to the frontier model', () => {
+  const boss = { id: 'boss', reports: ['leaf'], actions: [], serverTools: [] };
+  assert.equal(resolveModelForAgent(boss, true).model, MODELS[DEFAULT_TIER].model);
+  const actor = { id: 'actor', reports: [], actions: [{ name: 'deploy_code' }], serverTools: [] };
+  assert.equal(resolveModelForAgent(actor, true).model, MODELS[DEFAULT_TIER].model);
 });
 
 // A missing `modelTier` used to mean the frontier model, which made forgetting

@@ -1223,6 +1223,78 @@ Three things came out of fixing it:
   for itself from one quietly surcharging every call, and leaving it unmeasured
   is how the first version of this went wrong.
 
+### Orchestrators are no longer locked to Anthropic
+
+Ten of the twenty-two agents — the whole C-suite, plus the Engineering Lead and
+the other action-holders — ran on `claude-sonnet-5` and could not be moved. Not
+because they needed Claude, but because `canUseAlternativeModel` refused any
+agent with reports or actions, and it refused them for a good reason: the other
+provider clients were plain completion calls with no tool loop, so an
+orchestrator routed to one would have silently lost the ability to delegate. A
+vague answer rather than an error, which is far worse than a bigger bill.
+
+So the company's bill was Anthropic-shaped by accident of plumbing.
+
+Two new modules change that, and neither touches the loop in `agentRunner`:
+
+- **`agents/toolTranslation.js`** converts tool use between the Anthropic shape
+  this app speaks and the OpenAI shape the other three speak. Tool definitions
+  (`input_schema` → `parameters`), assistant tool calls (`tool_use` blocks →
+  `tool_calls` with JSON-string arguments), and results — which is the
+  structural one: Anthropic puts every result for a round inside **one** user
+  message, OpenAI wants **one message per result** naming its `tool_call_id`.
+  Getting that wrong produces a provider error about an unanswered tool call
+  that points nowhere near the cause.
+- **`agents/openaiCompatible.js`** is the single HTTP call all four providers
+  now share. They each had a near-identical copy, which was tolerable while the
+  only shape was "prompt in, text out" and stopped being tolerable the moment
+  tool calling had to exist in all of them: four copies of a translation is four
+  places for the `tool_call_id` handling to drift. `deepseek.js` had predicted
+  exactly this moment in a comment — *"when a fourth arrives, that is the moment
+  to extract, not before"* — and a fourth arrived.
+
+Gemini moved to Google's **OpenAI-compatible** endpoint as part of this. Native
+Gemini has function calling, but in its own vocabulary (`functionDeclarations`,
+`functionCall`, `functionResponse`, a `parts` array), so supporting it natively
+would have meant a second translation layer kept in step with the first forever.
+`listModelsUrl` still points at the native API, which the integration probe uses.
+
+`canUseAlternativeModel` now enforces exactly one rule: **no Anthropic server
+tools.** `web_search` executes inside Anthropic's own infrastructure, so there
+is nothing to translate and no variable that can move it — which leaves the
+Solutions Architect and the SEO Specialist on Anthropic, and frees the other
+twenty.
+
+#### Possible is not default
+
+The C-suite still runs on `claude-sonnet-5` after this change. `defaultTierFor`
+distinguishes *bounded* (a leaf, which defaults cheap) from *possible* (anything
+without a server tool), because conflating them would have re-homed the
+company's decision-making on the next deploy because a gate was relaxed. Moving
+the agent that decides what the company does is a decision to make deliberately
+and then check the results of:
+
+```
+AGENT_MODEL_TIERS="ceo:reasoner,cto:reasoner,cfo:analyst,cmo:analyst,coo:reasoner"
+```
+
+#### The bug this surfaced
+
+`createMessage` dispatched providers through a chain of `if` statements with no
+branch for DeepSeek. The tier existed, `resolveModelForAgent` returned it, and
+every call it resolved **fell through to Anthropic** — silently, on the wrong
+model, at roughly 7x the price, with nothing reporting it. DeepSeek had only ever
+been reachable as a backup.
+
+That is the third capability in this codebase found sitting behind a door
+nothing opened (after `readFile`, `run_checks`, and `stalledTasks`). The
+dispatch is now a lookup table that throws on an unknown provider rather than a
+chain that quietly picks one.
+
+The old "(Answering without the team…)" note on a failed-over orchestrator is
+gone too: the backups carry tools now, so it was telling the founder something
+untrue. The provider swap is still visible in `SPEND` through `recordFallback`.
+
 ### The morning sync is now proportional to what moved
 
 The largest single line item in the company's bill was a prompt instruction:
