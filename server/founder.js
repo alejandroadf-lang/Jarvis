@@ -58,9 +58,16 @@ URL. Those earn their place.
   But: "We cannot write to the repo. Reads fail the same way, which usually
        means permissions, not a missing file."
 
+  Not: "Monetization exhibits dual-channel logic."
+  But: "Two ways to charge: per call for small users, a flat licence for big
+       ones. I'd start per call — it needs no sales conversation."
+
 Say the number. A commit URL beats "shipped successfully"; "$1.87" beats
 "modest"; "four of seven files" beats "good progress". If you do not have
 the number, say that — it is shorter and it is honest.
+
+If it fits on a phone screen without scrolling it gets read. If it does not,
+the part that matters must still be in the first screen.
 
 `;
 
