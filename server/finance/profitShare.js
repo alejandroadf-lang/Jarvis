@@ -70,7 +70,43 @@ export const CONTRIBUTION_KINDS = {
   // own MAX_ROUNDS, and paid for out of the same daily model-spend budget
   // that bounds everything else.
   consulted: { label: 'Gave a specialist opinion when consulted', weight: 1 },
+  // The one kind whose weight is not fixed here, because it is the amount.
+  //
+  // Every other entry pays for an action. This pays for an outcome, and it
+  // exists because the table above was quietly telling the company the wrong
+  // thing: shipping a file earned 5, booking revenue earned 1. An agent that
+  // shipped ten files out-earned one whose work brought in ten thousand
+  // dollars, fifty to one. No prompt about a "money mindset" survives an
+  // incentive pointing the other way.
+  //
+  // The fix is not to pay more for log_revenue — that weight of 1 is right,
+  // since logging is clerical: the founder reports the money and an agent
+  // writes it down. Paying more for typing would reward clerking. The hole
+  // was that nothing rewarded *causing* revenue. Credit was recorded the
+  // moment an action succeeded and the outcome never fed back, so the email
+  // to the customer who paid earned exactly what the email to the customer
+  // who ignored it did.
+  //
+  // So when revenue lands on a venture, the agents who did real work on that
+  // venture are credited in proportion to the money — see distributeRevenue.
+  revenue_earned: { label: 'Worked on a venture that earned', weight: 0 },
 };
+
+// How much credit a dollar of revenue is worth, relative to the table above.
+//
+// The default puts $100 of revenue at the same weight as one shipped file.
+// That is a deliberate ratio rather than a discovered one: it makes a single
+// real customer outweigh a week of commits, which is the whole point, while
+// staying inside the same order of magnitude as the other kinds so the
+// history stays readable. Configurable because it is a judgement, and the
+// right number will become obvious once there is any revenue at all to
+// look at.
+function revenueWeightPerUsd() {
+  const configured = (process.env.REVENUE_WEIGHT_PER_USD || '').trim();
+  if (!configured) return 0.05;
+  const raw = Number(configured);
+  return Number.isFinite(raw) && raw > 0 ? raw : 0.05;
+}
 
 // Weights are deliberately flat-ish. A wider spread would make the highest
 // paying action the one every agent argues for, which is exactly the
@@ -158,6 +194,78 @@ export function recordContribution({ agentId, kind, ventureId = null, detail = '
   data.contributions.push(entry);
   writeJson(FILE, compact(data));
   return entry;
+}
+
+/**
+ * Credits the agents who worked on a venture, when that venture earns.
+ *
+ * Called after log_revenue succeeds, which means after the founder has
+ * personally reported money that actually arrived. Nothing here can be
+ * triggered by an agent deciding it deserves something: the amount comes
+ * from the founder, the recipients come from work already on record, and
+ * there is no tool that reaches this function directly.
+ *
+ * Distribution is by each agent's existing weight on that venture, so the
+ * people who built and sold the thing are paid for the thing selling. An
+ * agent with no recorded work on the venture gets nothing, however much it
+ * has done elsewhere — this is a share of *this* outcome.
+ *
+ * The agent that called log_revenue is deliberately not special-cased. If
+ * the CFO has done real work on the venture it shares like anyone else; if
+ * it has not, filing the paperwork earns it the flat weight of 1 that
+ * log_revenue already pays and nothing more.
+ *
+ * @returns {Array<object>} the credits written, newest first
+ */
+export function distributeRevenue({ ventureId, amountUsd }) {
+  if (!ventureId) return [];
+  const amount = Number(amountUsd);
+  if (!Number.isFinite(amount) || amount <= 0) return [];
+
+  const data = load();
+
+  // Only work on this venture counts, and only work that already happened.
+  // Weight is summed per agent so an agent that shipped five files on it has
+  // five files' worth of claim, not one.
+  const onThisVenture = new Map();
+  let totalWeight = 0;
+  for (const c of data.contributions) {
+    if (c.ventureId !== ventureId) continue;
+    // Earlier revenue credits are excluded from the basis. Including them
+    // would compound: the first customer would make every later customer
+    // pay the same agents more, regardless of who did the work in between.
+    if (c.kind === 'revenue_earned') continue;
+    onThisVenture.set(c.agentId, (onThisVenture.get(c.agentId) || 0) + c.weight);
+    totalWeight += c.weight;
+  }
+
+  // Revenue on a venture nobody is on record as having worked on. Possible
+  // after history is compacted, or for a venture the founder ran themselves.
+  // Crediting everybody would be worse than crediting nobody.
+  if (totalWeight <= 0) return [];
+
+  const pot = amount * revenueWeightPerUsd();
+  const written = [];
+  for (const [agentId, weight] of onThisVenture) {
+    const share = (weight / totalWeight) * pot;
+    if (share <= 0) continue;
+    written.push({
+      id: `c_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      agentId,
+      kind: 'revenue_earned',
+      ventureId,
+      detail: `$${amount.toFixed(2)} earned; ${((weight / totalWeight) * 100).toFixed(0)}% of the work on this venture`,
+      // Rounded to keep the ledger readable; a fraction of a weight point
+      // changes no decision and makes every balance look like a rounding
+      // error.
+      weight: Math.round(share * 100) / 100,
+      at: new Date().toISOString(),
+    });
+  }
+
+  data.contributions.push(...written);
+  writeJson(FILE, compact(data));
+  return written;
 }
 
 export function listContributions(agentId = null) {

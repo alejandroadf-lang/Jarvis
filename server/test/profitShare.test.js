@@ -117,9 +117,33 @@ test('logging an expense still earns credit, even though it shrinks the pool', (
 test('booking revenue is weighted no higher than the cheapest real work', () => {
   // log_revenue moves the number the share is computed from, so it must
   // never be the most profitable action an agent can take.
-  const { log_revenue: revenue, deploy_code: deploy } = profitShare.CONTRIBUTION_KINDS;
+  //
+  // Measured against the other *actions* only. revenue_earned sits at 0 in
+  // this table because its weight is not in the table at all — it comes from
+  // the amount earned (see distributeRevenue). Including it would compare an
+  // action's price against an outcome's placeholder, which is why this used
+  // to read as a straight minimum and no longer can.
+  const kinds = profitShare.CONTRIBUTION_KINDS;
+  const { log_revenue: revenue, deploy_code: deploy } = kinds;
+  const actionWeights = Object.entries(kinds)
+    .filter(([name]) => name !== 'revenue_earned')
+    .map(([, k]) => k.weight);
+
   assert.ok(revenue.weight < deploy.weight, 'booking revenue must not out-earn shipping code');
-  assert.equal(revenue.weight, Math.min(...Object.values(profitShare.CONTRIBUTION_KINDS).map((k) => k.weight)));
+  assert.equal(revenue.weight, Math.min(...actionWeights));
+});
+
+test('causing revenue out-earns every action, which is the whole point', () => {
+  // The distortion this replaced: shipping a file paid 5, booking money paid
+  // 1. The company's incentives argued against the thing it exists to do.
+  const kinds = profitShare.CONTRIBUTION_KINDS;
+  const dearestAction = Math.max(
+    ...Object.entries(kinds)
+      .filter(([name]) => name !== 'revenue_earned')
+      .map(([, k]) => k.weight)
+  );
+  // $100 at the default rate is one shipped file; $10,000 is five hundred.
+  assert.ok(10000 * 0.05 > dearestAction * 50, 'one real customer beats fifty commits');
 });
 
 test('the share percentage is configurable within the cap', () => {

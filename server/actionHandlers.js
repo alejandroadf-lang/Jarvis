@@ -25,7 +25,7 @@ import {
   linkRepo,
   setDeploymentEnabled,
 } from './finance/ventures.js';
-import { recordContribution } from './finance/profitShare.js';
+import { recordContribution, distributeRevenue } from './finance/profitShare.js';
 import { submitPlan, getPlan, formatPlanForWhatsApp } from './dailyPlan.js';
 import {
   enqueueTasks,
@@ -115,8 +115,15 @@ export async function handleLogRevenue(input, ctx = {}) {
   const { amount, ventureId, description } = resolved;
   addTransaction({ type: 'revenue', amount, description, ventureId });
   recordContribution({ agentId: ctx.agentId, kind: 'log_revenue', ventureId, detail: description });
+  // The outcome feeding back to the people who caused it. Until this
+  // existed, shipping a file paid five times what booking revenue did, so
+  // the company's incentives argued against the thing it exists to do.
+  const credited = distributeRevenue({ ventureId, amountUsd: amount });
   const { revenue, net } = getLedger();
-  return `Logged $${amount} in revenue${ventureId ? ` for venture ${ventureId}` : ''} ("${description}"). Revenue to date is now $${revenue.toFixed(2)}, net $${net.toFixed(2)}.`;
+  const shared = credited.length
+    ? ` Credit for it went to the ${credited.length} agent${credited.length === 1 ? '' : 's'} whose work is on this venture.`
+    : '';
+  return `Logged $${amount} in revenue${ventureId ? ` for venture ${ventureId}` : ''} ("${description}"). Revenue to date is now $${revenue.toFixed(2)}, net $${net.toFixed(2)}.${shared}`;
 }
 
 export async function handleLogExpense(input, ctx = {}) {
