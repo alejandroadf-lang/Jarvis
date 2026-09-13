@@ -97,6 +97,80 @@ test('building-a-python-api puts the logic outside the framework', () => {
   assert.match(body, /No secret is ever a literal in source/i);
 });
 
+// The five below are not written from failures that already happened here —
+// they are written for the work the first venture is about to do, which is the
+// other half of what a library is for. What's testable is the same thing: that
+// each still carries the one specific claim it exists to make, rather than
+// having been edited down into advice that is true of everything.
+
+test('api-authentication refuses the over-built answer and names the leak', () => {
+  const body = read('api-authentication').body;
+  // The week-long detour this skill exists to prevent.
+  assert.match(body, /Not OAuth, not JWTs/);
+  // A key you can read out of the database is not a key.
+  assert.match(body, /Store a hash, never the key/i);
+  // The single most common way a correctly generated key still ends up in
+  // plaintext somewhere a support engineer can read it.
+  assert.match(body, /Never a query string/);
+  // Rate limiting is part of this, not a later feature: a valid key with no
+  // limit is the realistic way a retry loop spends the month's budget.
+  assert.match(body, /per\s+key, not per IP/i);
+});
+
+test('writing-an-api-contract separates what you can change from what you cannot', () => {
+  const body = read('writing-an-api-contract').body;
+  // Both lists have to be present; the whole value is knowing which side a
+  // change falls on before shipping it.
+  assert.match(body, /These are \*\*safe\*\* to add after launch/);
+  assert.match(body, /These are \*\*breaking\*\*/);
+  // The off-by-sixty bug no test catches and no error reports.
+  assert.match(body, /Put the unit in the field name/i);
+  // The worst failure available, because every HTTP client treats 200 as
+  // success.
+  assert.match(body, /Never a 200 with/);
+});
+
+test('handling-regulated-claims draws the line and puts the disclaimer in the payload', () => {
+  const body = read('handling-regulated-claims').body;
+  // The distinction that does most of the work, in code and in copy.
+  assert.match(body, /what it\s+computed\*\*, never \*\*what the person should do/i);
+  // The disclaimer has to reach the person the claim is about, and only the
+  // response payload does that — the customer's app renders your JSON.
+  assert.match(body, /In the API response payload, as a field/i);
+  // And the test is the point: a field dropped by a response filter looks
+  // handled in review and is absent in production.
+  assert.match(body, /survives\s+serialisation/i);
+  // The verbs are the tell — they are what moves a product into
+  // medical-device territory.
+  assert.match(body, /diagnose, treat, cure, prevent/i);
+});
+
+test('finding-first-customers keeps the two things that make it not marketing advice', () => {
+  const body = read('finding-first-customers').body;
+  // A launch post is an event. Treating it as a channel is why ventures
+  // stall right after one.
+  assert.match(body, /it is\s+not a channel/i);
+  // Compliments are not data. The list of signals that actually count is the
+  // operative part.
+  assert.match(body, /Tell interest from politeness/i);
+  assert.match(body, /they used it, more than once, unprompted/i);
+  // Ask about the past: a hypothetical self is always more generous than the
+  // person.
+  assert.match(body, /Ask about the past, not the future/i);
+});
+
+test('pricing-a-product does the margin arithmetic on the worst request, not the average', () => {
+  const body = read('pricing-a-product').body;
+  // The arithmetic that ends a venture quietly.
+  assert.match(body, /worst realistic request/i);
+  assert.match(body, /70%/, 'a margin floor, not a vague instruction to watch costs');
+  // Pricing the implementation rather than the value: optimise the code and
+  // the customer's bill drops.
+  assert.match(body, /a unit the customer already counts/i);
+  // The signal everyone reads backwards — an instant yes is not good news.
+  assert.match(body, /too low/i);
+});
+
 test('a skill is long enough to be a procedure and short enough to load', () => {
   // Under a page is a slogan; several pages will not be read mid-task. The
   // check is here so an edit in either direction gets noticed.
