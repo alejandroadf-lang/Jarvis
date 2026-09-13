@@ -67,6 +67,8 @@ import {
 import { recordInbound, recordReceipt, recentInbound, waitingMessage, STAGES } from './channels/whatsappLog.js';
 import { parseFounderCommand, runFounderCommand } from './channels/founderCommands.js';
 import { runEval } from './eval/run.js';
+import { listTasks } from './tasks.js';
+import { getDegradationToday } from './degradation.js';
 import { privacyPolicyHtml } from './privacy.js';
 import { recordBoot, warnIfEphemeral } from './storage.js';
 import {
@@ -886,6 +888,38 @@ async function drainDeepDives() {
 
 app.get('/api/deep-dives', (_req, res) => {
   res.json({ queued: queueDepth(), dives: listDeepDives() });
+});
+
+// Everything about how a venture is actually being built, in one call.
+//
+// The company gained a task queue, commit and check-run logs, and a venture
+// notebook, and none of it rendered anywhere — so the founder could see
+// which ventures existed but not what anyone was doing. Watching GitHub
+// covers the code; it says nothing about what is queued, what failed and
+// why, or what the team has learned.
+//
+// One endpoint rather than four, because this is read on a phone: four
+// round trips is four chances to show a half-built screen.
+app.get('/api/ventures/:id/build', (req, res) => {
+  const venture = getVenture(req.params.id);
+  if (!venture) return res.status(404).json({ error: 'No venture with that id.' });
+
+  res.json({
+    venture: {
+      id: venture.id,
+      title: venture.title,
+      status: venture.status,
+      repo: venture.repo || null,
+    },
+    tasks: listTasks({ ventureId: venture.id }),
+    // Newest first: the useful end of a build log is the recent end.
+    deployments: [...(venture.deployments || [])].reverse().slice(0, 20),
+    runs: [...(venture.runs || [])].reverse().slice(0, 10),
+    notes: [...(venture.notes || [])].reverse().slice(0, 20),
+    milestones: venture.milestones || [],
+    spend: getSpendSummary(),
+    degradation: getDegradationToday(),
+  });
 });
 
 app.get('/api/spend', (_req, res) => {
