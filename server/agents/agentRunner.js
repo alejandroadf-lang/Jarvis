@@ -25,12 +25,25 @@
 import { getAgent } from './registry.js';
 import { assertUnderDailyCap, recordSpend } from '../spend.js';
 import { priceUsage, emptyUsage } from '../usage.js';
-import { resolveModelForAgent, MODELS, OPENAI_TIER, GEMINI_TIER, DEFAULT_TIER, CHEAP_TIER } from './models.js';
+import {
+  resolveModelForAgent,
+  MODELS,
+  OPENAI_TIER,
+  GEMINI_TIER,
+  DEEPSEEK_TIER,
+  DEFAULT_TIER,
+  CHEAP_TIER,
+} from './models.js';
 import { recordFallback } from '../degradation.js';
 import { recordContribution } from '../finance/profitShare.js';
 import { skillsFor, getSkill, describeSkillsForAgent } from '../skills/registry.js';
 import { mcpRequestFields, describeMcpForAgent } from './mcp.js';
 import { isOpenRouterConfigured, createCompletion, openRouterFallbackModel } from './openrouter.js';
+import {
+  isDeepSeekConfigured,
+  createCompletion as deepSeekCompletion,
+  deepSeekModel,
+} from './deepseek.js';
 import { createCompletion as createOpenAiCompletion, isOpenAIConfigured, fallbackModel } from './openai.js';
 import { createCompletion as createGeminiCompletion, isGeminiConfigured, geminiModel } from './gemini.js';
 
@@ -202,6 +215,14 @@ function backupProviders() {
     // OpenRouter and it becomes the truest substitute in the chain: the same
     // model, billed through a different account — which is the case that
     // actually took this company down.
+    {
+      name: 'DeepSeek',
+      provider: 'deepseek',
+      available: isDeepSeekConfigured,
+      model: deepSeekModel,
+      send: deepSeekCompletion,
+      tier: DEEPSEEK_TIER,
+    },
     {
       name: 'OpenRouter',
       provider: 'openrouter',

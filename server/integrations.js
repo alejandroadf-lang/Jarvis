@@ -14,6 +14,7 @@
 // that proves the credential is accepted, rather than merely present.
 
 import { isOpenRouterConfigured } from './agents/openrouter.js';
+import { isDeepSeekConfigured, deepSeekModel } from './agents/deepseek.js';
 import { isHonchoConfigured, FOUNDER_PEER_ID } from './memory/honcho.js';
 import { isEmailConfigured } from './email.js';
 import { isGithubConfigured } from './deploy/github.js';
@@ -283,13 +284,50 @@ async function probeGemini() {
  * The probes run in parallel — none depends on another, and this is fetched
  * on page load.
  */
+/**
+ * DeepSeek's own balance endpoint — the cheapest call that proves the key is
+ * accepted, and the one that distinguishes a rejected key from a valid one
+ * with nothing left on it. That distinction is the whole point: the second
+ * looks identical to working right up until an agent is consulted.
+ */
+async function probeDeepSeek() {
+  if (!isDeepSeekConfigured()) {
+    return notConfigured('Not set — no agent runs on DeepSeek, and one fewer backup if Anthropic is down.');
+  }
+  try {
+    const res = await withTimeout(
+      fetch('https://api.deepseek.com/user/balance', {
+        headers: { Authorization: `Bearer ${readSecret('DEEPSEEK_API_KEY')}` },
+      }),
+      'DeepSeek'
+    );
+    if (res.status === 401 || res.status === 403) {
+      return { configured: true, ok: false, detail: 'Key rejected. Any agent assigned to DeepSeek is falling back to Claude.' };
+    }
+    if (!res.ok) return { configured: true, ok: false, detail: `DeepSeek returned ${res.status}.` };
+
+    const body = await res.json().catch(() => ({}));
+    if (body?.is_available === false) {
+      return {
+        configured: true,
+        ok: false,
+        detail: `Key is valid but the balance is exhausted, so ${deepSeekModel()} cannot run. Top up at platform.deepseek.com.`,
+      };
+    }
+    return { configured: true, ok: true, detail: `Key accepted — ${deepSeekModel()} is available.` };
+  } catch (err) {
+    return { configured: true, ok: false, detail: `Couldn't reach DeepSeek: ${err.message}` };
+  }
+}
+
 export async function getIntegrationStatus() {
-  const [openrouter, honcho, whatsapp, openai, gemini] = await Promise.all([
+  const [openrouter, honcho, whatsapp, openai, gemini, deepseek] = await Promise.all([
     probeOpenRouter(),
     probeHoncho(),
     probeWhatsApp(),
     probeOpenAI(),
     probeGemini(),
+    probeDeepSeek(),
   ]);
 
   return {
@@ -313,6 +351,7 @@ export async function getIntegrationStatus() {
     openrouter,
     openai,
     gemini,
+    deepseek,
     honcho,
     whatsapp,
     // These two predate the probes and fail loudly at the point of use (an

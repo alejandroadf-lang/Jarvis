@@ -25,6 +25,7 @@ export const CHEAP_TIER = 'specialist';
 // on it. Same leaf-only rule as the others — see canUseAlternativeModel.
 export const OPENAI_TIER = 'assistant';
 export const GEMINI_TIER = 'analyst';
+export const DEEPSEEK_TIER = 'reasoner';
 
 // Prices are per million tokens and are pinned by hand — same convention as
 // the rest of this app. Anthropic's published pricing for claude-sonnet-5
@@ -70,6 +71,21 @@ export const MODELS = {
       return numberFromEnv('OPENAI_OUTPUT_PRICE_PER_MTOK', 0.6);
     },
   },
+  // Same again. DeepSeek is the cheapest of the four by a wide margin, which
+  // makes the price fields the ones most worth keeping honest: a tier that
+  // looks free is a tier the spend cap stops protecting.
+  [DEEPSEEK_TIER]: {
+    provider: 'deepseek',
+    get model() {
+      return (process.env.DEEPSEEK_MODEL || '').trim() || 'deepseek-chat';
+    },
+    get inputPricePerMTok() {
+      return numberFromEnv('DEEPSEEK_INPUT_PRICE_PER_MTOK', 0.28);
+    },
+    get outputPricePerMTok() {
+      return numberFromEnv('DEEPSEEK_OUTPUT_PRICE_PER_MTOK', 0.42);
+    },
+  },
   // Read at call time for the same reason as the OpenAI tier above.
   [GEMINI_TIER]: {
     provider: 'gemini',
@@ -101,6 +117,41 @@ function numberFromEnv(name, fallback) {
   return Number.isFinite(raw) && raw >= 0 ? raw : fallback;
 }
 
+// Which agent runs on which provider, without editing the org chart.
+//
+// Four tiers existed and two of them — OpenAI and Gemini — were used by no
+// agent at all. They were reachable only as fallbacks, which meant the
+// company had three providers configured and had never deliberately run a
+// single turn on two of them.
+//
+// Hardcoding the assignment would have been the obvious fix and the wrong
+// one. Nobody here has measured which model is better at sizing a market or
+// drafting an outreach email; picking by reputation is exactly the kind of
+// confident guess this codebase keeps getting caught by. So the assignment
+// is configuration, changeable in one Railway variable, and the founder can
+// move an agent and watch what happens.
+//
+// Format: AGENT_MODEL_TIERS="market_researcher:analyst,seo_specialist:assistant"
+//
+// A malformed entry is dropped rather than thrown, because this is read on
+// every agent resolution and a typo should not turn into an outage. An
+// unknown *tier* is dropped here; an unknown *agent id* is kept and simply
+// never matches anything, which is harmless but silent — so a mistyped agent
+// name looks exactly like a working assignment until someone checks which
+// model actually ran. Validating ids here would mean importing the rosters,
+// and the rosters import this file.
+export function agentTierOverrides() {
+  const raw = (process.env.AGENT_MODEL_TIERS || '').trim();
+  if (!raw) return {};
+
+  const overrides = {};
+  for (const entry of raw.split(',')) {
+    const [agentId, tier] = entry.split(':').map((part) => (part || '').trim());
+    if (agentId && tier && MODELS[tier]) overrides[agentId] = tier;
+  }
+  return overrides;
+}
+
 export function getModelSpec(tier) {
   return MODELS[tier] || MODELS[DEFAULT_TIER];
 }
@@ -127,7 +178,11 @@ export function canUseAlternativeModel(agent) {
  * @param {boolean} alternativeAvailable - whether the non-default provider is configured
  */
 export function resolveModelForAgent(agent, alternativeAvailable) {
-  const spec = getModelSpec(agent.modelTier);
+  // The founder's assignment wins over the org chart's. Still subject to
+  // every rule below, so moving an orchestrator onto a cheap tier is
+  // ignored rather than quietly stripping its ability to delegate.
+  const tier = agentTierOverrides()[agent.id] || agent.modelTier;
+  const spec = getModelSpec(tier);
   if (spec.provider === 'anthropic') return spec;
   if (!isProviderAvailable(spec.provider, alternativeAvailable) || !canUseAlternativeModel(agent)) {
     return MODELS[DEFAULT_TIER];
@@ -141,5 +196,6 @@ export function resolveModelForAgent(agent, alternativeAvailable) {
 function isProviderAvailable(provider, openRouterAvailable) {
   if (provider === 'openai') return hasSecret('OPENAI_API_KEY');
   if (provider === 'gemini') return hasSecret('GEMINI_API_KEY');
+  if (provider === 'deepseek') return hasSecret('DEEPSEEK_API_KEY');
   return openRouterAvailable;
 }
