@@ -22,6 +22,7 @@
 import { readJson, writeJson } from '../store.js';
 import { assertRealActionsAllowed } from '../killSwitch.js';
 import { assertInApprovedPlan } from '../dailyPlan.js';
+import { assertProbeableUrl } from '../execute/probe.js';
 
 const FILE = 'ventures.json';
 
@@ -642,4 +643,101 @@ export function recordOutreach(id, { to, subject, body, triggeredBy, agentId }) 
   venture.sentEmails.push(entry);
   save(data);
   return { venture, entry };
+}
+
+// Where the venture is actually deployed, so the team can check its own work.
+//
+// Founder-set, because the alternative — an agent naming the host — is a
+// server-side request forgery primitive (see execute/probe.js). This is the
+// grant; there is no separate `enabled` flag, because setting the URL *is* the
+// decision and a read-only GET against the founder's own public service is not
+// the kind of irreversible act `enabled` exists to double-gate.
+//
+// Deliberately not in the daily plan either. Plan approval covers things that
+// change the world: a commit, an email. Requiring it to *observe* whether the
+// last commit worked would put the evidence behind the same door as the action,
+// which is how this codebase has repeatedly ended up with a capability nobody
+// could reach.
+export function setServiceUrl(id, url) {
+  const data = load();
+  const venture = findOrThrow(data, id);
+  // Validated here rather than at the edge so no caller can store a URL that
+  // assertProbeableUrl would later refuse — a stored value that fails at probe
+  // time is a grant that looks live and is not.
+  const origin = assertProbeableUrl(url);
+  venture.service = { origin, setAt: new Date().toISOString() };
+  venture.probes = venture.probes || [];
+  save(data);
+  return venture;
+}
+
+export function clearServiceUrl(id) {
+  const data = load();
+  const venture = findOrThrow(data, id);
+  delete venture.service;
+  save(data);
+  return venture;
+}
+
+const PROBE_WINDOW_MS = 60_000;
+const MAX_PROBES_PER_WINDOW = 6;
+// Kept short: this is the evidence for "is it up right now", and a long history
+// of health checks is noise nobody reads. The deployment log is the record of
+// what changed; this is the record of whether it worked.
+const PROBES_KEPT = 10;
+
+/**
+ * The origin an agent is allowed to probe for this venture, or a thrown reason.
+ *
+ * Honours the kill switch: HALT means nothing leaves this server, and a carve-
+ * out for "but this one is only a GET" makes that promise something the founder
+ * has to reason about instead of rely on.
+ *
+ * Rate-limited per venture rather than capped per day. A health check is meant
+ * to be cheap and repeatable — the thing worth preventing is a retry loop
+ * hammering the venture's own service inside one turn, not a team that checks
+ * its work often.
+ */
+export function authorizeProbe(id) {
+  assertRealActionsAllowed();
+  const venture = getVenture(id);
+  if (!venture) throw new Error('Venture not found');
+  if (!venture.service?.origin) {
+    throw new Error(
+      'No service URL is set for this venture, so there is nothing to check. Ask the founder for the deployed URL — ' +
+        'you cannot choose it yourself, and a passing CI run is not evidence the service is up.'
+    );
+  }
+
+  const recent = (venture.probes || []).filter(
+    (probe) => Date.now() - Date.parse(probe.at) < PROBE_WINDOW_MS
+  );
+  if (recent.length >= MAX_PROBES_PER_WINDOW) {
+    throw new Error(
+      `Already checked ${recent.length} times in the last minute. Something is wrong with the service or with the ` +
+        'path you are asking for, and checking again will return the same answer — read the last result instead.'
+    );
+  }
+  return venture.service.origin;
+}
+
+export function recordProbe(id, { path, status, ok, ms, agentId }) {
+  const data = load();
+  const venture = findOrThrow(data, id);
+  venture.probes = venture.probes || [];
+  venture.probes.unshift({
+    at: new Date().toISOString(),
+    path: String(path || '/'),
+    status: Number(status) || 0,
+    ok: Boolean(ok),
+    ms: Number(ms) || 0,
+    agentId: agentId || null,
+  });
+  venture.probes = venture.probes.slice(0, PROBES_KEPT);
+  save(data);
+  return venture.probes[0];
+}
+
+export function listProbes(id) {
+  return getVenture(id)?.probes || [];
 }

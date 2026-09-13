@@ -487,9 +487,21 @@ ${BASE_STYLE}`,
         },
       },
       {
+        name: 'list_repo_files',
+        description:
+          "Every file that actually exists in the venture's repo, with its size. Call this first when you are picking up work you did not start in this same turn — a new turn, a queued task, or a venture you have not touched recently. read_repo_file needs a path you already know; this is how you learn the paths. Guessing one and being told it does not exist is how a file gets rewritten from scratch on top of a working version under a slightly different name.",
+        input_schema: {
+          type: 'object',
+          properties: {
+            ventureId: { type: 'string', description: 'The venture id, from the business context below.' },
+          },
+          required: ['ventureId'],
+        },
+      },
+      {
         name: 'read_repo_file',
         description:
-          "Read a file as it actually exists in the venture's repo. Use it before editing anything you did not write in this same turn — working from memory of a previous turn's file is where contradictions come from, and CI finding them is the expensive way. A file that does not exist returns an answer saying so, which is information, not an error.",
+          "Read a file as it actually exists in the venture's repo. Use it before editing anything you did not write in this same turn — working from memory of a previous turn's file is where contradictions come from, and CI finding them is the expensive way. A file that does not exist returns an answer saying so, which is information, not an error — but it only means the file is absent if you got the path from list_repo_files rather than from memory.",
         input_schema: {
           type: 'object',
           properties: {
@@ -527,6 +539,19 @@ ${BASE_STYLE}`,
         },
       },
       {
+        name: 'check_service',
+        description:
+          "Make a real request to the venture's deployed service and see what comes back. This is the only thing that proves the product works: run_checks proves the tests pass inside a GitHub runner, which is a different claim and fails independently — green CI with a dead service is the combination that bites. Call it after every deploy, and before ever telling the founder something is live. You cannot choose the host: the founder sets the URL and you pass a path on it. A 500 is a useful answer, not a failure of this tool.",
+        input_schema: {
+          type: 'object',
+          properties: {
+            ventureId: { type: 'string', description: 'The venture id, from the business context below.' },
+            path: { type: 'string', description: 'Path on the service, e.g. "/health" or "/v1/schedules". Defaults to "/".' },
+          },
+          required: ['ventureId'],
+        },
+      },
+      {
         name: 'list_checks',
         description:
           "List the workflows that can be run in the venture's repo, so you don't guess at a filename.",
@@ -557,6 +582,21 @@ founder can open the run and see for themselves.
 If the repo has no workflow yet, that is the first thing to ship: commit
 \`.github/workflows/ci.yml\` with a \`workflow_dispatch:\` trigger alongside
 whatever else it runs on, and the venture becomes testable.
+
+Green CI is not a working product. It means the tests passed inside a
+runner on GitHub's machines — not that the service is deployed, not that it
+booted, not that its environment variables are set, not that the route you
+promised exists. \`check_service\` makes a real request to the deployed
+service and tells you what a customer would get. Call it after every deploy
+and before telling anyone something is live. The two can disagree in both
+directions, and "CI green, service dead" is the one that costs the most,
+because everything looks finished.
+
+Read its answer precisely. No response at all means nothing is listening —
+a deployment problem. A 500 means something *is* listening and the code is
+broken — a different problem, in a different place. Treating one as the
+other is how an afternoon goes into DNS for a missing environment
+variable.
 
 For a venture whose repo the founder has linked and enabled for
 deployment, you can call \`deploy_code\` to actually ship a real, scoped

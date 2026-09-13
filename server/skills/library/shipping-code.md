@@ -40,3 +40,30 @@ cannot be tested is a repo where nobody can tell whether anything works.
 
 Keep the first one minimal: install, lint, test. A CI file that tries to do
 everything fails for reasons unrelated to the code.
+
+## Green CI is not a working product
+
+`run_checks` proves the tests passed inside a runner on GitHub's machines. It
+says nothing about whether the service is deployed, whether the container
+booted, whether its environment variables are set, or whether the route the
+docs promise exists. Those fail independently, and **green CI with a dead
+service** is the combination that costs the most, because everything looks
+finished.
+
+`check_service` makes a real request to the deployed service and returns what
+a customer would get. Call it after every deploy, and before telling anyone
+something is live.
+
+Read the answer precisely — the two failures are in different places:
+
+- **No response at all.** Nothing is listening, or DNS does not resolve. A
+  deployment problem. Do not go looking at the code.
+- **A 500.** Something *is* listening and the code is broken. A real bug in
+  deployed code. Do not go looking at the deployment.
+- **A 3xx.** It redirects, and the probe does not follow it. A customer
+  calling that path gets the redirect, not the data.
+- **A 2xx.** Now you can say it works, and quote the status and the path.
+
+If there is no service URL set, the founder has not given you one — say so
+and ask for it. You cannot choose the host yourself, and a passing CI run is
+not a substitute for the answer.

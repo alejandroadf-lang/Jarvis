@@ -74,3 +74,8 @@ If you are editing a file you did not write **in this same turn**, call
 `read_repo_file` first. Working from memory of a previous turn's file is
 where contradictions come from, and CI finding them is the expensive way to
 learn what you already could have looked up.
+
+And if you do not know the path, `list_repo_files` before that. A guessed
+path comes back as "does not exist", which is true of the guess and says
+nothing about the file — acting on it writes a second copy of working code
+under a name one character different.
