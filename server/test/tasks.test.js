@@ -128,3 +128,67 @@ test('trimming never drops queued work', () => {
   tasks.enqueueTasks('v_live', ['the one that matters']);
   assert.equal(tasks.nextTask('v_live')?.title, 'the one that matters');
 });
+
+// --- The bug the queue itself caused ---
+//
+// nextTask only ever returned QUEUED work. So a task claimed by a turn that
+// then died — precisely what this store exists to survive — stayed RUNNING
+// forever, and nextTask silently handed out the task *after* it.
+//
+// In the field: declared order was engine, then tests. A failed deploy left
+// the engine claim orphaned, the next agent was handed the tests, and it
+// correctly refused to write tests for a file that did not exist. The agent
+// behaved well; the queue misled it.
+
+function stall(id, minutesAgo = 60) {
+  const file = path.join(tmpDir, 'tasks.json');
+  const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const task = data.tasks.find((t) => t.id === id);
+  task.startedAt = new Date(Date.now() - minutesAgo * 60_000).toISOString();
+  fs.writeFileSync(file, JSON.stringify(data, null, 2));
+}
+
+test('an abandoned claim is handed back, not skipped past', () => {
+  tasks.enqueueTasks('v_1', ['engine', 'tests', 'auth']);
+  const engine = tasks.nextTask('v_1');
+  tasks.startTask(engine.id);
+  stall(engine.id);
+
+  const next = tasks.nextTask('v_1');
+  assert.equal(next.title, 'engine', 'the order the queue exists to enforce must hold');
+  assert.equal(next.stalled, true, 'and the agent is told why it is coming back');
+});
+
+test('a claim that is genuinely in flight still blocks', () => {
+  // The reason skipping was tempting: two turns doing the same work is worse
+  // than a stalled queue. A fresh claim is still protected.
+  tasks.enqueueTasks('v_1', ['engine', 'tests']);
+  const engine = tasks.nextTask('v_1');
+  tasks.startTask(engine.id);
+
+  assert.equal(tasks.nextTask('v_1').title, 'tests', 'live work is not handed out twice');
+  assert.throws(() => tasks.startTask(engine.id), /already running/);
+});
+
+test('an abandoned task can be reclaimed, and the attempt is counted', () => {
+  tasks.enqueueTasks('v_1', ['engine']);
+  const engine = tasks.nextTask('v_1');
+  tasks.startTask(engine.id);
+  stall(engine.id);
+
+  const reclaimed = tasks.startTask(engine.id);
+  assert.equal(reclaimed.attempts, 2, 'so a task nobody can finish still stops eventually');
+});
+
+test('the context says plainly that a task was abandoned', () => {
+  // "IN PROGRESS" on a task nobody is working on is the line that made this
+  // invisible for a whole build.
+  tasks.enqueueTasks('v_1', ['engine']);
+  const engine = tasks.nextTask('v_1');
+  tasks.startTask(engine.id);
+  stall(engine.id);
+
+  const text = tasks.describeTasksForAgents('v_1');
+  assert.match(text, /CLAIMED BUT ABANDONED/);
+  assert.doesNotMatch(text, /IN PROGRESS/);
+});
