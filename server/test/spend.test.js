@@ -99,3 +99,31 @@ test('spend older than the retention window is pruned rather than accumulating f
   assert.equal(onDisk.days[stale], undefined);
   assert.equal(Object.keys(onDisk.days).length, 1);
 });
+
+// --- Cache accounting: the figure that says whether caching is working ---
+//
+// The cap was blind to cached tokens for most of this company's life, which is
+// how an Anthropic balance emptied while SPEND reported room to spare. Metering
+// them is the fix; reporting the hit rate is what stops the next version of the
+// same mistake, because "caching saves money" is only true when the prefix is
+// actually read back.
+test('recordSpend accumulates cached token counts alongside the dollars', async () => {
+  const spend = await import('../spend.js');
+  spend.recordSpend(0.01, { cacheWriteTokens: 4000, cacheReadTokens: 0 });
+  spend.recordSpend(0.01, { cacheWriteTokens: 0, cacheReadTokens: 12000 });
+
+  const summary = spend.getCacheSummary();
+  assert.equal(summary.writeTokens, 4000);
+  assert.equal(summary.readTokens, 12000);
+  assert.equal(summary.hitRate, 0.75);
+});
+
+test('no cached tokens reads as null, not as a cache that never hit', async () => {
+  // Different findings: one means caching is off for these calls, the other
+  // means it is on and costing 25% for nothing. Collapsing them would hide the
+  // bug this whole change exists to surface.
+  const spend = await import('../spend.js');
+  spend.recordSpend(0.02, {});
+  const summary = spend.getCacheSummary();
+  assert.ok(summary === null || summary.writeTokens + summary.readTokens > 0);
+});

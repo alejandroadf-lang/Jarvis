@@ -65,8 +65,28 @@ test('a tiered agent that gained an action falls back to the default model', () 
   assert.equal(resolveModelForAgent(grew, true).model, MODELS[DEFAULT_TIER].model);
 });
 
-test('an untiered agent stays on the default model even with OpenRouter available', () => {
-  assert.equal(resolveModelForAgent({ id: 'x', reports: [] }, true).model, MODELS[DEFAULT_TIER].model);
+// A missing `modelTier` used to mean the frontier model, which made forgetting
+// the field on a new leaf agent an invisible, permanent 15x overcharge — two
+// agents on this roster had been running that way for weeks, looking exactly
+// like every correctly-tagged one from the outside. So an untiered *leaf* now
+// falls to the cheap tier, and a forgotten field costs quality rather than
+// money. An untiered orchestrator still cannot: it needs tools.
+test('an untiered leaf falls to the cheap tier rather than the frontier model', () => {
+  assert.equal(resolveModelForAgent({ id: 'x', reports: [] }, true).model, MODELS[CHEAP_TIER].model);
+});
+
+test('an untiered orchestrator still gets the default model, because it needs tools', () => {
+  const boss = { id: 'boss', reports: ['someone'] };
+  assert.equal(resolveModelForAgent(boss, true).model, MODELS[DEFAULT_TIER].model);
+  const actor = { id: 'actor', reports: [], actions: [{ name: 'deploy_code' }] };
+  assert.equal(resolveModelForAgent(actor, true).model, MODELS[DEFAULT_TIER].model);
+});
+
+// And the new default is still only a default: an explicit tier wins, so an
+// agent can be deliberately pinned to the frontier model.
+test('an explicit frontier tier beats the leaf default', () => {
+  const pinned = { id: 'pinned', reports: [], modelTier: DEFAULT_TIER };
+  assert.equal(resolveModelForAgent(pinned, true).model, MODELS[DEFAULT_TIER].model);
 });
 
 const AGENTS = {
