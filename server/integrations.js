@@ -266,10 +266,26 @@ async function probeGemini() {
     const available = new Set((body?.models || []).map((m) => String(m.name || '').replace(/^models\//, '')));
     const wanted = geminiModel().replace(/^models\//, '');
     if (available.size > 0 && !available.has(wanted)) {
+      // It already has the list. Saying "set it to a name it can" without
+      // naming one sends the founder off to find an answer this function is
+      // holding — the same shape of unhelpfulness as a 404 that could have
+      // said "you cannot see this repo".
+      //
+      // Filtered to models that can actually take a prompt, because the list
+      // also carries embedding and vision-only names that would be accepted
+      // here and then fail at the moment an agent is consulted.
+      const usable = (body?.models || [])
+        .filter((m) => (m.supportedGenerationMethods || []).includes('generateContent'))
+        .map((m) => String(m.name).replace(/^models\//, ''))
+        .filter((name) => !name.includes('embedding'))
+        .slice(0, 6);
+
       return {
         configured: true,
         ok: false,
-        detail: `Key works, but this account can't use ${wanted}. Set GEMINI_MODEL to a name it can.`,
+        detail: usable.length
+          ? `Key works, but this account can't use ${wanted}. Set GEMINI_MODEL to one of: ${usable.join(', ')}.`
+          : `Key works, but this account can't use ${wanted} and offers nothing that takes a prompt.`,
       };
     }
 

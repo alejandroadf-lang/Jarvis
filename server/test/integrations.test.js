@@ -141,3 +141,47 @@ test('one broken integration does not stop the others being reported', async () 
   assert.equal(status.honcho.ok, true);
   assert.equal(status.anthropic.configured, true);
 });
+
+// --- A probe that poses a question it is already holding the answer to ---
+
+test('when the Gemini model is unavailable, the probe names ones that are', async () => {
+  // It said "set GEMINI_MODEL to a name it can" while holding the list of
+  // names it can. That sends the founder off to find an answer this function
+  // already has — the same shape of unhelpfulness as a 404 that could have
+  // said "you cannot see this repo".
+  const savedKey = process.env.GEMINI_API_KEY;
+  const savedModel = process.env.GEMINI_MODEL;
+  const savedFetch = global.fetch;
+  process.env.GEMINI_API_KEY = 'k';
+  process.env.GEMINI_MODEL = 'gemini-2.0-flash';
+  global.fetch = async (url) =>
+    String(url).includes('generativelanguage')
+      ? {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            models: [
+              { name: 'models/gemini-flash-latest', supportedGenerationMethods: ['generateContent'] },
+              { name: 'models/gemini-2.5-flash', supportedGenerationMethods: ['generateContent'] },
+              // Present on every account and useless here: accepted as a
+              // model name, then failing at the moment an agent is consulted.
+              { name: 'models/text-embedding-004', supportedGenerationMethods: ['embedContent'] },
+            ],
+          }),
+        }
+      : { ok: false, status: 404, text: async () => '' };
+
+  try {
+    const { getIntegrationStatus } = await import('../integrations.js');
+    const { gemini } = await getIntegrationStatus();
+    assert.equal(gemini.ok, false);
+    assert.match(gemini.detail, /gemini-flash-latest/, 'a name that would actually work');
+    assert.doesNotMatch(gemini.detail, /embedding/, 'and not one that would be accepted then fail');
+  } finally {
+    global.fetch = savedFetch;
+    if (savedKey === undefined) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = savedKey;
+    if (savedModel === undefined) delete process.env.GEMINI_MODEL;
+    else process.env.GEMINI_MODEL = savedModel;
+  }
+});
