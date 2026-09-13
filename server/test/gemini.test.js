@@ -1,10 +1,17 @@
-// Gemini's API differs from the other two providers in three ways that all
-// have to be handled in the client rather than by callers: the key goes in a
-// query parameter, "assistant" is called "model", and text lives in a parts
-// array. Each of those is a silent-wrong-answer bug if it regresses, so each
-// has a test.
+// Gemini now goes through Google's OpenAI-compatible endpoint rather than the
+// native generateContent one.
 //
-// The chain tests matter most: two backups exist specifically so that one
+// The native API differs from everyone else's in three ways — key in a query
+// parameter, "assistant" renamed to "model", text inside a `parts` array — and
+// this file used to test each of those. Tool calling is what changed the
+// arithmetic: native Gemini has function calling in its own vocabulary, so
+// supporting it natively meant a second translation layer to keep in step with
+// the OpenAI one forever. The compatibility endpoint speaks the protocol the
+// other three providers already speak.
+//
+// So these tests now assert the compatibility shape, and the translation itself
+// is tested once in toolTranslation.test.js rather than per provider. The
+// chain tests matter most either way: two backups exist specifically so one
 // dead provider isn't still a single point of failure.
 
 import { test, before, after, beforeEach } from 'node:test';
@@ -46,12 +53,12 @@ beforeEach(() => {
 
 function stubGemini(text, capture = []) {
   global.fetch = async (url, init) => {
-    capture.push({ url: String(url), body: JSON.parse(init.body) });
+    capture.push({ url: String(url), body: JSON.parse(init.body), headers: init.headers });
     return {
       ok: true,
       json: async () => ({
-        candidates: [{ content: { parts: [{ text }] } }],
-        usageMetadata: { promptTokenCount: 25, candidatesTokenCount: 50 },
+        choices: [{ finish_reason: 'stop', message: { content: text } }],
+        usage: { prompt_tokens: 25, completion_tokens: 50 },
       }),
     };
   };
@@ -61,23 +68,48 @@ function apiError(status, message) {
   return Object.assign(new Error(message), { status });
 }
 
-test('the key travels in the query string, not a header', async () => {
+test('it posts to the OpenAI-compatible endpoint with a bearer key', async () => {
   const sent = [];
   stubGemini('hello', sent);
 
   await createCompletion({ model: 'gemini-test', system: 'sys', messages: [{ role: 'user', content: 'hi' }], maxTokens: 100 });
 
   assert.match(sent[0].url, /generativelanguage\.googleapis\.com/);
-  assert.match(sent[0].url, /key=g-key/);
-  assert.match(sent[0].url, /models\/gemini-test:generateContent/);
+  assert.match(sent[0].url, /\/openai\/chat\/completions$/);
+  assert.equal(sent[0].headers.Authorization, 'Bearer g-key');
+  // The key must no longer be in the URL: a URL is logged by every proxy and
+  // error tracker in the path, which is the same reason api-authentication
+  // tells the team never to put a key in a query string.
+  assert.doesNotMatch(sent[0].url, /key=/);
+  assert.equal(sent[0].body.model, 'gemini-test');
 });
 
-test('assistant turns are renamed to "model" — Gemini rejects the other name', async () => {
+// A "models/" prefix is valid in the native API and a 404 on the compatibility
+// endpoint — exactly the kind of difference that reads as "Gemini is broken".
+test('a native-style "models/" prefix is stripped', async () => {
+  const sent = [];
+  stubGemini('ok', sent);
+
+  await createCompletion({ model: 'models/gemini-2.0-flash', messages: [{ role: 'user', content: 'hi' }], maxTokens: 10 });
+
+  assert.equal(sent[0].body.model, 'gemini-2.0-flash');
+});
+
+test('the system prompt is the first message, not a separate field', async () => {
+  const sent = [];
+  stubGemini('ok', sent);
+
+  await createCompletion({ system: 'You are the CFO.', messages: [{ role: 'user', content: 'hi' }], maxTokens: 100 });
+
+  assert.deepEqual(sent[0].body.messages[0], { role: 'system', content: 'You are the CFO.' });
+  assert.equal(sent[0].body.messages.length, 2);
+});
+
+test('assistant turns keep the name every other provider uses', async () => {
   const sent = [];
   stubGemini('ok', sent);
 
   await createCompletion({
-    system: 'sys',
     messages: [
       { role: 'user', content: 'first' },
       { role: 'assistant', content: 'second' },
@@ -86,30 +118,7 @@ test('assistant turns are renamed to "model" — Gemini rejects the other name',
     maxTokens: 100,
   });
 
-  assert.deepEqual(sent[0].body.contents.map((c) => c.role), ['user', 'model', 'user']);
-  assert.equal(sent[0].body.contents[1].parts[0].text, 'second');
-});
-
-test('the system prompt goes to systemInstruction, not into the transcript', async () => {
-  const sent = [];
-  stubGemini('ok', sent);
-
-  await createCompletion({ system: 'You are the CFO.', messages: [{ role: 'user', content: 'hi' }], maxTokens: 100 });
-
-  assert.equal(sent[0].body.systemInstruction.parts[0].text, 'You are the CFO.');
-  assert.equal(sent[0].body.contents.length, 1, 'the system prompt must not also appear as a turn');
-});
-
-test('content blocks are flattened to text', async () => {
-  const sent = [];
-  stubGemini('ok', sent);
-
-  await createCompletion({
-    messages: [{ role: 'assistant', content: [{ type: 'text', text: 'a' }, { type: 'tool_use', id: 'x' }, { type: 'text', text: 'b' }] }],
-    maxTokens: 100,
-  });
-
-  assert.equal(sent[0].body.contents[0].parts[0].text, 'a\nb');
+  assert.deepEqual(sent[0].body.messages.map((m) => m.role), ['user', 'assistant', 'user']);
 });
 
 test('the reply comes back in the shape every caller already reads', async () => {
@@ -121,6 +130,30 @@ test('the reply comes back in the shape every caller already reads', async () =>
   assert.equal(response.content[0].text, 'The answer.');
   assert.equal(response.usage.input_tokens, 25);
   assert.equal(response.usage.output_tokens, 50);
+});
+
+// The whole reason for the switch: an orchestrator can delegate from here.
+test('tools are sent, so an orchestrator can run on Gemini', async () => {
+  const sent = [];
+  stubGemini('ok', sent);
+
+  await createCompletion({
+    messages: [{ role: 'user', content: 'hi' }],
+    maxTokens: 100,
+    tools: [{ name: 'consult_cto', description: 'Ask the CTO.', input_schema: { type: 'object', properties: {} } }],
+  });
+
+  assert.equal(sent[0].body.tools[0].function.name, 'consult_cto');
+  assert.equal(sent[0].body.tool_choice, 'auto');
+});
+
+test('no tools means no tools field at all, not an empty one', async () => {
+  const sent = [];
+  stubGemini('ok', sent);
+
+  await createCompletion({ messages: [{ role: 'user', content: 'hi' }], maxTokens: 100 });
+
+  assert.equal(sent[0].body.tools, undefined, 'an empty tools array is a 400 on some providers');
 });
 
 test('a failure carries its status so the retry policy treats it like the others', async () => {
@@ -154,8 +187,8 @@ test('when OpenAI is also dead, Gemini still catches it', async () => {
     return {
       ok: true,
       json: async () => ({
-        candidates: [{ content: { parts: [{ text: 'Gemini caught it.' }] } }],
-        usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 5 },
+        choices: [{ finish_reason: 'stop', message: { content: 'Gemini caught it.' } }],
+        usage: { prompt_tokens: 5, completion_tokens: 5 },
       }),
     };
   };
@@ -186,13 +219,17 @@ test('when every provider fails, the Anthropic error is what surfaces', async ()
   );
 });
 
-test('the Gemini tier is leaf-only, like every other alternative', () => {
+// No longer leaf-only: an orchestrator assigned this tier runs here and keeps
+// its reports, because the compatibility endpoint carries tools. Still opt-in
+// and still inert without a key.
+test('the Gemini tier takes orchestrators too, and stays inert without a key', () => {
   const leaf = { id: 'leaf', reports: [], actions: [], serverTools: [], modelTier: GEMINI_TIER };
   const orchestrator = { id: 'boss', reports: ['leaf'], actions: [], serverTools: [], modelTier: GEMINI_TIER };
 
   assert.equal(resolveModelForAgent(leaf, false).provider, 'gemini');
-  assert.equal(resolveModelForAgent(orchestrator, false), MODELS[DEFAULT_TIER]);
+  assert.equal(resolveModelForAgent(orchestrator, false).provider, 'gemini');
 
   delete process.env.GEMINI_API_KEY;
   assert.equal(resolveModelForAgent(leaf, false), MODELS[DEFAULT_TIER]);
+  assert.equal(resolveModelForAgent(orchestrator, false), MODELS[DEFAULT_TIER]);
 });

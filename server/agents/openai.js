@@ -1,11 +1,13 @@
 import { readSecret, hasSecret } from '../env.js';
+import { createChatCompletion } from './openaiCompatible.js';
 // An OpenAI client covering the two things this app asks of it: a plain
 // completion (same shape as openrouter.js) and audio transcription.
 //
 // Raw fetch rather than the SDK, matching openrouter.js and deploy/github.js
-// for the same reason: this path deliberately never uses tool calling,
-// streaming or structured output, so an SDK would be a dependency carrying
-// features nothing here touches.
+// for the same reason: the chat path now carries tool calling through
+// the shared OpenAI-compatible client, and still uses no streaming or
+// structured output — so an SDK would be a dependency for the one thing this
+// file still does alone, which is audio transcription.
 //
 // Model names and prices are pinned by hand like every other provider in this
 // app — but unlike the others they are also env-overridable, because OpenAI
@@ -36,41 +38,22 @@ export function transcribeModel() {
  * Anthropic SDK — content blocks and snake_case usage included — so no caller
  * branches on provider to read a result.
  */
-export async function createCompletion({ model, system, messages, maxTokens }) {
+export async function createCompletion({ model, system, messages, maxTokens, tools }) {
   const apiKey = readSecret('OPENAI_API_KEY');
   if (!apiKey) throw new Error('OPENAI_API_KEY is not set');
 
-  const response = await fetch(CHAT_URL, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: model || chatModel(),
-      max_completion_tokens: maxTokens,
-      messages: [
-        ...(system ? [{ role: 'system', content: system }] : []),
-        ...messages.map(toOpenAiMessage),
-      ],
-    }),
+  return createChatCompletion({
+    url: CHAT_URL,
+    apiKey,
+    label: 'OpenAI',
+    model: model || chatModel(),
+    system,
+    messages,
+    maxTokens,
+    tools,
+    // OpenAI renamed this field and rejects the old one on its newer models.
+    maxTokensField: 'max_completion_tokens',
   });
-
-  if (!response.ok) {
-    const detail = await response.text().catch(() => '');
-    const err = new Error(`OpenAI request failed (${response.status}): ${detail.slice(0, 300)}`);
-    // agentRunner's retry predicate reads `.status`, the same property the
-    // Anthropic SDK sets, so a 429 here retries exactly like a 429 there.
-    err.status = response.status;
-    throw err;
-  }
-
-  const data = await response.json();
-  return {
-    stop_reason: 'end_turn',
-    content: [{ type: 'text', text: data?.choices?.[0]?.message?.content ?? '' }],
-    usage: {
-      input_tokens: data?.usage?.prompt_tokens || 0,
-      output_tokens: data?.usage?.completion_tokens || 0,
-    },
-  };
 }
 
 /**
@@ -105,16 +88,4 @@ export async function transcribeAudio(audio, filename = 'voice.ogg') {
 
   const data = await response.json();
   return (data?.text || '').trim();
-}
-
-// A leaf agent's history is plain text in practice, but the Anthropic message
-// shape allows content blocks. Flatten those rather than sending an object the
-// OpenAI schema would reject.
-function toOpenAiMessage(message) {
-  if (typeof message.content === 'string') return { role: message.role, content: message.content };
-  const text = (message.content || [])
-    .filter((block) => block.type === 'text')
-    .map((block) => block.text)
-    .join('\n');
-  return { role: message.role, content: text };
 }

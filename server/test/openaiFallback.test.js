@@ -96,18 +96,29 @@ test('a genuine bad request still throws — only outages fail over', async () =
   );
 });
 
-test('an agent that delegates says so when it answers alone', async () => {
-  stubOpenAI('My own read on it.');
+// This used to prepend "(Answering without the team...)" to a failed-over
+// orchestrator's reply, because the backup clients were plain completions and
+// the manager really did lose its reports on the way over. They carry tools now,
+// so the note would be telling the founder something untrue — the departments
+// can still weigh in. The swap is still visible as a provider change in SPEND
+// via recordFallback; it is no longer a loss of the team.
+test('a failed-over orchestrator keeps its reports, and is not labelled as alone', async () => {
+  const sent = [];
+  stubOpenAI('My own read on it.', sent);
   const anthropic = {
     messages: { create: async () => { throw apiError(401, 'invalid x-api-key'); } },
   };
 
   const { text } = await runAgent({ anthropic, agents: BOSS, agentId: 'boss', messages: [{ role: 'user', content: 'hi' }] });
 
-  // Passing one model's guess off as the team's considered answer would be
-  // the dishonest version of this feature.
-  assert.match(text, /without the team/i);
-  assert.match(text, /My own read on it\./);
+  assert.equal(text, 'My own read on it.');
+  assert.doesNotMatch(text, /without the team/i);
+  // The delegation tool actually went out — without this the claim above is
+  // just the absence of a warning rather than the presence of the capability.
+  assert.ok(
+    sent[0].body.tools?.some((tool) => tool.function.name === 'consult_aide'),
+    'the backup was given the manager\'s reports'
+  );
 });
 
 test('a leaf agent answering alone is not labelled — it lost nothing', async () => {
@@ -149,14 +160,14 @@ test('a fallback call is priced on OpenAI rates, not the Anthropic ones that fai
 
 // --- The tier ---------------------------------------------------------------
 
-test('the OpenAI tier runs leaf agents and is refused to orchestrators', () => {
+test('the OpenAI tier takes orchestrators as well as leaves', () => {
   const leaf = { id: 'leaf', reports: [], actions: [], serverTools: [], modelTier: OPENAI_TIER };
   const orchestrator = { id: 'boss', reports: ['leaf'], actions: [], serverTools: [], modelTier: OPENAI_TIER };
 
   assert.equal(resolveModelForAgent(leaf, false).provider, 'openai');
-  // Falling back to a plain completion would silently strip delegation —
-  // worse than a bigger bill, and invisible in the reply.
-  assert.equal(resolveModelForAgent(orchestrator, false), MODELS[DEFAULT_TIER]);
+  // It used to be refused here, because a plain completion would have stripped
+  // delegation invisibly. The tools travel now.
+  assert.equal(resolveModelForAgent(orchestrator, false).provider, 'openai');
 });
 
 test('without an OpenAI key the tier collapses to the default', () => {

@@ -50,17 +50,40 @@ test('a leaf agent can be moved to any provider from one variable', () => {
   assert.equal(resolve('hr_manager'), 'gpt-4o-mini');
 });
 
-test('an orchestrator cannot be moved, however the variable is set', () => {
-  // The rule that makes the whole thing safe. A non-Anthropic call here is a
-  // plain completion with no tool loop, so moving an agent that delegates
-  // would silently strip its ability to delegate — a vague answer rather
-  // than an error, which is far worse than a bigger bill.
+// The point of the translation layer: an orchestrator CAN be moved now, and it
+// keeps its reports when it goes. This is the lever that takes the company's
+// bill off Anthropic — the C-suite was never locked there because it needed
+// Claude, only because the clients could not carry tools.
+test('an orchestrator can be moved deliberately, and keeps its tools', () => {
   process.env.DEEPSEEK_API_KEY = 'd';
   process.env.AGENT_MODEL_TIERS = 'ceo:reasoner,cto:reasoner,engineering_lead:reasoner';
 
+  assert.equal(resolve('ceo'), 'deepseek-chat');
+  assert.equal(resolve('cto'), 'deepseek-chat');
+  assert.equal(resolve('engineering_lead'), 'deepseek-chat', 'deploy_code travels with it');
+});
+
+// But never by accident. Without an explicit assignment the orchestrators stay
+// on the frontier model, so relaxing the gate did not silently re-home the
+// company's decision-making on the next deploy.
+test('orchestrators stay on Anthropic until the founder says otherwise', () => {
+  process.env.DEEPSEEK_API_KEY = 'd';
+  delete process.env.AGENT_MODEL_TIERS;
+
   assert.equal(resolve('ceo'), 'claude-sonnet-5');
   assert.equal(resolve('cto'), 'claude-sonnet-5');
-  assert.equal(resolve('engineering_lead'), 'claude-sonnet-5', 'it holds deploy_code — it must keep its tools');
+  assert.equal(resolve('engineering_lead'), 'claude-sonnet-5');
+});
+
+// The one lock that remains. web_search runs inside Anthropic's own
+// infrastructure, so there is nothing to translate and no variable that can
+// move it.
+test('an agent with a web-search server tool cannot be moved at all', () => {
+  process.env.DEEPSEEK_API_KEY = 'd';
+  process.env.AGENT_MODEL_TIERS = 'solutions_architect:reasoner,seo_specialist:analyst';
+
+  assert.equal(resolve('solutions_architect'), 'claude-sonnet-5');
+  assert.equal(resolve('seo_specialist'), 'claude-sonnet-5');
 });
 
 test('an agent with web search stays on the frontier model', () => {

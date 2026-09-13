@@ -1,13 +1,23 @@
 import { readSecret, hasSecret } from '../env.js';
-// A Gemini client for the one call shape this app needs: system prompt +
-// messages in, text out. Same scope and the same reasons as openrouter.js and
-// openai.js — raw fetch, no SDK, no tool calling.
+import { createChatCompletion } from './openaiCompatible.js';
+// Gemini, through Google's OpenAI-compatible endpoint.
 //
-// Google's API differs from the other two in three ways that all have to be
-// handled here rather than by the caller: the key goes in a query parameter,
-// the assistant role is called "model", and message text lives in a `parts`
-// array. Everything is converted back to the Anthropic-shaped response the
-// rest of the app reads, so no caller branches on provider.
+// This file used to speak the native API, whose shape differs from everyone
+// else's in three ways: the key goes in a query parameter, the assistant role is
+// called "model", and message text lives in a `parts` array. That was a
+// reasonable amount of special-casing while the only call shape was text in and
+// text out.
+//
+// Adding tool calling changed the arithmetic. Native Gemini has function calling
+// but in its own vocabulary — `functionDeclarations`, `functionCall`,
+// `functionResponse` — so supporting it would have meant a second translation
+// layer kept in step with the OpenAI one forever. The compatibility endpoint
+// speaks the protocol the other three providers already speak, so one tested
+// translation (toolTranslation.js) serves all four and this file keeps only the
+// URL and the key.
+//
+// listModelsUrl still points at the native API: the integration probe uses it
+// and there is no compatibility equivalent.
 
 const BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
 
@@ -26,59 +36,34 @@ export function listModelsUrl() {
 /**
  * One completion, in the shape agentRunner already handles from the Anthropic
  * SDK — content blocks and snake_case usage included.
+ *
+ * Routed through Google's **OpenAI-compatible** endpoint rather than the native
+ * `generateContent` one this file used to call. Native Gemini has function
+ * calling too, but in its own shape: `functionDeclarations`, `functionCall`,
+ * `functionResponse`, and a `parts` array instead of messages. Supporting tools
+ * natively would have meant a second translation layer to keep in step with the
+ * OpenAI one forever, for no benefit — the compatibility endpoint speaks the
+ * protocol the other three providers already speak, so one tested translation
+ * serves all four.
+ *
+ * The key moves from a query parameter to a bearer header as part of that. The
+ * native base URL is still used by listModelsUrl, which the integration probe
+ * calls and which has no compatibility equivalent.
  */
-export async function createCompletion({ model, system, messages, maxTokens }) {
+export async function createCompletion({ model, system, messages, maxTokens, tools }) {
   const apiKey = readSecret('GEMINI_API_KEY');
   if (!apiKey) throw new Error('GEMINI_API_KEY is not set');
 
-  const name = (model || geminiModel()).replace(/^models\//, '');
-  const response = await fetch(
-    `${BASE_URL}/models/${encodeURIComponent(name)}:generateContent?key=${encodeURIComponent(apiKey)}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
-        contents: messages.map(toGeminiContent),
-        generationConfig: { maxOutputTokens: maxTokens },
-      }),
-    }
-  );
-
-  if (!response.ok) {
-    const detail = await response.text().catch(() => '');
-    const err = new Error(`Gemini request failed (${response.status}): ${detail.slice(0, 300)}`);
-    // agentRunner's retry predicate reads `.status`, same as the other two.
-    err.status = response.status;
-    throw err;
-  }
-
-  const data = await response.json();
-  const text = (data?.candidates?.[0]?.content?.parts || [])
-    .map((part) => part.text || '')
-    .join('')
-    .trim();
-
-  return {
-    stop_reason: 'end_turn',
-    content: [{ type: 'text', text }],
-    usage: {
-      input_tokens: data?.usageMetadata?.promptTokenCount || 0,
-      output_tokens: data?.usageMetadata?.candidatesTokenCount || 0,
-    },
-  };
-}
-
-// Two conversions in one: Anthropic's content blocks flatten to text, and
-// "assistant" becomes "model" — Gemini rejects the former outright rather
-// than ignoring it.
-function toGeminiContent(message) {
-  const text =
-    typeof message.content === 'string'
-      ? message.content
-      : (message.content || [])
-          .filter((block) => block.type === 'text')
-          .map((block) => block.text)
-          .join('\n');
-  return { role: message.role === 'assistant' ? 'model' : 'user', parts: [{ text }] };
+  return createChatCompletion({
+    url: `${BASE_URL}/openai/chat/completions`,
+    apiKey,
+    label: 'Gemini',
+    // The compatibility endpoint takes a bare model name; a "models/" prefix is
+    // valid in the native API and a 404 here.
+    model: (model || geminiModel()).replace(/^models\//, ''),
+    system,
+    messages,
+    maxTokens,
+    tools,
+  });
 }

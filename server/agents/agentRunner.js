@@ -257,10 +257,6 @@ function backupProviders() {
   ];
 }
 
-const DEGRADED_NOTE =
-  '(Answering without the team — the usual model is unavailable, so this is one ' +
-  'model working alone rather than the departments weighing in.)\n\n';
-
 // What running somewhere else actually cost, on the tokens that were really
 // used. Negative when the substitute was cheaper than the original, which is
 // why it is floored at zero — a cheaper fallback is still a degradation
@@ -335,15 +331,15 @@ async function failOverToBackup(anthropic, modelSpec, params, err) {
         system: systemBlocksToText(params.system),
         messages: params.messages,
         maxTokens: params.max_tokens,
+        // Forwarded, so an orchestrator failing over keeps its reports. This is
+        // what retired the note that used to be prepended here — it told the
+        // founder they were getting "one model working alone rather than the
+        // departments weighing in", which was true when the backups could not
+        // carry tools and is now simply wrong. The swap is still recorded for
+        // SPEND by recordFallback below; it is a provider change, not a loss of
+        // the team.
+        tools: params.tools,
       });
-
-      // Only orchestrators lose something by coming through here. A leaf
-      // agent's turn is a single completion either way, so labelling it
-      // would be noise.
-      if (params.tools?.length) {
-        const first = response.content.find((block) => block.type === 'text');
-        if (first) first.text = DEGRADED_NOTE + first.text;
-      }
       // Priced on the tier that actually ran, not the Anthropic one that
       // failed, so the spend cap meters what was really spent.
       response.__pricedAs = MODELS[provider.tier];
@@ -381,12 +377,38 @@ async function createMessage(anthropic, modelSpec, params) {
     system: systemBlocksToText(params.system),
     messages: params.messages,
     maxTokens: params.max_tokens,
+    // Tools travel to the alternative providers now. Without this line the
+    // whole translation layer is unreachable and an orchestrator routed to
+    // DeepSeek or Gemini would answer without ever delegating — the exact
+    // silent failure canUseAlternativeModel used to prevent by refusing to
+    // route it at all.
+    tools: params.tools,
+  };
+
+  // Table-driven rather than a chain of ifs, because the chain had no branch
+  // for DeepSeek: the tier existed, resolveModelForAgent returned it, and every
+  // call it resolved fell through to Anthropic instead. Silently — the agent
+  // answered, on the wrong model, at 7x the price, and nothing reported it.
+  // That is the third capability in this codebase found sitting behind a door
+  // nothing opened, so this is a lookup that fails loudly on an unknown
+  // provider instead of a fallthrough that picks one.
+  const alternatives = {
+    openrouter: createCompletion,
+    openai: createOpenAiCompletion,
+    gemini: createGeminiCompletion,
+    deepseek: deepSeekCompletion,
   };
 
   const send = () => {
-    if (modelSpec.provider === 'openrouter') return createCompletion(flat);
-    if (modelSpec.provider === 'openai') return createOpenAiCompletion(flat);
-    if (modelSpec.provider === 'gemini') return createGeminiCompletion(flat);
+    if (modelSpec.provider !== 'anthropic') {
+      const client = alternatives[modelSpec.provider];
+      if (!client) {
+        throw new Error(
+          `No client for provider "${modelSpec.provider}" — it is in models.js but not wired into agentRunner.`
+        );
+      }
+      return client(flat);
+    }
     // MCP requires the beta endpoint and its flag; everything else uses the
     // stable one, so a company with no MCP servers is unaffected by it.
     const endpoint = rest.betas?.length ? anthropic.beta.messages : anthropic.messages;

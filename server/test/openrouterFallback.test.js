@@ -171,13 +171,19 @@ test('a tiered agent still reaches the backups when Anthropic is down too', asyn
   assert.equal(text, 'OpenAI caught it.');
 });
 
-test('an orchestrator answering through OpenRouter still says it is alone', async () => {
-  stubOpenRouter('My own read.');
+// Previously this asserted the reply was labelled "(Answering without the
+// team...)". That was true while the backup was a plain completion; now the
+// tools go with it, so the label would be false and the capability is what to
+// assert instead.
+test('an orchestrator failing over to OpenRouter takes its reports along', async () => {
+  const sent = [];
+  stubOpenRouter('My own read.', sent);
   const anthropic = { messages: { create: async () => { throw apiError(401, 'invalid key'); } } };
 
   const { text } = await runAgent({ anthropic, agents: BOSS, agentId: 'boss', messages: [{ role: 'user', content: 'hi' }] });
 
-  assert.match(text, /without the team/i);
+  assert.equal(text, 'My own read.');
+  assert.ok(sent[0].body.tools?.some((tool) => tool.function.name === 'consult_aide'));
 });
 
 // --- The catalogue lookup, added after "nousresearch/hermes-4-70b" retired ---
