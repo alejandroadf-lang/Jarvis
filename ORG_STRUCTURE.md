@@ -1223,6 +1223,55 @@ Three things came out of fixing it:
   for itself from one quietly surcharging every call, and leaving it unmeasured
   is how the first version of this went wrong.
 
+### The morning sync is now proportional to what moved
+
+The largest single line item in the company's bill was a prompt instruction:
+
+> Consult each of your direct reports (CTO, CFO, CMO, COO). Ask each of them to
+> check in with their own team first.
+
+That reaches 22 agents and costs a minimum of 27 Anthropic calls, plus the
+Studio phase after it — and it ran identically on a day with three commits and a
+day with nothing at all. On a dead day that spend does not buy better judgement:
+it asks 22 agents for "one real, specific data point" about a company that did
+nothing, and an agent asked for an observation it does not have will generally
+produce one anyway. That is the failure `diagnosing-a-blocker` exists for, bought
+daily at full price.
+
+`server/movement.js` answers what actually moved, from the records of real
+events: commits, customer emails, finished or failed tasks, newly queued tasks,
+failing CI runs, a service probe that came back badly, ledger entries, ventures
+started or killed. On a quiet morning the sync goes narrow — one CEO call, no
+Studio phase — and the report says why it was short, so a one-line report does
+not read as a failure.
+
+Three things make this safe rather than merely cheap:
+
+- **The narrow sync cannot fan out.** `soloRoster` hands `runAgent` a CEO with
+  `reports: []`, so no `consult_*` tool is built and the delegation is
+  structurally impossible. Every instruction in this codebase that was only a
+  request has eventually been ignored by some turn; this one guards the biggest
+  number in the bill.
+- **The thresholds are deliberately generous.** A pending plan, an approved
+  plan, or any real event forces the wide sync. Being wrong in the narrow
+  direction means a real event goes unexamined, which costs more than the calls
+  it saved. Writing this also surfaced that the plan check would have been dead
+  code — `getPlan()` returns the plan itself, not a container keyed by status,
+  so the original `plan?.pending` was always undefined and would have sent the
+  company narrow on exactly the mornings it should look wide.
+- **A quiet stretch still gets a full sync every `FULL_SYNC_MAX_GAP_DAYS`**
+  (default 7). A company that goes permanently silent because nothing tripped a
+  counter is the obvious way this change could go wrong, and "nothing changed"
+  is exactly the state a wider look is most likely to have something to say
+  about.
+
+The quiet kickoff is not a shorter version of the same questions. It asks three:
+confirm the company is quiet and for how long, name the single thing most worth
+doing about that, and say what it is blocked on. A quiet week is information —
+either the team is blocked on something the founder has not given them, or the
+queued work is not work anyone actually wants done — and one honest line about
+that is worth more than four manufactured status lines.
+
 ### A missing tier meant the frontier model, silently
 
 `resolveModelForAgent` used to fall back to `DEFAULT_TIER` when an agent had no

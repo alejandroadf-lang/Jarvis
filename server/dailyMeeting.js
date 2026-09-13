@@ -30,6 +30,7 @@ import { AGENTS as STUDIO_AGENTS, ROOT_AGENT_ID as STUDIO_ROOT } from './agents/
 import { buildCompanyContext, buildStudioContext, buildPerAgentContext } from './finance/context.js';
 import { getLedger } from './finance/ledger.js';
 import { listVentures } from './finance/ventures.js';
+import { planSyncScope } from './movement.js';
 import {
   handleProposeVenture,
   handleDeployCode,
@@ -38,7 +39,7 @@ import {
   handleSubmitDailyPlan,
   handleCheckDailyPlan,
 } from './actionHandlers.js';
-import { todayKey, saveDailyReport } from './dailyReports.js';
+import { todayKey, saveDailyReport, getLatestDailyReport } from './dailyReports.js';
 import { sendDailyReportEmail } from './email.js';
 import { publishDailyReport, publishVenture, readFounderSteering } from './workspace/vault.js';
 import { estimateCostUsd, sumUsage, emptyUsage } from './usage.js';
@@ -94,6 +95,59 @@ through.
 Don't attempt deploy_code or send_customer_email before the plan is approved
 — they will be refused, and the refusal will be the founder's first sign that
 the sync wasn't paying attention.`;
+}
+
+/**
+ * The morning sync on a day when nothing happened.
+ *
+ * The wide version reaches 22 agents and costs a minimum of 27 Anthropic calls
+ * because its kickoff says "Consult each of your direct reports... ask each of
+ * them to check in with their own team first". On a day when nothing moved that
+ * does not buy better judgement: it asks 22 agents for "one real, specific data
+ * point" about a company that did nothing, and an agent asked for an
+ * observation it does not have will generally produce one anyway.
+ *
+ * So this asks for the one honest answer instead, and asks for it once.
+ */
+function quietKickoff(date, scope) {
+  return `It's ${date}. This is the morning sync, and it is deliberately a short
+one: nothing has moved since the last one — no commits, no customer emails, no
+tasks finished or failed, no ledger entries, and no plan waiting on the founder.
+
+You have no reports available to you this morning, on purpose. Asking four
+departments to describe a day in which nothing happened costs real money and
+produces four paragraphs of nothing. Answer yourself, in your own voice.
+
+Two or three lines, no headings:
+
+1. Confirm the company is quiet, and for how long.
+2. Name the single thing most worth doing about that — which is a real
+   question, not a formality. A quiet week is information: either the team is
+   blocked on something the founder has not given them, or the work queued up
+   is not work anyone actually wants done.
+3. If you are blocked on the founder, say exactly what you need. One line.
+
+Do not invent activity. Do not produce a full Daily Company Report — there is
+nothing to report. "Quiet since Tuesday; we are blocked on X" is the complete
+and correct answer, and it is worth more to the founder than four manufactured
+status lines.${planningInstruction()}`;
+}
+
+/**
+ * The roster for a narrow sync: the CEO with its reports removed.
+ *
+ * Enforced structurally rather than asked for in the prompt. Delegation tools
+ * are built from the manager's `reports` array, so an empty one means no
+ * `consult_*` tool exists and the fan-out is impossible — not merely
+ * discouraged. Every instruction in this codebase that was only a request has
+ * eventually been ignored by some turn, and this one guards the single largest
+ * line item in the company's bill.
+ *
+ * The action tools stay: a quiet morning is exactly when the CEO may need to
+ * check the plan or say what it is blocked on.
+ */
+function soloRoster(agents, rootId) {
+  return { ...agents, [rootId]: { ...agents[rootId], reports: [] } };
 }
 
 function leadershipKickoff(date) {
@@ -169,6 +223,11 @@ export async function runDailyMeeting({ anthropic }) {
   const steering = await readFounderSteering();
   const beforeIds = new Set(listVentures().map((v) => v.id));
 
+  // How wide this morning should be. The wide sync is the company's single
+  // largest recurring cost — 22 agents, 27 calls minimum — and it used to run
+  // identically on a day with three commits and a day with nothing at all.
+  const scope = planSyncScope({ since: getLatestDailyReport()?.generatedAt });
+
   // Both phases are isolated the same way: a persistent failure in one
   // still leaves a report worth saving (and emailing) for the day, instead
   // of the whole cycle throwing and leaving nothing — silently going dark
@@ -178,9 +237,14 @@ export async function runDailyMeeting({ anthropic }) {
   try {
     leadership = await runAgent({
       anthropic,
-      agents: COMPANY_AGENTS,
+      // On a quiet morning the CEO's reports are removed, so the fan-out is
+      // structurally impossible rather than merely discouraged — see
+      // soloRoster.
+      agents: scope.full ? COMPANY_AGENTS : soloRoster(COMPANY_AGENTS, COMPANY_ROOT),
       agentId: COMPANY_ROOT,
-      messages: [{ role: 'user', content: leadershipKickoff(date) }],
+      messages: [
+        { role: 'user', content: scope.full ? leadershipKickoff(date) : quietKickoff(date, scope) },
+      ],
       // Only the two scope-gated real actions are wired in here — see file
       // header for why those specifically are safe in an unattended run
       // when the book-keeping and venture-status actions still aren't.
@@ -216,6 +280,16 @@ export async function runDailyMeeting({ anthropic }) {
       trace: [],
       usage: emptyUsage(),
     };
+  } else if (!scope.full) {
+    // Six more agents, asked to find a venture in a report that says nothing
+    // happened. The Studio earns its place off real signal from a real sync;
+    // there is none today, and "nothing clears the bar" is the answer it would
+    // spend twenty dollars a month arriving at.
+    studio = {
+      text: "(Skipped: a quiet morning, so there's nothing new for the Studio to look at.)",
+      trace: [],
+      usage: emptyUsage(),
+    };
   } else {
     try {
       studio = await runAgent({
@@ -240,6 +314,10 @@ export async function runDailyMeeting({ anthropic }) {
   const report = {
     date,
     generatedAt: new Date().toISOString(),
+    // Why this morning was wide or narrow. Without it a one-line report looks
+    // like a failure, and the founder's first instinct would be to check
+    // whether the sync is broken.
+    scope: { full: scope.full, reason: scope.reason, moved: scope.movement.lines },
     leadership: { reply: leadership.text, trace: leadership.trace },
     studio: { reply: studio.text, trace: studio.trace },
     proposedVentureIds,
