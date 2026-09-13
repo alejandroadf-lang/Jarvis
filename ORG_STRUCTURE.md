@@ -39,11 +39,12 @@ CEO
 │   ├── Marketing Manager
 │   ├── SEO Specialist
 │   └── Brand Strategist
-└── COO (operations)
-    ├── Sales & Commercial Manager
-    ├── Customer Support Manager
-    ├── Implementation Manager
-    └── HR & People Manager
+├── COO (operations)
+│   ├── Sales & Commercial Manager
+│   ├── Customer Support Manager
+│   ├── Implementation Manager
+│   └── HR & People Manager
+└── Devil's Advocate (argues against the plan)
 ```
 
 Each agent that has direct reports gets them exposed as **tools** (e.g. the
@@ -76,6 +77,7 @@ Product Manager`).
 | CFO | CEO | Financial strategy, pricing, fundraising, fiscal discipline |
 | CMO | CEO | Brand, positioning, go-to-market strategy |
 | COO | CEO | Day-to-day ops: sales execution, support, delivery, people |
+| Devil's Advocate | CEO | Arguing the other side of any plan, claim, or decision |
 | Engineering Lead | CTO | Software design and delivery |
 | Product Manager | CTO | Requirements, prioritization, roadmap |
 | Solutions Architect | CTO | Pre-sales technical scoping, solution design |
@@ -96,6 +98,25 @@ functions a company actually needs to sell, build, deliver, and support a
 product: marketing, engineering/product, commercial (solutions +
 sales), customer support, implementation, and finance/accounting, plus
 people operations to keep the team itself running.
+
+### The one role a real company doesn't have
+
+The Devil's Advocate is the exception, and it is there because of the shape
+of the CEO's turn rather than anything a real company does. The CEO
+synthesises four reports from four leads who each have a reason to want
+their own department to look good. Nothing in that arrangement produces
+"this won't work," so it was added as an agent instead of as a sentence in
+the CEO's prompt — for the same reason the Venture Studio has a Validation
+Critic. A paragraph asking you to be skeptical about your own plan loses to
+the plan, every time; a separate turn whose entire job is the other side
+does not.
+
+It is deliberately a leaf with no actions: it argues and cannot act, which
+is also what lets it run on a cheap tier (see `canUseAlternativeModel` in
+`server/agents/models.js`). Its prompt is written against the failure mode
+that kills critics — objecting to everything until nobody reads you — so it
+is required to name the cheapest way to find out rather than only the risk,
+and to say "nothing to add" when that is the honest answer.
 
 ### Credit: roles adapted from ECC
 
