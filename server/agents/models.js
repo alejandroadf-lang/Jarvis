@@ -172,6 +172,12 @@ export function canUseAlternativeModel(agent) {
   );
 }
 
+// What an agent runs on when nothing says otherwise. An orchestrator has to be
+// the frontier model; a leaf has no reason to be.
+function defaultTierFor(agent) {
+  return canUseAlternativeModel(agent) ? CHEAP_TIER : DEFAULT_TIER;
+}
+
 /**
  * Picks the model spec an agent's turn should actually run on.
  * @param {object} agent - the agent definition
@@ -181,7 +187,21 @@ export function resolveModelForAgent(agent, alternativeAvailable) {
   // The founder's assignment wins over the org chart's. Still subject to
   // every rule below, so moving an orchestrator onto a cheap tier is
   // ignored rather than quietly stripping its ability to delegate.
-  const tier = agentTierOverrides()[agent.id] || agent.modelTier;
+  //
+  // A leaf with no tier at all falls to the cheap one rather than the default.
+  // It used to fall to the default, which meant forgetting `modelTier` on a new
+  // leaf agent put it on the frontier model silently and permanently — and two
+  // of them had been running there for weeks at roughly 15x the necessary cost,
+  // looking exactly like every correctly-tagged agent from the outside. Nothing
+  // reported it because nothing was wrong: a missing field read as a
+  // deliberate default.
+  //
+  // Defaulting the other way means a forgotten field costs quality instead of
+  // money, which is the better failure here: canUseAlternativeModel has already
+  // established this agent needs no tools, every leaf on the roster was
+  // deliberately cheap anyway, and AGENT_MODEL_TIERS can move any single agent
+  // back without a deploy.
+  const tier = agentTierOverrides()[agent.id] || agent.modelTier || defaultTierFor(agent);
   const spec = getModelSpec(tier);
   if (spec.provider === 'anthropic') return spec;
   if (!isProviderAvailable(spec.provider, alternativeAvailable) || !canUseAlternativeModel(agent)) {

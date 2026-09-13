@@ -1018,6 +1018,7 @@ ${BASE_STYLE}`,
   // as per-agent context).
   agent_operations_engineer: {
     id: 'agent_operations_engineer',
+    modelTier: CHEAP_TIER,
     title: 'Agent Operations Engineer',
     department: 'Technology',
     reportsTo: 'cto',
@@ -1058,6 +1059,7 @@ ${BASE_STYLE}`,
 
   automation_architect: {
     id: 'automation_architect',
+    modelTier: CHEAP_TIER,
     title: 'Automation Architect',
     department: 'Technology',
     reportsTo: 'cto',

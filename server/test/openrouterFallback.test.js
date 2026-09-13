@@ -12,6 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { runAgent } from '../agents/agentRunner.js';
 import { openRouterFallbackModel } from '../agents/openrouter.js';
+import { DEFAULT_TIER } from '../agents/models.js';
 
 let tmpDir;
 let originalFetch;
@@ -58,7 +59,22 @@ function stubOpenRouter(text, capture = []) {
   };
 }
 
-const SOLO = { solo: { id: 'solo', title: 'Solo', department: 'T', reportsTo: null, reports: [], systemPrompt: 'x' } };
+// Pinned to the frontier tier deliberately. These tests are about what happens
+// when *Anthropic* fails, so the agent has to be one that routes there — and an
+// untiered leaf no longer does: it goes straight to the cheap tier, which is the
+// whole point of that change. Without the pin these tests would pass for the
+// wrong reason, never reaching Anthropic to begin with.
+const SOLO = {
+  solo: {
+    id: 'solo',
+    title: 'Solo',
+    department: 'T',
+    reportsTo: null,
+    reports: [],
+    modelTier: DEFAULT_TIER,
+    systemPrompt: 'x',
+  },
+};
 const BOSS = {
   boss: { id: 'boss', title: 'Boss', department: 'E', reportsTo: null, reports: ['aide'], systemPrompt: 'x' },
   aide: { id: 'aide', title: 'Aide', department: 'E', reportsTo: 'boss', reports: [], systemPrompt: 'y' },

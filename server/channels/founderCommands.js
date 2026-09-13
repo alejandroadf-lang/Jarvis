@@ -316,15 +316,24 @@ export async function runFounderCommand(command, deps = {}) {
     }
 
     case 'spend': {
-      const { spentUsd, capUsd, date, overCap } = getSpendSummary();
+      const { spentUsd, capUsd, date, overCap, cache } = getSpendSummary();
       const pct = capUsd > 0 ? Math.round((spentUsd / capUsd) * 100) : 0;
       const headline = overCap
         ? `$${spentUsd.toFixed(2)} of $${capUsd.toFixed(2)} for ${date} — over the cap. Agent turns are being refused until tomorrow.`
         : `$${spentUsd.toFixed(2)} of $${capUsd.toFixed(2)} for ${date} (${pct}%).`;
       // Spend is exactly where a silent fallback shows up as a number the
       // founder is already looking at.
+      // Whether caching is paying for itself, in the one place the founder
+      // already looks at cost. A low rate is not a curiosity: it means the
+      // company is paying a 25% surcharge on input it never reads back.
+      const cacheLine = cache
+        ? `\n\nPrompt cache: ${Math.round(cache.hitRate * 100)}% of cached input was reused.` +
+          (cache.hitRate < 0.2
+            ? ' That is low — at this rate caching costs more than sending the tokens plainly.'
+            : '')
+        : '';
       const degraded = describeDegradation();
-      return degraded ? `${headline}\n\n${degraded}` : headline;
+      return [headline + cacheLine, degraded].filter(Boolean).join('\n\n');
     }
 
     case 'ventures': {

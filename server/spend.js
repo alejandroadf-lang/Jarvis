@@ -20,7 +20,10 @@ const DEFAULT_DAILY_CAP_USD = 5;
 const DAYS_KEPT = 30;
 
 function load() {
-  return readJson(FILE, { days: {} });
+  // `cache` is absent in every file written before caching was metered, so it
+  // is defaulted rather than assumed — an older ledger keeps its dollar
+  // history and simply reports no cache figures for those days.
+  return readJson(FILE, { days: {}, cache: {} });
 }
 
 function dayKey(date = new Date()) {
@@ -36,24 +39,55 @@ export function getSpendToday() {
   return load().days[dayKey()] || 0;
 }
 
+/**
+ * How much of today's cached input was read back rather than written.
+ *
+ * Worth reporting because the alternative is taking it on trust. A cache read
+ * costs a tenth of the same tokens uncached; a write costs 1.25x. So a cache
+ * that never hits is a 25% surcharge wearing the word "optimisation", and this
+ * is the only number that tells the difference. Null when nothing was cached
+ * today — which is a different statement from "cached and never read".
+ */
+export function getCacheSummary() {
+  const { write = 0, read = 0 } = load().cache?.[dayKey()] || {};
+  if (!write && !read) return null;
+  return { writeTokens: write, readTokens: read, hitRate: read / (write + read) };
+}
+
 export function getSpendSummary() {
   const spentUsd = getSpendToday();
   const capUsd = dailyCapUsd();
-  return { spentUsd, capUsd, date: dayKey(), overCap: spentUsd >= capUsd };
+  return { spentUsd, capUsd, date: dayKey(), overCap: spentUsd >= capUsd, cache: getCacheSummary() };
 }
 
-export function recordSpend(usd) {
+/**
+ * @param {number} usd what the call cost
+ * @param {{cacheWriteTokens?: number, cacheReadTokens?: number}} [tokens] cached
+ *   token counts, so the founder can see whether caching is earning its place
+ */
+export function recordSpend(usd, tokens = {}) {
   if (!Number.isFinite(usd) || usd <= 0) return getSpendToday();
 
   const data = load();
   const key = dayKey();
   data.days[key] = (data.days[key] || 0) + usd;
 
+  const write = Number(tokens.cacheWriteTokens) || 0;
+  const read = Number(tokens.cacheReadTokens) || 0;
+  if (write || read) {
+    data.cache = data.cache || {};
+    const today = data.cache[key] || { write: 0, read: 0 };
+    data.cache[key] = { write: today.write + write, read: today.read + read };
+  }
+
   // Nothing reads further back than the last month, and this file is written
   // on every single API call — prune so it can't grow without bound.
   const cutoff = dayKey(new Date(Date.now() - DAYS_KEPT * 24 * 60 * 60 * 1000));
   for (const day of Object.keys(data.days)) {
     if (day < cutoff) delete data.days[day];
+  }
+  for (const day of Object.keys(data.cache || {})) {
+    if (day < cutoff) delete data.cache[day];
   }
 
   writeJson(FILE, data);

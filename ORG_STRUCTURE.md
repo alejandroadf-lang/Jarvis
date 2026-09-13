@@ -1188,6 +1188,57 @@ identically. Two tests assert the cap specifically — that it stops an
 OpenRouter call before it goes out, and that spend from one counts against
 the day's total.
 
+### The cap was blind to most of the bill
+
+Worth recording plainly, because it emptied an Anthropic balance while `SPEND`
+reported room to spare.
+
+`priceUsage` read `input_tokens` and `output_tokens` only. With prompt caching
+on, `input_tokens` from the Anthropic API is the **uncached** input alone —
+everything in the cached prefix arrives in `cache_creation_input_tokens` (billed
+at 1.25x the base input rate) or `cache_read_input_tokens` (0.1x). This app
+caches the two largest blocks it sends, and the tool schemas sit inside the same
+prefix, so on a CEO call that is roughly 4,400 of 4,600 input tokens — all
+billed, all counted as `$0.00`.
+
+So `DAILY_SPEND_CAP_USD` was metering a fraction of reality and could never
+fire. Nothing leaked; the meter could not see. A realistic call the old meter
+priced at $0.0084 actually costs $0.0194.
+
+Three things came out of fixing it:
+
+- `tokensOf()` in `agentRunner.js` reads all four counts in one place, because
+  they were previously read in three and two of those took only `input_tokens`.
+- Caching is now **opt-in per agent**, not unconditional. Cache reads need the
+  *entire* prefix to repeat, and tool schemas are sent ahead of the system
+  blocks — so the shared-context block can never be reused across agents, no
+  matter how identical its text is. What does hit is the same agent calling
+  repeatedly: an orchestrator loops to issue consults, read results, then
+  synthesise, and those rounds read back at a tenth of the price. A leaf makes
+  exactly one call per turn, pays the 1.25x write, and never reads it — so for
+  half the roster caching was a 25% surcharge dressed as an optimisation. Hence
+  `cache: !isLeaf`.
+- `SPEND` now reports the prompt-cache hit rate, and says so explicitly when it
+  is under 20%. That number is the only thing that distinguishes a cache paying
+  for itself from one quietly surcharging every call, and leaving it unmeasured
+  is how the first version of this went wrong.
+
+### A missing tier meant the frontier model, silently
+
+`resolveModelForAgent` used to fall back to `DEFAULT_TIER` when an agent had no
+`modelTier`. Two leaf agents — the Agent Operations Engineer and the Automation
+Architect — had therefore been running on `claude-sonnet-5` for weeks at roughly
+15x the necessary cost, looking exactly like every correctly-tagged agent from
+the outside. Nothing reported it because nothing was wrong: a missing field read
+as a deliberate default.
+
+An untiered **leaf** now falls to the cheap tier instead. A forgotten field
+costs quality rather than money, which is the better failure here —
+`canUseAlternativeModel` has already established the agent needs no tools, every
+leaf on the roster was deliberately cheap anyway, and `AGENT_MODEL_TIERS` moves
+any single agent back without a deploy. An untiered orchestrator still gets the
+default model, because it genuinely needs one.
+
 One consequence worth naming: a run's total token count no longer has a
 single price. `usage.js` therefore accumulates `costUsd` **at the point of
 each call**, where the model is known, rather than multiplying one rate over

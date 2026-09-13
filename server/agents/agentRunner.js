@@ -131,14 +131,37 @@ function sleep(ms) {
 /**
  * The system prompt, as cacheable blocks.
  *
- * Two breakpoints, deliberately placed. The shared context gets one so it
- * survives across the twenty-one agents a single question can reach; the
- * agent's own prompt gets the second so it survives across turns for whoever
- * is asked repeatedly. Earnings are last and uncached — they change as the
- * turn itself records contributions, and a breakpoint behind them would be
- * invalidated by the work it was meant to speed up.
+ * Two breakpoints. The shared context gets one, the agent's own prompt the
+ * second; earnings are last and uncached, because they change as the turn
+ * records contributions and a breakpoint behind them would be invalidated by
+ * the work it was meant to speed up.
+ *
+ * ## Why `cache` is a parameter rather than always on
+ *
+ * Caching is prefix-based, and the prefix starts before these blocks: tool
+ * schemas are sent ahead of the system prompt, so a cache read requires the
+ * tools to be identical too. Every agent carries a different tool set, which
+ * means the shared-context block cannot be reused across agents no matter how
+ * byte-identical its text is — an earlier version of this comment claimed it
+ * "survives across the twenty-one agents a single question can reach", and that
+ * is simply not how the mechanism works.
+ *
+ * What it does survive is repeated calls by the *same* agent, where tools and
+ * system are unchanged. An orchestrator makes several of those per turn: one
+ * round to issue its consults, another to read the results, another to
+ * synthesise. Those rounds hit, and at a tenth of the input price they pay for
+ * the write many times over.
+ *
+ * A leaf makes exactly one call per turn. It pays the write — which costs 1.25x
+ * what the same tokens cost uncached — and there is no second call to read it
+ * back. So for half the roster, caching was a 25% surcharge dressed as an
+ * optimisation. Hence: cache for agents that loop, not for agents that don't.
+ *
+ * The founder can still see whether this judgement is right: cacheHitRate in
+ * usage.js reports reads as a share of cached tokens, which is the number that
+ * settles it rather than leaving it to reasoning like the above.
  */
-export function buildSystemBlocks({ extraContext, agentPrompt, ownContext }) {
+export function buildSystemBlocks({ extraContext, agentPrompt, ownContext, cache = true }) {
   const blocks = [];
   const push = (text, cache) => {
     if (!text || !text.trim()) return;
@@ -149,8 +172,8 @@ export function buildSystemBlocks({ extraContext, agentPrompt, ownContext }) {
     });
   };
 
-  push(extraContext, true);
-  push(agentPrompt, true);
+  push(extraContext, cache);
+  push(agentPrompt, cache);
   push(ownContext, false);
   return blocks;
 }
@@ -244,11 +267,12 @@ const DEGRADED_NOTE =
 // worth counting, but it is not a surcharge.
 function extraCostUsd(usage, intended, actual) {
   if (!usage || !intended || !actual) return 0;
-  const inTok = (usage.input_tokens || 0) / 1e6;
-  const outTok = (usage.output_tokens || 0) / 1e6;
-  const was = inTok * intended.inputPricePerMTok + outTok * intended.outputPricePerMTok;
-  const is = inTok * actual.inputPricePerMTok + outTok * actual.outputPricePerMTok;
-  return Math.max(0, is - was);
+  // Priced through the same function as everything else, so the surcharge
+  // counts the cached tokens too. A backup provider returns no cache fields, so
+  // what it actually compares is "this many tokens there" against "the same
+  // tokens here" — which is the comparison intended.
+  const tokens = tokensOf(usage);
+  return Math.max(0, priceUsage(tokens, actual) - priceUsage(tokens, intended));
 }
 
 async function failOverToBackup(anthropic, modelSpec, params, err) {
@@ -394,16 +418,45 @@ async function createMessage(anthropic, modelSpec, params) {
   }
 
   if (response?.usage) {
-    response.costUsd = priceUsage(
-      {
-        inputTokens: response.usage.input_tokens || 0,
-        outputTokens: response.usage.output_tokens || 0,
-      },
-      response.__pricedAs || modelSpec
-    );
-    recordSpend(response.costUsd);
+    const tokens = tokensOf(response.usage);
+    response.costUsd = priceUsage(tokens, response.__pricedAs || modelSpec);
+    recordSpend(response.costUsd, tokens);
   }
   return response;
+}
+
+/**
+ * The four token counts a response was billed for, in this app's own names.
+ *
+ * Read in one place because it was previously read in three and two of them
+ * only took `input_tokens` — which, with prompt caching on, is the *uncached*
+ * input alone. Everything in the cached prefix (tool schemas, shared context,
+ * each agent's system prompt) arrives in the two cache fields, so the spend cap
+ * and every reported cost were metering a small fraction of the real bill and
+ * the cap could never fire. A helper makes that a single thing to get right
+ * rather than three places to forget.
+ *
+ * The other providers return no cache fields at all, so these read as 0 and
+ * price exactly as they did before.
+ */
+function tokensOf(usage) {
+  return {
+    inputTokens: usage?.input_tokens || 0,
+    outputTokens: usage?.output_tokens || 0,
+    cacheWriteTokens: usage?.cache_creation_input_tokens || 0,
+    cacheReadTokens: usage?.cache_read_input_tokens || 0,
+  };
+}
+
+// Accumulates one response's billed tokens onto a run's usage total.
+function addUsage(usage, response) {
+  if (!response?.usage) return;
+  const t = tokensOf(response.usage);
+  usage.inputTokens += t.inputTokens;
+  usage.outputTokens += t.outputTokens;
+  usage.cacheWriteTokens = (usage.cacheWriteTokens || 0) + t.cacheWriteTokens;
+  usage.cacheReadTokens = (usage.cacheReadTokens || 0) + t.cacheReadTokens;
+  usage.costUsd = (usage.costUsd || 0) + (response.costUsd || 0);
 }
 
 function buildTools(agents, agent) {
@@ -532,6 +585,10 @@ export async function runAgent({
     extraContext,
     agentPrompt: [agent.systemPrompt, skillMenu, mcpNote].filter(Boolean).join('\n\n'),
     ownContext,
+    // A leaf's single call cannot read back what it writes. See
+    // buildSystemBlocks for why that made caching a surcharge rather than a
+    // saving on every agent in the bottom half of the chart.
+    cache: !isLeaf,
   });
 
   // The connection half of MCP, minus the toolsets already folded into
@@ -566,11 +623,7 @@ export async function runAgent({
       ...(tools.length ? { tools } : {}),
     });
 
-    if (response.usage) {
-      usage.inputTokens += response.usage.input_tokens || 0;
-      usage.outputTokens += response.usage.output_tokens || 0;
-      usage.costUsd = (usage.costUsd || 0) + (response.costUsd || 0);
-    }
+    addUsage(usage, response);
 
     const toolUses = response.content.filter((block) => block.type === 'tool_use');
 
@@ -692,11 +745,7 @@ export async function runAgent({
           },
         ],
       });
-      if (closing.usage) {
-        usage.inputTokens += closing.usage.input_tokens || 0;
-        usage.outputTokens += closing.usage.output_tokens || 0;
-        usage.costUsd = (usage.costUsd || 0) + (closing.costUsd || 0);
-      }
+      addUsage(usage, closing);
       finalText = (closing.content || [])
         .filter((block) => block.type === 'text')
         .map((block) => block.text)
