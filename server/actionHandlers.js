@@ -24,6 +24,8 @@ import {
   autonomousRepos,
   linkRepo,
   setDeploymentEnabled,
+  authorizeProbe,
+  recordProbe,
 } from './finance/ventures.js';
 import { recordContribution, distributeRevenue } from './finance/profitShare.js';
 import { submitPlan, getPlan, formatPlanForWhatsApp } from './dailyPlan.js';
@@ -43,7 +45,8 @@ import {
   sendOutreachAlertEmail,
   isEmailConfigured,
 } from './email.js';
-import { commitFile, readFile as readRepoFile, isGithubConfigured } from './deploy/github.js';
+import { commitFile, readFile as readRepoFile, listFiles as listRepoFiles, isGithubConfigured } from './deploy/github.js';
+import { probeEndpoint } from './execute/probe.js';
 import {
   isExecutionConfigured,
   dispatchWorkflow,
@@ -353,6 +356,94 @@ export async function handleReadRepoFile(input) {
     return `${venture.repo.owner}/${venture.repo.name}:${path}\n\n${content}`;
   } catch (err) {
     return `Could not read the file: ${err.message}`;
+  }
+}
+
+/**
+ * What is actually in the repo.
+ *
+ * The companion to handleReadRepoFile, and the reason it exists: that one
+ * answers a path you already know. An agent picking up work it did not start
+ * — a new turn, a queued task, a venture it has not touched in a week — knows
+ * no paths at all, and guessing produced "does not exist", which reads as
+ * permission to write the file fresh and overwrite whatever is really there.
+ */
+export async function handleListRepoFiles(input) {
+  const { ventureId } = input;
+  if (!isGithubConfigured()) {
+    return 'Could not list the repo: this server has no GITHUB_TOKEN configured.';
+  }
+  try {
+    const venture = getVenture(ventureId);
+    if (!venture) return `Could not list the repo: no venture with id "${ventureId}".`;
+    if (!venture.repo) return 'Could not list the repo: no repo is linked to this venture yet.';
+
+    const { owner, name } = venture.repo;
+    const branch = venture.repo.branch || 'main';
+    const result = await listRepoFiles({ owner, repo: name, branch });
+    const where = `${owner}/${name}@${branch}`;
+
+    // Both of these are answers. Kept distinct because they lead to opposite
+    // next actions — write the first file, versus stop and fix the branch.
+    if (result.state === 'empty') {
+      return `${where} has no commits yet, so there are no files. That is an answer, not an error: the first commit creates the repo's history.`;
+    }
+    if (result.state === 'no-such-ref') {
+      return `${where} does not exist — the repo is reachable but has no branch called "${branch}". Do not treat this as an empty repo; the files are on some other branch. Tell the founder the linked branch is wrong rather than committing to a branch you invented.`;
+    }
+    if (!result.files.length) {
+      return `${where} has a commit history but no files in the tree, which is unusual — check the branch before writing anything.`;
+    }
+
+    const lines = result.files.map((file) => `  ${file.path}${file.bytes ? `  (${file.bytes} bytes)` : ''}`);
+    const note = result.truncated
+      ? `\n\nThis list is truncated at ${result.files.length} of ${result.total}. Anything you did not see may still exist — read a path before assuming it does not.`
+      : '';
+    return `${where} — ${result.total} file${result.total === 1 ? '' : 's'}:\n${lines.join('\n')}${note}`;
+  } catch (err) {
+    return `Could not list the repo: ${err.message}`;
+  }
+}
+
+/**
+ * Is the deployed service actually answering?
+ *
+ * The one question nothing here could answer. `run_checks` proves the tests
+ * pass in a GitHub runner; this proves something is listening on the internet
+ * and what it says back. The two fail independently, and the combination that
+ * matters most — green CI, dead service — was invisible.
+ *
+ * Reports a 500 as a successful probe with a bad result, because that is what
+ * it is, and the distinction from "nothing is listening" is the most useful bit
+ * of information this returns. Conflating them is how a broken deploy gets
+ * diagnosed as a DNS problem.
+ */
+export async function handleCheckService(input, ctx = {}) {
+  const { ventureId, path = '/' } = input;
+  try {
+    const origin = authorizeProbe(ventureId);
+    const result = await probeEndpoint({ origin, path });
+    recordProbe(ventureId, { path, status: result.status, ok: result.ok, ms: result.ms, agentId: ctx.agentId });
+
+    if (result.unreachable) {
+      return `${result.url} did not respond: ${result.reason}. Nothing is listening, or DNS does not resolve — this is not a bad response, it is no response. Check the service is deployed and running before looking at the code.`;
+    }
+
+    const head = `${result.url} -> ${result.status} in ${result.ms}ms`;
+    if (result.status >= 300 && result.status < 400) {
+      return `${head}. It redirects${result.location ? ` to ${result.location}` : ''}, which was not followed. If a customer calls this path they get the redirect, not the data.`;
+    }
+
+    const body = result.body?.trim()
+      ? `\n\n${result.body}${result.truncated ? '\n… (truncated)' : ''}`
+      : '\n\nThe response had an empty body.';
+
+    if (!result.ok) {
+      return `${head} — the service is up and this path is failing. That is a real bug in deployed code, not a deployment problem.${body}`;
+    }
+    return `${head}. The service is up and this path works.${body}`;
+  } catch (err) {
+    return `Could not check the service: ${err.message}`;
   }
 }
 

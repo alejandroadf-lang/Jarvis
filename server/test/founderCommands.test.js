@@ -426,3 +426,74 @@ test('"build" parses; "build the landing page" does not', () => {
   assert.equal(commands.parseFounderCommand('build the landing page next'), null);
   assert.equal(commands.parseFounderCommand('can you build this'), null);
 });
+
+// --- URL: where the venture is actually deployed ---
+//
+// This is the grant that makes check_service possible at all, and it is
+// founder-only for a sharper reason than the others: an agent naming the host
+// would turn a health check into a server-side request forgery primitive. So
+// the parser is the boundary, and what it must not accept matters as much as
+// what it does.
+
+test('URL grants a service origin the team can probe', async () => {
+  const v = newVenture();
+  const parsed = commands.parseFounderCommand(`URL ${v.id} https://circadian-api.up.railway.app`);
+  assert.deepEqual(parsed, {
+    kind: 'service_url',
+    ventureId: v.id,
+    url: 'https://circadian-api.up.railway.app',
+  });
+
+  const reply = await commands.runFounderCommand(parsed);
+  assert.match(reply, /circadian-api\.up\.railway\.app/);
+  // The reply has to say why this matters, or it reads as bookkeeping: the
+  // founder is granting the only capability that distinguishes shipping from
+  // claiming to have shipped.
+  assert.match(reply, /passing CI run does not/);
+  assert.equal(ventures.getVenture(v.id).service.origin, 'https://circadian-api.up.railway.app');
+  assert.doesNotThrow(() => ventures.authorizeProbe(v.id));
+});
+
+test('URL CLEAR revokes it, and is not mistaken for a grant', async () => {
+  const v = newVenture();
+  await commands.runFounderCommand(commands.parseFounderCommand(`url ${v.id} https://api.example.com`));
+
+  const parsed = commands.parseFounderCommand(`URL CLEAR ${v.id}`);
+  assert.deepEqual(parsed, { kind: 'service_url_clear', ventureId: v.id });
+
+  await commands.runFounderCommand(parsed);
+  assert.throws(() => ventures.authorizeProbe(v.id), /No service URL/);
+});
+
+test('a bad URL fails with the reason rather than storing something unprobeable', async () => {
+  const v = newVenture();
+  // The founder is typing this on a phone; "that is http" is actionable and
+  // "invalid input" is not.
+  await assert.rejects(
+    () => commands.runFounderCommand({ kind: 'service_url', ventureId: v.id, url: 'http://api.example.com' }),
+    /https/
+  );
+  assert.equal(ventures.getVenture(v.id).service, undefined);
+});
+
+test('URL needs both a venture id and a value, so prose does not trigger it', () => {
+  assert.equal(commands.parseFounderCommand('url'), null);
+  assert.equal(commands.parseFounderCommand('url v_1_x'), null);
+  assert.equal(commands.parseFounderCommand('what is the url of the api'), null);
+});
+
+test('HELP lists the URL commands, since a control nobody knows about is not a control', async () => {
+  const help = await commands.runFounderCommand({ kind: 'help' });
+  assert.match(help, /URL <ventureId>/);
+  assert.match(help, /URL CLEAR/);
+});
+
+test('VENTURES shows a missing service URL rather than leaving it to be inferred', async () => {
+  const v = newVenture();
+  const before = await commands.runFounderCommand({ kind: 'ventures' });
+  assert.match(before, /no service URL/);
+
+  await commands.runFounderCommand(commands.parseFounderCommand(`url ${v.id} https://api.example.com`));
+  const after = await commands.runFounderCommand({ kind: 'ventures' });
+  assert.match(after, /https:\/\/api\.example\.com/);
+});

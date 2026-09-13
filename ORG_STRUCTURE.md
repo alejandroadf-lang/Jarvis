@@ -1339,6 +1339,62 @@ leadership sync (`dailyMeeting.js`) — see "Full autonomy" below for why
 the daily cycle earned that trust while the weekly reflection and every
 other book-keeping/venture action still haven't.
 
+### Seeing the repo, and seeing the deployed service
+
+Two capabilities that turn out to be about the same thing: whether the team
+is working from evidence or from memory.
+
+**`list_repo_files`** returns every path in the venture's repo in one call
+(`listFiles` in `server/deploy/github.js`, via the git trees API). Before it,
+`read_repo_file` could answer "what is in this file" and nothing could answer
+"what files are there" — so a guessed path came back as "that file does not
+exist", and an agent acting on that writes the file fresh on top of a working
+version sitting under a slightly different name. That is the same shape as
+every confident wrong diagnosis this company has produced: an absent
+observation promoted to a cause. The listing deliberately keeps three states
+apart that a single failed read cannot — files present, no commits yet, and no
+such branch — because the last two lead to opposite next actions.
+
+**`check_service`** makes a real HTTP GET against the venture's deployed
+service and reports what came back (`server/execute/probe.js`). `run_checks`
+proves the tests passed inside a GitHub runner; it says nothing about whether
+the service is deployed, whether the container booted, whether its environment
+variables are set, or whether the promised route exists. Those fail
+independently, and **green CI with a dead service** was invisible to a company
+whose only product is an HTTP API — the gap that made `reporting-status`
+structurally unfixable, since no tool could close it.
+
+The probe distinguishes the two failures that matter: **no response at all**
+(nothing listening — a deployment problem) from **a 500** (something is
+listening and the code is broken — a different problem, in a different place).
+Conflating them is how an afternoon goes into DNS over a missing environment
+variable.
+
+**The agent cannot choose the host.** An outbound GET with an agent-supplied
+URL is a server-side request forgery primitive — reachable targets include the
+platform's metadata service, which hands out credentials over plain HTTP to
+anything that asks. So the origin is a founder-granted scope like every other:
+`setServiceUrl(id, url)` stores one validated https origin on the venture, the
+agent passes only a path, and a path that resolves away from that origin is
+refused rather than followed. `assertProbeableUrl` also rejects http, IP
+literals, credentials in the URL, single-label hosts, and the `.internal` /
+`.local` / `localhost` families — both when the URL is set and again before
+every probe, since a stored value can predate a rule that got stricter.
+Redirects are reported, never followed.
+
+Unlike a deploy or an email, the probe is **not** in the daily plan: plan
+approval covers things that change the world, and putting the evidence that
+the last commit worked behind the same door as the commit is how this codebase
+has repeatedly ended up with a capability nobody could reach. It is still
+gated on the kill switch, because "HALT means nothing leaves this server" is a
+promise worth keeping whole, and rate-limited to six checks a minute per
+venture — checking your work often is the behaviour to encourage; a retry loop
+hammering the venture's own service for the same answer is not.
+
+The founder grants it from WhatsApp: `URL <ventureId> <https://...>`, and
+`URL CLEAR <ventureId>` to revoke. `VENTURES` shows a missing service URL
+explicitly rather than leaving it to be inferred.
+
 The Ventures panel (`client/src/components/VenturesPanel.jsx`) is where
 the scope is actually granted: a form to link a repo (owner, name, branch,
 allowed paths, weekly cap), an enable/disable toggle, and a running log of

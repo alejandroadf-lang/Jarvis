@@ -44,6 +44,8 @@ import {
   handleCompleteTask,
   handleFailTask,
   handleReadRepoFile,
+  handleListRepoFiles,
+  handleCheckService,
   handleLogVentureNote,
   handleCheckDailyPlan,
 } from './actionHandlers.js';
@@ -319,8 +321,13 @@ async function runCompanyTurn(sessionId, message, { deadlineAt = null, image = n
       // founder already granted — reading a file the team can already commit
       // to gives away nothing it did not already have.
       read_repo_file: (input) => handleReadRepoFile(input),
+      list_repo_files: (input) => handleListRepoFiles(input),
       log_venture_note: (input, ctx) => handleLogVentureNote(input, ctx),
       list_checks: (input) => handleListChecks(input),
+      // Evidence that the deployed thing answers, which no CI run provides.
+      // The origin is founder-set (see finance/ventures.js setServiceUrl);
+      // the agent supplies only a path.
+      check_service: (input, ctx) => handleCheckService(input, ctx),
       send_customer_email: (input) => handleSendCustomerEmail(input, 'interactive'),
       // Internal memory only — no scope grant or cap, since nothing leaves
       // the building (see actionHandlers.js).

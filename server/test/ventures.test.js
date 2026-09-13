@@ -380,3 +380,90 @@ test('a venture created without that reasoning stores an empty string, not undef
   const v = makeVenture();
   assert.equal(ventures.getVenture(v.id).agentNativeEdge, '');
 });
+
+// The service URL: a founder-granted scope, like the repo and the outreach
+// allowlist, and for a sharper reason than either. The agent cannot name the
+// host because an agent-chosen host makes check_service a server-side request
+// forgery primitive (see execute/probe.js for the boundary itself). What is
+// tested here is the grant: that it validates on the way in, that nothing can
+// be probed without it, and that the kill switch still covers it.
+test('setServiceUrl stores the origin only, and refuses a URL that could not be probed', () => {
+  const v = makeVenture();
+
+  const linked = ventures.setServiceUrl(v.id, 'https://circadian-api.up.railway.app/health?x=1');
+  // The origin, not the path: the grant is the host, and the agent supplies
+  // the path on each call.
+  assert.equal(linked.service.origin, 'https://circadian-api.up.railway.app');
+
+  // Validated here rather than at probe time, so a stored URL can never be one
+  // the probe would later refuse — a grant that looks live and is not is the
+  // failure shape this codebase keeps hitting.
+  assert.throws(() => ventures.setServiceUrl(v.id, 'http://circadian-api.up.railway.app'), /https/);
+  assert.throws(() => ventures.setServiceUrl(v.id, 'https://169.254.169.254'), /IP address/);
+  assert.throws(() => ventures.setServiceUrl(v.id, 'https://localhost'), /public address/);
+  // And the bad attempts left the good grant alone.
+  assert.equal(ventures.getVenture(v.id).service.origin, 'https://circadian-api.up.railway.app');
+});
+
+test('authorizeProbe refuses when no URL is set, and says the founder has to provide it', () => {
+  const v = makeVenture();
+  assert.throws(() => ventures.authorizeProbe(v.id), /No service URL/);
+  // Specifically: not something the agent can work around, and CI is not a
+  // substitute answer. Both clauses are the ones that stop a turn from
+  // reporting "live" off a green check.
+  assert.throws(() => ventures.authorizeProbe(v.id), /cannot choose it yourself/);
+  assert.throws(() => ventures.authorizeProbe(v.id), /CI run is not evidence/);
+});
+
+test('clearServiceUrl revokes it', () => {
+  const v = makeVenture();
+  ventures.setServiceUrl(v.id, 'https://api.example.com');
+  assert.equal(ventures.authorizeProbe(v.id), 'https://api.example.com');
+  ventures.clearServiceUrl(v.id);
+  assert.throws(() => ventures.authorizeProbe(v.id), /No service URL/);
+});
+
+// A read-only GET against the founder's own service is mild next to a commit
+// or an email. It is still gated on the kill switch, because "HALT means
+// nothing leaves this server" is a promise the founder can rely on, and a
+// carve-out for this one makes it a promise they have to reason about.
+test('the kill switch covers the probe too', async () => {
+  const killSwitch = await import('../killSwitch.js');
+  const v = makeVenture();
+  ventures.setServiceUrl(v.id, 'https://api.example.com');
+
+  killSwitch.haltRealActions('testing');
+  try {
+    assert.throws(() => ventures.authorizeProbe(v.id), /halted/i);
+  } finally {
+    killSwitch.resumeRealActions();
+  }
+  assert.equal(ventures.authorizeProbe(v.id), 'https://api.example.com');
+});
+
+// Rate-limited rather than capped per day: checking your work often is the
+// behaviour this tool exists to encourage. What it has to stop is a retry loop
+// inside one turn hammering the venture's own service for the same answer.
+test('probes are rate-limited per minute, and the refusal says why retrying will not help', () => {
+  const v = makeVenture();
+  ventures.setServiceUrl(v.id, 'https://api.example.com');
+
+  for (let i = 0; i < 6; i += 1) {
+    assert.equal(ventures.authorizeProbe(v.id), 'https://api.example.com');
+    ventures.recordProbe(v.id, { path: '/health', status: 500, ok: false, ms: 12, agentId: 'engineering_lead' });
+  }
+  assert.throws(() => ventures.authorizeProbe(v.id), /read the last result instead/);
+});
+
+test('the probe log keeps what happened, newest first, and does not grow without limit', () => {
+  const v = makeVenture();
+  ventures.setServiceUrl(v.id, 'https://api.example.com');
+
+  for (let i = 0; i < 14; i += 1) {
+    ventures.recordProbe(v.id, { path: `/p${i}`, status: 200, ok: true, ms: i, agentId: 'engineering_lead' });
+  }
+  const probes = ventures.listProbes(v.id);
+  assert.equal(probes.length, 10, 'this is evidence of whether it is up now, not an archive');
+  assert.equal(probes[0].path, '/p13');
+  assert.equal(probes[0].agentId, 'engineering_lead');
+});

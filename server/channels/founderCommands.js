@@ -31,6 +31,8 @@ import {
   setOutreachEnabled,
   setDeploymentEnabled,
   setDeploymentCaps,
+  setServiceUrl,
+  clearServiceUrl,
 } from '../finance/ventures.js';
 import { getLatestDailyReport } from '../dailyReports.js';
 import { withdrawPlan, getApprovedPlan } from '../dailyPlan.js';
@@ -74,6 +76,7 @@ const COMMANDS = [
   { kind: 'deploy_on', re: /^deploy(?:ments?)?\s+on\s+(\S+)$/i, arg: 'ventureId' },
   // "caps v_123 12 40" — commits per day, then per week.
   { kind: 'caps', re: /^caps\s+(v_\S+)\s+(\d+)(?:\s+(\d+))?$/i },
+  { kind: 'service_url_clear', re: /^url\s+clear\s+(v_\S+)$/i, arg: 'ventureId' },
 ];
 
 // "outreach v_123 @acme.com, someone@corp.com" — the grant itself, which
@@ -95,6 +98,14 @@ const OUTREACH_GRANT = /^outreach\s+(v_\S+)\s+(.+)$/i;
 // to bound what agents may grant themselves, and the founder granting a scope
 // in person is the thing it was always deferring to.
 const LINK_GRANT = /^link\s+(v_\S+)\s+([\w.-]+\/[\w.-]+)(?:\s+(.+))?$/i;
+
+// "url v_123 https://circadian-api.up.railway.app" — where the venture is
+// actually deployed, so the team can check its own work with check_service.
+//
+// Founder-only on purpose. An agent naming the host would make check_service a
+// server-side request forgery primitive (see execute/probe.js); the founder
+// setting it once turns that into a narrow, read-only grant against one origin.
+const SERVICE_URL_GRANT = /^url\s+(v_\S+)\s+(\S+)$/i;
 
 /**
  * Reads a founder's message as a control command, or null when it isn't one.
@@ -145,6 +156,11 @@ export function parseFounderCommand(text) {
     };
   }
 
+  const serviceUrl = raw.match(SERVICE_URL_GRANT);
+  if (serviceUrl) {
+    return { kind: 'service_url', ventureId: serviceUrl[1], url: serviceUrl[2] };
+  }
+
   const grant = raw.match(OUTREACH_GRANT);
   if (grant) {
     const recipients = grant[2]
@@ -168,7 +184,10 @@ function describeVenture(venture) {
   const outreach = venture.outreach
     ? `outreach ${venture.outreach.enabled ? 'ON' : 'off'} → ${venture.outreach.allowedRecipients.join(', ') || 'nobody'}`
     : 'no outreach scope';
-  return `${venture.title}\n  ${venture.id}\n  ${repo}\n  ${outreach}`;
+  const service = venture.service?.origin
+    ? venture.service.origin
+    : 'no service URL — they cannot check if it is up';
+  return `${venture.title}\n  ${venture.id}\n  ${repo}\n  ${outreach}\n  ${service}`;
 }
 
 // The build, as a phone message.
@@ -261,6 +280,8 @@ PLAN — today's plan (APPROVE / REJECT <reason> to decide it)
 PLAN CLEAR <reason> — withdraw clearance you already gave
 
 LINK <ventureId> <owner/repo> [paths] — grant a repo and turn deploys on
+URL <ventureId> <https://...> — where it's deployed, so they can check it's up
+URL CLEAR <ventureId> — revoke that
 OUTREACH <ventureId> <emails or @domains> — grant and enable an outreach scope
 OUTREACH OFF <ventureId> — revoke it
 CAPS <ventureId> <per day> [per week] — how often they may commit
@@ -385,6 +406,18 @@ export async function runFounderCommand(command, deps = {}) {
       });
       const venture = setDeploymentEnabled(command.ventureId, true);
       return `"${venture.title}" is linked to ${command.owner}/${command.name} (branch main) and deployments are ON.\n\nThey may write: ${command.allowedPaths.join(', ')}\nCaps: ${venture.repo.maxPerDay}/day, ${venture.repo.maxPerWeek}/week.\n\nDEPLOY OFF ${command.ventureId} stops it.`;
+    }
+
+    case 'service_url': {
+      // setServiceUrl validates the URL and throws with the reason, which is
+      // the message the founder needs — "that is http" rather than "invalid".
+      const venture = setServiceUrl(command.ventureId, command.url);
+      return `"${venture.title}" is deployed at ${venture.service.origin}.\n\nThe team can now run a real request against it and see what comes back, which is the only thing that proves the product works — a passing CI run does not.\n\nURL CLEAR ${command.ventureId} revokes it.`;
+    }
+
+    case 'service_url_clear': {
+      const venture = clearServiceUrl(command.ventureId);
+      return `Cleared the service URL for "${venture.title}". They can no longer check whether it is up, so they will have to take CI's word for it.`;
     }
 
     case 'outreach_grant': {

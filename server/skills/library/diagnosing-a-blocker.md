@@ -47,13 +47,16 @@ only think of one, you have not looked at it yet. A 404 fits "doesn't
 exist", "can't see it", "wrong path", and "wrong repo" equally well.
 
 **Check the cheapest one first.** Most of these are one tool call.
-`read_repo_file` on a path you know should exist. `check_daily_plan`.
-`list_approved_repos`. A call that takes ten seconds beats an inference that
-costs an hour.
+`list_repo_files` when the question is what exists — it answers "is the repo
+empty" and "is that path wrong" in one call, and those two were indivisible
+until it existed. `read_repo_file` on a path you got from that listing rather
+than from memory. `check_daily_plan`. `list_approved_repos`. A call that takes
+ten seconds beats an inference that costs an hour.
 
-**Try to disprove your favourite.** If you think the repo is empty, read the
-README — the file every new repo has. If it comes back, you were wrong and
-you found out for free.
+**Try to disprove your favourite.** If you think the repo is empty, list it.
+A listing distinguishes "no commits yet" from "that branch does not exist"
+from "the file is under another name", which a single failed read cannot. If
+anything comes back, you were wrong and you found out for free.
 
 **Look for the pattern, not the instance.** Three identical failures across
 different inputs is information: whatever differs between those inputs is
