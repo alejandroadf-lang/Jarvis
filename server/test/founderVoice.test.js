@@ -54,22 +54,30 @@ test('it arrives before the work, not after', () => {
   );
 });
 
-test('it says what goes first, not merely "be clear"', () => {
-  // "Write clearly" is advice nobody has ever acted on. The orderable
-  // instruction is what belongs in the first two lines.
+test('the default is the register the founder asked for, not a placeholder', () => {
+  // A default that needs configuring before it is any good is a default that
+  // stays unconfigured. This one is what they actually asked for.
   const text = founder.buildFounderProfile();
-  assert.match(text, /Lead with the outcome and the decision/i);
-  assert.match(text, /first two lines/i);
-  assert.match(text, /nothing needed, carrying on/i, 'and that no-news is a real message');
+  assert.match(text, /like a trader/i);
+  assert.match(text, /what changed, what you need, one line\s+each/i);
+  assert.match(text, /nothing needed, carrying on/i, 'and no-news is a real message');
+});
+
+test('the profile is short enough to sit on every single turn', () => {
+  // It is prepended to every agent call. A page of style guidance would cost
+  // more in tokens across a day than the clarity is worth, and would push
+  // the material it is meant to shape further down.
+  assert.ok(founder.buildFounderProfile().length < 2000);
 });
 
 test('it names the vocabulary that makes a true report unreadable', () => {
   const text = founder.buildFounderProfile();
   assert.match(text, /next_task/, 'tool names');
-  assert.match(text, /internal ids/i);
-  // ...while keeping the exception, or agents will strip the ids the founder
-  // actually has to copy.
-  assert.match(text, /copy one/i);
+  assert.match(text, /internal\s+ids/i);
+  // ...while keeping the exception, or agents will strip the venture id and
+  // commit URL the founder actually has to copy.
+  assert.match(text, /an id they have to copy/i);
+  assert.match(text, /earn their place/i);
 });
 
 test('it does not tell agents to dumb things down', () => {
