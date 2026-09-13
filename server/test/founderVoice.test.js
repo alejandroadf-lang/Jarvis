@@ -63,6 +63,18 @@ test('the default is the register the founder asked for, not a placeholder', () 
   assert.match(text, /nothing needed, carrying on/i, 'and no-news is a real message');
 });
 
+test('the rewrites that teach the register are always loaded, not behind a skill', () => {
+  // The skill is the long form and has to be chosen. These three are the
+  // part that actually changes what gets written, so they ride along on
+  // every turn — engineering jargon, a raw API error, and business jargon,
+  // because all three have shown up in real messages.
+  const text = founder.buildFounderProfile();
+  assert.match(text, /next_task handed engineering the auth task/, 'engineering jargon');
+  assert.match(text, /404 on the contents endpoint/, 'a raw error relayed as-is');
+  assert.match(text, /dual-channel logic/, 'business jargon — the CFO does this too');
+  assert.match(text, /phone screen without scrolling/, 'and the length rule');
+});
+
 test('the profile is short enough to sit on every single turn', () => {
   // It is prepended to every agent call. A page of style guidance would cost
   // more in tokens across a day than the clarity is worth, and would push
