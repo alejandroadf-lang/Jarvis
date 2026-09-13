@@ -274,9 +274,13 @@ export function handleNextTask(input) {
   try {
     const task = nextTask(input.ventureId);
     if (!task) return 'Nothing is queued for that venture. If there is work to do, write it down with queue_work first.';
+    const abandoned = task.stalled
+      ? '\n\nThis was claimed by an earlier turn that never reported back, so it is yours now. ' +
+        'Nothing was skipped — the work behind it was waiting on this.'
+      : '';
     return `Next: [${task.id}] ${task.title}${task.detail ? `\n${task.detail}` : ''}${
-      task.attempts ? `\n\nThis has been attempted ${task.attempts} time(s). Last failure: ${task.error}` : ''
-    }\n\nCall start_task with this id before doing it.`;
+      task.attempts ? `\n\nAttempted ${task.attempts} time(s) already. Last failure: ${task.error}` : ''
+    }${abandoned}\n\nCall start_task with this id before doing it.`;
   } catch (err) {
     return `Could not read the queue: ${err.message}`;
   }

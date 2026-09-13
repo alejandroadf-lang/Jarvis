@@ -48,6 +48,31 @@ export const TASK_STATUS = {
 // burns the spend cap on a loop nobody is watching.
 const MAX_ATTEMPTS = 3;
 
+// How long a claim can sit before it is treated as abandoned rather than
+// in flight.
+//
+// This exists because of a failure the queue itself caused. nextTask only
+// ever returned QUEUED work, so a task claimed by a turn that then died —
+// which is precisely what this store was built to survive — stayed RUNNING
+// forever, and nextTask silently handed out the task *after* it. The
+// declared order was engine, then tests. The engine claim was orphaned by a
+// failed deploy, so the next agent was handed the tests, and correctly
+// refused to write tests for a file that did not exist yet.
+//
+// Skipping a stuck task is the worst of the three options: it looks like
+// progress, it breaks the ordering the queue exists to enforce, and nothing
+// says so. Reclaiming it after a threshold is self-healing, and the attempt
+// counter still stops it looping forever.
+const STALE_AFTER_MS = Math.max(60_000, Number(process.env.TASK_STALE_AFTER_MS) || 15 * 60 * 1000);
+
+function isStalled(task) {
+  return (
+    task.status === TASK_STATUS.RUNNING &&
+    task.startedAt &&
+    Date.now() - Date.parse(task.startedAt) > STALE_AFTER_MS
+  );
+}
+
 function load() {
   const data = readJson(FILE, { tasks: [] });
   if (!Array.isArray(data.tasks)) data.tasks = [];
@@ -119,10 +144,21 @@ export function enqueueTasks(ventureId, items, queuedBy) {
 
 /** The next thing to do for a venture, or null. Never hands back running work. */
 export function nextTask(ventureId) {
+  // An abandoned claim is returned, not skipped. A task genuinely in flight
+  // is still held back — that is what stops two turns doing the same work —
+  // but one whose claimant went silent long ago is the next thing to do, and
+  // handing out the task behind it silently reorders the build.
   const open = load()
-    .tasks.filter((t) => t.status === TASK_STATUS.QUEUED && (!ventureId || t.ventureId === ventureId))
+    .tasks.filter(
+      (t) =>
+        (!ventureId || t.ventureId === ventureId) &&
+        (t.status === TASK_STATUS.QUEUED || isStalled(t))
+    )
     .sort((a, b) => a.order - b.order || a.queuedAt.localeCompare(b.queuedAt));
-  return open[0] || null;
+
+  const task = open[0];
+  if (!task) return null;
+  return isStalled(task) ? { ...task, stalled: true } : task;
 }
 
 /**
@@ -134,7 +170,11 @@ export function nextTask(ventureId) {
 export function startTask(id) {
   const data = load();
   const task = find(data, id);
-  if (task.status === TASK_STATUS.RUNNING) throw new Error(`Task "${task.title}" is already running.`);
+  // A live claim still blocks; an abandoned one is reclaimable, or the queue
+  // stays jammed on a turn that will never come back.
+  if (task.status === TASK_STATUS.RUNNING && !isStalled(task)) {
+    throw new Error(`Task "${task.title}" is already running.`);
+  }
   if (task.status === TASK_STATUS.DONE) throw new Error(`Task "${task.title}" is already done.`);
   task.status = TASK_STATUS.RUNNING;
   task.attempts += 1;
@@ -238,7 +278,11 @@ export function describeTasksForAgents(ventureId) {
   if (!open.length) return '';
 
   const lines = open.map((t) => {
-    const state = t.status === TASK_STATUS.RUNNING ? 'IN PROGRESS' : 'queued';
+    const state = isStalled(t)
+      ? 'CLAIMED BUT ABANDONED — pick this up'
+      : t.status === TASK_STATUS.RUNNING
+        ? 'IN PROGRESS'
+        : 'queued';
     const tries = t.attempts > 1 ? `, attempt ${t.attempts}` : '';
     const why = t.error ? `\n    last failure: ${t.error}` : '';
     return `  [${t.id}] ${t.title} (${state}${tries})${why}`;
