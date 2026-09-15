@@ -38,6 +38,18 @@ import {
   handleLogContactNote,
   handleSubmitDailyPlan,
   handleCheckDailyPlan,
+  handleQueueWork,
+  handleNextTask,
+  handleStartTask,
+  handleCompleteTask,
+  handleFailTask,
+  handleReadRepoFile,
+  handleListRepoFiles,
+  handleRunChecks,
+  handleListChecks,
+  handleCheckService,
+  handleLogVentureNote,
+  handleListApprovedRepos,
 } from './actionHandlers.js';
 import { todayKey, saveDailyReport, getLatestDailyReport } from './dailyReports.js';
 import { sendDailyReportEmail } from './email.js';
@@ -150,6 +162,97 @@ function soloRoster(agents, rootId) {
   return { ...agents, [rootId]: { ...agents[rootId], reports: [] } };
 }
 
+/**
+ * What an agent may actually do in an unattended cycle.
+ *
+ * This existed inline and wired five handlers against a roster that defines
+ * twenty-one. The Engineering Lead has twelve tools and exactly one of them —
+ * deploy_code — worked here, so every morning it could commit code and could
+ * not read the repo, claim a task, run the checks, or look at whether the
+ * deployed service answered. Each of those returned "Unknown tool", every day,
+ * deterministically, and the CTO reasonably read the pattern as an environment
+ * fault and recommended retrying.
+ *
+ * Nothing connected the roster to this map, which is why it drifted silently as
+ * tools were added. dailyCycleParity.test.js now closes that: a new tool has to
+ * be wired here or named in BARRED_UNATTENDED, and adding one without doing
+ * either fails the suite.
+ *
+ * The split is about what the tool needs from the founder, not how risky it
+ * sounds. Reading a repo, claiming a task and running CI have no external
+ * effect the founder has not already sanctioned — and a company allowed to
+ * deploy but not to verify is a worse arrangement than one allowed to do
+ * neither.
+ */
+export function dailyCycleActionHandlers() {
+  return {
+    // 'daily_cycle' is recorded on the venture's deployment/outreach log so the
+    // founder can tell an unattended real action apart from one that happened
+    // during a live conversation — see index.js's 'interactive' counterpart.
+    deploy_code: (input) => handleDeployCode(input, 'daily_cycle'),
+    send_customer_email: (input) => handleSendCustomerEmail(input, 'daily_cycle'),
+
+    // The cycle's way of asking. Without it the sync is refused on every real
+    // action and cannot even put a plan up.
+    submit_daily_plan: (input, ctx) => handleSubmitDailyPlan(input, 'daily_cycle', ctx),
+    check_daily_plan: () => handleCheckDailyPlan(),
+
+    // The durable work queue. Entirely internal book-keeping: nothing here
+    // reaches outside this server, and without it a build cannot survive a turn
+    // that ends early — which is the failure the queue was built for and which
+    // an unattended cycle is the most likely to hit.
+    queue_work: (input, ctx) => handleQueueWork(input, ctx),
+    next_task: (input) => handleNextTask(input),
+    start_task: (input) => handleStartTask(input),
+    complete_task: (input, ctx) => handleCompleteTask(input, ctx),
+    fail_task: (input) => handleFailTask(input),
+
+    // Reading. No scope beyond the repo the founder already linked — being able
+    // to read a file the team may already commit to gives away nothing — and
+    // committing without reading first is how a working file gets overwritten
+    // by a guess.
+    read_repo_file: (input) => handleReadRepoFile(input),
+    list_repo_files: (input) => handleListRepoFiles(input),
+    list_approved_repos: () => handleListApprovedRepos(),
+
+    // Verification. run_checks dispatches a workflow in a repo the founder
+    // already enabled for deploys, and check_service makes one GET against a
+    // URL the founder set. Allowing the deploy and withholding the evidence it
+    // worked is the combination that produces confident wrong status reports.
+    run_checks: (input, ctx) => handleRunChecks(input, 'daily_cycle', ctx),
+    list_checks: (input) => handleListChecks(input),
+    check_service: (input, ctx) => handleCheckService(input, ctx),
+
+    // Memory, with no real-world effect at all: what the agent learned, written
+    // where the next turn reads it.
+    log_venture_note: (input, ctx) => handleLogVentureNote(input, ctx),
+    log_contact_note: handleLogContactNote,
+  };
+}
+
+/**
+ * Tools deliberately withheld from an unattended cycle, and why.
+ *
+ * Every one of these needs something only the founder can supply. They are not
+ * missing; they are refused, and naming them here is what lets the parity test
+ * tell the difference between a decision and an oversight.
+ */
+export const BARRED_UNATTENDED = new Map([
+  // Nothing happened. These record real-world outcomes the founder reported,
+  // and there is nobody reporting anything at 08:00.
+  ['log_revenue', 'records money that actually arrived — needs the founder to say so'],
+  ['log_expense', 'records money that actually went out — needs the founder to say so'],
+  ['report_milestone_progress', 'asserts a milestone moved — needs a real outcome behind it'],
+  ['kill_venture', 'ends a venture; a decision the founder makes, not a 3am inference'],
+
+  // Granting scope is the founder's act by definition. An agent widening its
+  // own allowlist unattended would make every other guardrail decorative.
+  ['link_venture_repo', 'grants write access to a repo — the founder grants scope'],
+
+  // The Studio phase owns this, with its own handler and its own bar.
+  ['propose_venture', 'the Venture Studio phase proposes ventures, not the leadership sync'],
+]);
+
 function leadershipKickoff(date) {
   return `It's ${date}. Time for today's daily leadership sync.
 
@@ -248,23 +351,7 @@ export async function runDailyMeeting({ anthropic }) {
       // Only the two scope-gated real actions are wired in here — see file
       // header for why those specifically are safe in an unattended run
       // when the book-keeping and venture-status actions still aren't.
-      actionHandlers: {
-        // 'daily_cycle' is recorded on the venture's deployment/outreach log
-        // so the founder can tell an unattended real action apart from one
-        // that happened during a live conversation — see index.js's
-        // 'interactive' counterpart.
-        deploy_code: (input) => handleDeployCode(input, 'daily_cycle'),
-        send_customer_email: (input) => handleSendCustomerEmail(input, 'daily_cycle'),
-        // The cycle's way of asking. Without it the sync is refused on every
-        // real action and cannot even put a plan up — inert every morning,
-        // which is what these two changes accidentally produced together.
-        submit_daily_plan: (input, ctx) => handleSubmitDailyPlan(input, 'daily_cycle', ctx),
-        check_daily_plan: () => handleCheckDailyPlan(),
-        // Safe unattended for the opposite reason to the two above: it has
-        // no real-world effect at all, it only writes what the agent learned
-        // into memory the next draft will read.
-        log_contact_note: handleLogContactNote,
-      },
+      actionHandlers: dailyCycleActionHandlers(),
       extraContext: [companyContext, steering].filter(Boolean).join('\n\n'),
       perAgentContext: buildPerAgentContext,
     });
