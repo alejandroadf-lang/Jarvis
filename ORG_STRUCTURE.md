@@ -1223,6 +1223,52 @@ Three things came out of fixing it:
   for itself from one quietly surcharging every call, and leaving it unmeasured
   is how the first version of this went wrong.
 
+### The unattended cycle could deploy but not read
+
+The daily cycle wired five action handlers against a roster that defines
+twenty-one. The Engineering Lead has twelve tools and exactly one of them —
+`deploy_code` — worked there. Every morning it could commit code to a real repo
+and could not read that repo, claim a task, run the checks, or check whether the
+deployed service answered. All of those returned "Unknown tool".
+
+The outage was not the expensive part. The expensive part was that it looked
+like an environment fault from the inside: the CTO reported "repo/task tools are
+erroring on every call", called it distinct from an earlier access problem, and
+recommended retrying next turn — which would have produced the identical failure
+every morning indefinitely. An absent capability read as a transient one, and
+nothing in the system could have told it otherwise.
+
+Two of the gaps were newly self-inflicted: `list_repo_files` and `check_service`
+were wired into `index.js` and not here, so the interactive path gained
+capabilities the unattended one did not.
+
+`dailyCycleActionHandlers()` now serves seventeen, and `BARRED_UNATTENDED` names
+the six that are refused along with the reason each needs a founder:
+`log_revenue`, `log_expense` and `report_milestone_progress` assert real-world
+outcomes nobody is reporting at 08:00; `kill_venture` ends a venture;
+`link_venture_repo` grants scope, and an agent widening its own allowlist would
+make every other guardrail decorative; `propose_venture` belongs to the Studio
+phase.
+
+The split is about what a tool needs from the founder, not how risky it sounds.
+Reading a repo, claiming a task and running CI have no external effect the
+founder has not already sanctioned — and a cycle permitted to deploy but not to
+verify is worse than one permitted to do neither, because it produces confident
+status reports with nothing behind them.
+
+#### The structural fix
+
+Nothing connected the org chart to the handler map, which is why it drifted
+silently as tools were added over weeks. `dailyCycleParity.test.js` is that
+link: a tool on any agent must be wired or named as barred, and doing neither
+fails the suite at the moment the tool is added rather than at 08:00 six weeks
+later. It also refuses a barred entry for a tool no agent has, so the list
+cannot come to read as more considered than it is.
+
+This was the fourth capability in this codebase found behind a door nothing
+opened, after `readFile`, `stalledTasks` and the missing DeepSeek dispatch
+branch. It is the first one with a test that would have caught it.
+
 ### Orchestrators are no longer locked to Anthropic
 
 Ten of the twenty-two agents — the whole C-suite, plus the Engineering Lead and
