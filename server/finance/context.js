@@ -105,7 +105,10 @@ export function buildOutreachContext() {
       : '';
     const price = `\n  Price on record: ${describePricing(venture)}.`;
     const booking = venture.bookingUrl ? `\n  Booking link (give it to anyone who wants to talk): ${venture.bookingUrl}` : '';
-    return `"${venture.title}" [id: ${venture.id}]:${price}${booking}${deals}\n${body}${waiting}`;
+    const mcp = venture.mcp?.url
+      ? `\n  MCP endpoint (for a prospect whose own agent wants to call the product): ${venture.mcp.url}`
+      : '';
+    return `"${venture.title}" [id: ${venture.id}]:${price}${booking}${mcp}${deals}\n${body}${waiting}`;
   });
 
   return `Contact history for ventures with an outreach scope — check this before

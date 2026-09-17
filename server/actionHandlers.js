@@ -78,6 +78,7 @@ import { probeEndpoint } from './execute/probe.js';
 import { fetchReplies, isInboxConfigured } from './inbox.js';
 import { deployReadiness, outreachReadiness, formatReadiness } from './readiness.js';
 import { withComplianceFooter, isUnsubscribe } from './outreachCompliance.js';
+import { priceFloorRefusal, reviewOutbound } from './review.js';
 import { createCheckoutLink, isPaymentsConfigured } from './payments.js';
 import { usageSummary, hasIngestKey } from './ventureUsage.js';
 import {
@@ -517,6 +518,24 @@ export async function handleSendCustomerEmail(input, triggeredBy = 'interactive'
   }
   try {
     const venture = authorizeOutreach(ventureId, { to });
+
+    // The supervisor's veto. Off unless the founder turned it on, and cheap
+    // when on — one call on the cheap tier. It runs after every gate has
+    // passed and before the message leaves, which is the only moment where
+    // saying no still costs nothing.
+    const review = await reviewOutbound({
+      anthropic: ctx.anthropic,
+      venture,
+      action: 'send_customer_email',
+      summary: `To: ${to}\nSubject: ${subject}\n\n${body}`,
+    });
+    if (!review.approved) {
+      return (
+        `Not sent — the CEO vetoed it: ${review.reason}\n\n` +
+        'Revise it and try again, or say plainly that you disagree and let the founder decide. Do not resend it unchanged.'
+      );
+    }
+
     // The disclosure and the opt-out are appended here, after the draft and
     // before the send, so no message leaves without them however it was
     // written. See outreachCompliance.js for which laws each line answers.
@@ -1223,9 +1242,16 @@ export async function handleCreatePaymentLink(input, ctx = {}) {
       return `Could not create a payment link: no amount given and "${venture.title}" has no price set. The founder sets one with PRICE ${venture.id} <floor per month> <per unit> <unit>.`;
     }
     const units = Number(input?.expectedUnits) || 0;
-    amount = kind === 'monthly' ? monthlyValue(venture, units) : monthlyValue(venture, units);
+    // One month's worth either way: a one-time link sells a month up front.
+    amount = monthlyValue(venture, units);
     if (amount <= 0) return `Could not create a payment link: the price on record (${describePricing(venture)}) comes to zero for that volume.`;
   }
+
+  // The price floor, before anything reaches Stripe. Arithmetic, not judgment:
+  // a link below what the venture charges is the company giving its product
+  // away, which is the exact failure Project Vend documents by name.
+  const belowFloor = priceFloorRefusal(venture, { amount, expectedUnits: Number(input?.expectedUnits) || 0 });
+  if (belowFloor) return `Could not create a payment link: ${belowFloor}`;
 
   try {
     assertRealActionsAllowedForLink();

@@ -964,6 +964,47 @@ export function monthlyValue(venture, units = 0) {
   return p.floorMonthly + p.perUnit * Math.max(0, Number(units) || 0);
 }
 
+// --- Selling to agents, not only to people ---------------------------------------
+//
+// In 2026 a buyer's first contact with an API is increasingly their own
+// assistant trying to use it. An MCP server is how a product becomes reachable
+// that way: expose the capability once, and every MCP-speaking client can call
+// it. Recorded here rather than inferred, because the endpoint is a fact about
+// a deployment and nothing in this app should guess at a URL.
+export function setMcpEndpoint(id, url) {
+  const data = load();
+  const venture = findOrThrow(data, id);
+  const value = String(url || '').trim();
+  if (value && !/^https:\/\//.test(value)) throw new Error('An MCP endpoint must start with https://');
+  venture.mcp = value ? { url: value, at: new Date().toISOString() } : null;
+  save(data);
+  return venture;
+}
+
+// --- Discounts are the founder's, not the team's ---------------------------------
+//
+// An agent talked into a discount is the documented failure mode of an AI
+// running a shop (see review.js). The floor is arithmetic and cannot be argued
+// with; moving it is a founder act, recorded here so a customer who was
+// genuinely given a better price still gets it.
+export function setDiscountFloor(id, floor) {
+  const data = load();
+  const venture = findOrThrow(data, id);
+  const value = Number(floor);
+  if (!Number.isFinite(value) || value < 0) throw new Error('A discount floor must be a number >= 0.');
+  venture.discount = { approvedFloor: value, at: new Date().toISOString() };
+  save(data);
+  return venture;
+}
+
+export function clearDiscountFloor(id) {
+  const data = load();
+  const venture = findOrThrow(data, id);
+  delete venture.discount;
+  save(data);
+  return venture;
+}
+
 // --- Where "let's talk" lands --------------------------------------------------
 export function setBookingUrl(id, url) {
   const data = load();
