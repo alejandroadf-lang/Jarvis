@@ -1232,9 +1232,22 @@ anything at all. A list sorts by name; a graph sorts by structure, and
 structure is the question — *who did the CEO actually talk to* is one look at a
 picture and a paragraph of prose.
 
-`GET /graph` draws all twenty-two agents as a force-directed graph, live from
-`server/graph.js`. Every field comes from something already recorded, never
-computed for display:
+`GET /graph` draws all twenty-eight agents as a force-directed graph, live from
+`server/graph.js` — **both teams**. The first version drew only the Executive
+Team and reported "22 agents", which is not the company: the Venture Studio is
+six more, it runs every morning in the second phase of the sync, and its trace
+was being read and then silently discarded because none of its ids matched a
+node. For a picture whose job is "which parts of the company moved this
+morning", omitting a team that ran is the failure it exists to prevent.
+
+Two roots, then — the CEO and the Venture Partner — drawn as two constellations
+with no edge between them, which is exactly how the company works: the Studio
+proposes ventures, the Executive Team builds them, and they never consult each
+other mid-turn. The teams stack along whichever axis the screen has, because
+side by side on a tall phone squeezes twenty-two nodes into a mat of
+overlapping labels while the vertical room goes spare.
+
+Every field comes from something already recorded, never computed for display:
 
 - edges are the `reportsTo` links `validate.js` already enforces
 - lit vs unlit is the latest daily report's delegation trace — a node glows if
@@ -1243,15 +1256,22 @@ computed for display:
   the only honest answer when `AGENT_MODEL_TIERS` can change it without a deploy
 - earnings come from the profit-share ledger
 
-Agents that have never run stay in the picture, dimmed. A roster of twenty-two
-where thirteen were never consulted is a finding, and dropping them would hide
-exactly that — so `meta.idleCount` names the number rather than leaving a viewer
-to count dots.
+Agents that have never run stay in the picture, dimmed. A roster where half were
+never consulted is a finding, and dropping them would hide exactly that — so
+`meta.idleCount` names the number rather than leaving a viewer to count dots.
+
+A count in prose goes stale silently: `validate.js` said "at 27 agents" from
+before the Devil's Advocate was added, and three comments in `agentRunner.js`
+still said twenty-one. Those are corrected, and one test now pins the real total
+so the next roster change has to update it deliberately rather than leaving the
+prose quietly wrong.
 
 ### Encoding
 
-Hue is department, assigned in fixed order from a palette validated for
-lightness, chroma, colourblind separation and contrast against this surface.
+Hue is department — six of them now, the sixth added for the Studio and the
+whole set re-validated rather than eyeballed — assigned in fixed order from a
+palette checked for lightness, chroma, colourblind separation and contrast
+against this surface.
 Two things deliberately avoid becoming a sixth and seventh hue: **a ring** means
 the agent cannot leave Anthropic because it uses a server tool (the first
 question the picture prompts is "why is that one still expensive"), and

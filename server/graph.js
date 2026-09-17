@@ -18,10 +18,25 @@
 //   - `earnedUsd` and `contributions` come from the profit-share ledger
 //
 // An agent that has never run shows as unlit rather than being left out. A
-// roster of twenty-two where six have never once been consulted is a finding,
-// and dropping them from the picture would hide exactly that.
+// roster where half have never once been consulted is a finding, and dropping
+// them from the picture would hide exactly that.
+//
+// ## Both teams, not one
+//
+// The first version drew only the Executive Team and reported "22 agents",
+// which is not the company: the Venture Studio is six more, it runs every
+// morning in the second phase of the daily sync, and its trace was being read
+// and then silently discarded because none of its ids matched a node. For a
+// picture whose whole job is "which parts of the company moved this morning",
+// omitting a team that ran is the failure it exists to prevent.
+//
+// So the graph has two roots — the CEO and the Venture Partner — and draws two
+// constellations with no edge between them, which is exactly how the company
+// works: the Studio proposes ventures, the Executive Team builds them, and they
+// never consult each other mid-turn.
 
-import { AGENTS as COMPANY_AGENTS, ROOT_AGENT_ID } from './agents/orgChart.js';
+import { AGENTS as COMPANY_AGENTS, ROOT_AGENT_ID as COMPANY_ROOT } from './agents/orgChart.js';
+import { AGENTS as STUDIO_AGENTS, ROOT_AGENT_ID as STUDIO_ROOT } from './agents/ideationTeam.js';
 import { resolveModelForAgent } from './agents/models.js';
 import { isOpenRouterConfigured } from './agents/openrouter.js';
 import { getLatestDailyReport } from './dailyReports.js';
@@ -30,6 +45,11 @@ import { getProfitShare } from './finance/profitShare.js';
 /**
  * @returns {{nodes: Array, edges: Array, meta: object}}
  */
+const TEAMS = [
+  { key: 'executive', label: 'Executive Team', agents: COMPANY_AGENTS, root: COMPANY_ROOT },
+  { key: 'studio', label: 'Venture Studio', agents: STUDIO_AGENTS, root: STUDIO_ROOT },
+];
+
 export function buildGraph() {
   const report = getLatestDailyReport();
   const trace = [...(report?.leadership?.trace || []), ...(report?.studio?.trace || [])];
@@ -54,7 +74,7 @@ export function buildGraph() {
 
   const alternativeAvailable = isOpenRouterConfigured();
 
-  const nodes = Object.values(COMPANY_AGENTS).map((agent) => {
+  const nodes = TEAMS.flatMap(({ key, agents, root }) => Object.values(agents).map((agent) => {
     const spec = resolveModelForAgent(agent, alternativeAvailable);
     const ran = activity.get(agent.id) || null;
     const paid = earnings.get(agent.id) || null;
@@ -63,8 +83,9 @@ export function buildGraph() {
       id: agent.id,
       title: agent.title,
       department: agent.department,
+      team: key,
       reportsTo: agent.reportsTo || null,
-      isRoot: agent.id === ROOT_AGENT_ID,
+      isRoot: agent.id === root,
       // How many agents sit under it, so the layout can size a manager by the
       // weight of what it actually carries rather than by name length.
       reportCount: (agent.reports || []).length,
@@ -81,20 +102,22 @@ export function buildGraph() {
       earnedUsd: paid?.earnedUsd ?? 0,
       contributions: paid?.contributions ?? 0,
     };
-  });
+  }));
 
   const byId = new Set(nodes.map((n) => n.id));
   const edges = [];
-  for (const agent of Object.values(COMPANY_AGENTS)) {
-    for (const reportId of agent.reports || []) {
-      if (!byId.has(reportId)) continue;
-      edges.push({
-        source: agent.id,
-        target: reportId,
-        // An edge the latest sync actually travelled, so the picture shows the
-        // path a question took rather than only the paths it could have.
-        active: Boolean(activity.get(reportId)),
-      });
+  for (const { agents } of TEAMS) {
+    for (const agent of Object.values(agents)) {
+      for (const reportId of agent.reports || []) {
+        if (!byId.has(reportId)) continue;
+        edges.push({
+          source: agent.id,
+          target: reportId,
+          // An edge the latest sync actually travelled, so the picture shows
+          // the path a question took rather than only the paths it could have.
+          active: Boolean(activity.get(reportId)),
+        });
+      }
     }
   }
 
@@ -104,8 +127,13 @@ export function buildGraph() {
     nodes,
     edges,
     meta: {
-      root: ROOT_AGENT_ID,
+      // Both roots, because there are two. A single `root` field was the shape
+      // that made it easy to forget the second team existed.
+      roots: TEAMS.map((t) => ({ id: t.root, team: t.key, label: t.label })),
       agentCount: nodes.length,
+      teamCounts: Object.fromEntries(
+        TEAMS.map((t) => [t.key, nodes.filter((n) => n.team === t.key).length])
+      ),
       ranCount,
       // Named rather than derived in the page: "six agents have never been
       // consulted" is the finding, and a viewer should not have to count dots.
