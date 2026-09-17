@@ -24,6 +24,7 @@
 // new venture has no repo and no outreach list until the founder gives it
 // one.
 
+import { unsupportedClaims } from './claimCheck.js';
 import { runAgent } from './agents/agentRunner.js';
 import { AGENTS as COMPANY_AGENTS, ROOT_AGENT_ID as COMPANY_ROOT } from './agents/orgChart.js';
 import { AGENTS as STUDIO_AGENTS, ROOT_AGENT_ID as STUDIO_ROOT } from './agents/ideationTeam.js';
@@ -446,6 +447,13 @@ export async function runDailyMeeting({ anthropic }) {
     scope: { full: scope.full, reason: scope.reason, moved: scope.movement.lines },
     leadership: { reply: leadership.text, trace: leadership.trace },
     studio: { reply: studio.text, trace: studio.trace },
+    // Claims of real-world work with no tool call behind them. Normally empty;
+    // when it is not, the founder should not have to catch it by reading
+    // carefully. See claimCheck.js.
+    unsupportedClaims: [
+      ...unsupportedClaims({ text: leadership.text, trace: leadership.trace }),
+      ...unsupportedClaims({ text: studio.text, trace: studio.trace }),
+    ],
     proposedVentureIds,
     business: { revenue, expenses, net },
     usage,

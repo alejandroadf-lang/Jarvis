@@ -10,6 +10,7 @@
 
 import nodemailer from 'nodemailer';
 import { formatUsd } from './usage.js';
+import { describeUnsupportedClaims } from './claimCheck.js';
 
 function buildTransport() {
   if (!process.env.SMTP_HOST || !process.env.REPORT_EMAIL_TO) return null;
@@ -61,6 +62,11 @@ export function formatReportEmail(report) {
       `Ran in ${(report.durationMs / 1000).toFixed(1)}s · ${formatUsd(report.costUsd)} · ${report.usage.inputTokens.toLocaleString()} in / ${report.usage.outputTokens.toLocaleString()} out tokens`
     );
   }
+  // Before the report, not after it: a warning that the report may be wrong is
+  // not a footnote to the report.
+  const claims = describeUnsupportedClaims(report.unsupportedClaims);
+  if (claims) lines.push('', claims);
+
   lines.push(
     '',
     '=== Leadership Sync (Executive Team) ===',

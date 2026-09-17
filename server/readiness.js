@@ -123,7 +123,7 @@ function capGates(entries, timestampKey, scope, label) {
       `Weekly ${label} cap`,
       state.weekOk,
       `${state.inWeek} of ${state.maxPerWeek} this week.`,
-      state.weekOk ? '' : `The founder raises the weekly cap for this venture, or this waits.`,
+      state.weekOk ? '' : 'The founder raises the weekly cap for this venture, or this waits for the window to roll.',
       state.weekOk ? '' : 'CAPS <ventureId> <per day> <per week>',
     ),
     gate(

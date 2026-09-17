@@ -2474,3 +2474,72 @@ the next eighteen months.
 Exposing the venture's API as an MCP server waits for the API to exist. The
 model tiers, the design partners, and sending `EVAL` for the first time are the
 founder's, and no code changes that.
+
+## Five turns against a wall nobody could see
+
+The team shipped three files, then spent five turns failing to commit a fourth
+— and one of those turns narrated a deploy it had not performed. The report
+called it "purely mechanical execution, not design." That was right, and the
+mechanism was three bugs in this repo, none of them in the agent.
+
+### `LINK` handed a venture under construction a three-file week
+
+`LINK v_123 owner/repo` passes no caps, so `linkRepo` used its defaults: **one
+commit a day, three a week.** Three files is an afternoon on a product that
+does not exist yet, and it was the entire weekly allowance. Every attempt at
+`auth.py` came back:
+
+> Weekly deployment cap reached (3/week) for this venture.
+
+Those defaults were chosen when a commit was a rare and precious thing. They
+are now 4/day and 20/week — still bounded, and `CAPS` moves either number in
+one message.
+
+### The refusal named a number and no door
+
+Every other gate in `ventures.js` says what to ask the founder for: *the
+founder turns this on in the Ventures panel*. The two cap refusals said only
+that a limit had been reached. An agent that hits a wall with no door reads it
+as a fault in itself, and tries again — which is exactly what happened, five
+times. Both messages now name `CAPS <ventureId> <per day> <per week>` and say
+plainly that re-attempting will not change it.
+
+### One commit counted as one unit per file
+
+The deployment log keeps a row per path, because "what changed" wants every
+path. The caps were counting those rows. So a well-structured seven-file
+commit cost seven times what the seven sloppy single-file commits it replaced
+would have cost — `deploy_changes`, added to encourage coherent changes, was
+the most expensive way to use the repo.
+
+`countableTimes()` now collapses rows sharing a `commitSha` to one. The log is
+unchanged; the cap counts acts.
+
+Two further defects fell out of fixing it, both found by the tests rather than
+by reading:
+
+- **`authorizeDeploymentOfPaths` checked headroom for one and consumed N.**
+  Every per-path call read the same pre-commit state, saw room for one, and
+  passed — four of headroom admitted a six-file commit and recorded seven
+  against a cap of five. The per-path gates (allowlist, plan) still run per
+  path; the cap runs once, for one commit.
+- **The checks-overdue gate counted rows too.** A seven-file commit read as
+  seven and tripped a limit of five on its own — with no check run to clear it
+  against, because the CI workflow was one of the files still unwritten. That
+  is a deadlock, and it was one commit away from being the next blocker.
+
+### A claim of work is now checkable
+
+One turn reported deploying with no tool call behind it. A person caught it.
+That is luck with a good habit attached, not a control — and the
+`reporting-status` skill asking agents not to do it is a request, not a rule.
+
+The runner records every action-tool call in the trace. `server/claimCheck.js`
+reads a turn's text against that list and flags one shape only: the reply
+asserts a real-world act was completed, and no successful action of that kind
+happened in the same turn. Honest refusals, plans, and accurate summaries of
+several commits all pass; a delegation to six specialists about a deploy does
+not vouch for a deploy.
+
+The warning goes at the *top* of the daily report email, before the report. A
+warning that the report may be wrong is not a footnote to the report.

@@ -63,17 +63,44 @@ function shipping() {
 // because a real run is spaced out by the 60s per-venture cooldown and a test
 // that waited five minutes to make its point would never be run.
 // `minutesAgo` backdates them so the cooldown is not what is being measured.
+// n separate commits, each with its own sha. The fixture used to stamp them
+// all 'abc', which no real sequence of commits does — and once the gate began
+// counting commits rather than rows (see deployCaps.test.js), five identical
+// shas correctly read as one commit and these tests stopped meaning what their
+// names say.
+// Unique across calls, not just within one: a test that commits twice was
+// otherwise reusing sha0 and collapsing two commits into one.
+let shaCounter = 0;
+
 function commit(id, n = 1, minutesAgo = 10) {
   const file = path.join(tmpDir, 'ventures.json');
   const data = JSON.parse(fs.readFileSync(file, 'utf8'));
   const venture = data.ventures.find((v) => v.id === id);
   venture.deployments = venture.deployments || [];
   for (let i = 0; i < n; i += 1) {
+    shaCounter += 1;
     venture.deployments.push({
-      path: `src/f${i}.py`,
+      path: `src/f${shaCounter}.py`,
       message: 'x',
-      commitSha: 'abc',
+      commitSha: `sha${shaCounter}`,
       deployedAt: new Date(Date.now() - minutesAgo * 60_000 + i * 1000).toISOString(),
+    });
+  }
+  fs.writeFileSync(file, JSON.stringify(data, null, 2));
+}
+
+// One commit, several files — what deploy_changes produces.
+function multiFileCommit(id, files, minutesAgo = 10) {
+  const file = path.join(tmpDir, 'ventures.json');
+  const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const venture = data.ventures.find((v) => v.id === id);
+  venture.deployments = venture.deployments || [];
+  for (let i = 0; i < files; i += 1) {
+    venture.deployments.push({
+      path: `src/together${i}.py`,
+      message: 'one change',
+      commitSha: 'one-commit',
+      deployedAt: new Date(Date.now() - minutesAgo * 60_000 + i * 100).toISOString(),
     });
   }
   fs.writeFileSync(file, JSON.stringify(data, null, 2));
@@ -140,4 +167,15 @@ test('scope problems still win — the gate is checked last', () => {
   const v = shipping();
   commit(v.id, 9);
   assert.throws(() => ventures.authorizeDeployment(v.id, { path: 'secrets/prod.env' }), /outside the allowed scope/);
+});
+
+
+test('one multi-file commit is one commit against this gate, not one per file', () => {
+  // The bug this catches: deploy_changes exists to make a coherent change one
+  // commit, and counting rows made that the one thing guaranteed to lock the
+  // team out — a seven-file change read as seven and tripped a limit of five
+  // on its own, with nothing to run_checks against yet.
+  const v = shipping();
+  multiFileCommit(v.id, 7);
+  assert.doesNotThrow(() => ventures.authorizeDeployment(v.id, { path: 'src/next.py' }));
 });

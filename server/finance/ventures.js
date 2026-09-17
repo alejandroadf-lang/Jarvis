@@ -145,11 +145,48 @@ const DAILY_CAP_WINDOW_MS = 24 * 60 * 60 * 1000;
 // allowance in one pass — the daily cap is what actually keeps an autonomous
 // cycle to a sane pace, and the cooldown catches the tighter failure a cap
 // can't see: the same agent firing the same action repeatedly inside one
-// turn because its reasoning looped. One per day is the deliberate default
-// for a venture whose founder didn't pick a number: enough for the daily
-// cycle to act every day, not enough for a bad day to compound.
-const DEFAULT_MAX_PER_DAY = 1;
+// turn because its reasoning looped.
+//
+// The defaults were 1/day and 3/week, chosen when a commit was a rare and
+// precious thing. That is the wrong shape for a venture being built: the team
+// shipped three files, spent the entire week in an afternoon, and then spent
+// five turns failing to commit a fourth — reading "Weekly deployment cap
+// reached" as a mechanical fault rather than a wall the founder could move,
+// because the message never said so. Three files is not a week's work on a
+// product that does not exist yet.
+//
+// Now: enough to build with, still bounded, and now counting commits rather
+// than files (see countableTimes) so a well-structured change is not the
+// expensive option. CAPS moves either number in one message.
+const DEFAULT_MAX_PER_DAY = 4;
+const DEFAULT_MAX_PER_WEEK = 20;
 const MIN_MS_BETWEEN_ACTIONS = 60 * 1000;
+
+// One commit is one act, however many files it touched.
+//
+// The deployment log records a row per path, because "what changed" wants every
+// path. The cap asks a different question — how often did the team act — and
+// counting rows made a well-structured seven-file commit seven times more
+// expensive than the seven sloppy single-file commits it replaced. That
+// punishes deploy_changes, which exists to encourage the opposite.
+//
+// Rows sharing a commitSha collapse to their earliest timestamp. Rows without
+// one (an outreach send, an older deployment) each count for themselves.
+function countableTimes(entries, timestampKey) {
+  const byCommit = new Map();
+  const loose = [];
+  for (const entry of entries || []) {
+    const time = new Date(entry?.[timestampKey]).getTime();
+    if (!Number.isFinite(time)) continue;
+    const sha = entry?.commitSha;
+    if (!sha) {
+      loose.push(time);
+      continue;
+    }
+    byCommit.set(sha, Math.min(byCommit.get(sha) ?? Infinity, time));
+  }
+  return [...loose, ...byCommit.values()];
+}
 
 // The same arithmetic enforceRateLimits does, as data rather than as a throw.
 //
@@ -161,9 +198,7 @@ const MIN_MS_BETWEEN_ACTIONS = 60 * 1000;
 // believing either.
 export function rateLimitState({ entries, timestampKey, scope }) {
   const now = Date.now();
-  const times = (entries || [])
-    .map((entry) => new Date(entry[timestampKey]).getTime())
-    .filter((time) => Number.isFinite(time));
+  const times = countableTimes(entries, timestampKey);
 
   const maxPerWeek = scope?.maxPerWeek ?? 0;
   const maxPerDay = scope?.maxPerDay || DEFAULT_MAX_PER_DAY;
@@ -192,19 +227,30 @@ export function pathAllowed(repo, targetPath) {
 
 function enforceRateLimits({ entries, timestampKey, scope, label }) {
   const now = Date.now();
-  const times = (entries || [])
-    .map((entry) => new Date(entry[timestampKey]).getTime())
-    .filter((time) => Number.isFinite(time));
+  const times = countableTimes(entries, timestampKey);
 
+  // Both messages name the way out. Every other gate in this file says what to
+  // ask the founder for; these two said only that a number had been reached,
+  // and an agent that hits a wall with no door reads it as a fault in itself —
+  // which is how five turns went into re-attempting a commit that no amount of
+  // re-attempting could land.
   const inWeek = times.filter((time) => time >= now - WEEKLY_CAP_WINDOW_MS).length;
   if (inWeek >= scope.maxPerWeek) {
-    throw new Error(`Weekly ${label} cap reached (${scope.maxPerWeek}/week) for this venture.`);
+    throw new Error(
+      `Weekly ${label} cap reached (${inWeek} of ${scope.maxPerWeek} this week). ` +
+        'The founder raises it with "CAPS <ventureId> <per day> <per week>", or this waits for the window to roll. ' +
+        'Re-attempting will not change it.'
+    );
   }
 
   const maxPerDay = scope.maxPerDay || DEFAULT_MAX_PER_DAY;
   const inDay = times.filter((time) => time >= now - DAILY_CAP_WINDOW_MS).length;
   if (inDay >= maxPerDay) {
-    throw new Error(`Daily ${label} cap reached (${maxPerDay}/day) for this venture.`);
+    throw new Error(
+      `Daily ${label} cap reached (${inDay} of ${maxPerDay} today). ` +
+        'The founder raises it with "CAPS <ventureId> <per day> <per week>", or this waits for tomorrow. ' +
+        'Re-attempting will not change it.'
+    );
   }
 
   if (times.length > 0 && now - Math.max(...times) < MIN_MS_BETWEEN_ACTIONS) {
@@ -270,7 +316,7 @@ export function linkRepo(id, { owner, name, branch, allowedPaths, maxPerWeek, ma
   if (!owner || !name) throw new Error('owner and name are required to link a repo');
   const data = load();
   const venture = findOrThrow(data, id);
-  const weekly = Math.max(1, Number(maxPerWeek) || 3);
+  const weekly = Math.max(1, Number(maxPerWeek) || DEFAULT_MAX_PER_WEEK);
   venture.repo = {
     owner: String(owner),
     name: String(name),
@@ -360,7 +406,14 @@ function lastRun(venture) {
 function deploysSinceLastRun(venture) {
   const run = lastRun(venture);
   const since = run ? Date.parse(run.startedAt) : 0;
-  return (venture.deployments || []).filter((d) => Date.parse(d.deployedAt) > since).length;
+  // Commits, not rows — the same unit the caps count, and for the same reason.
+  // Counting rows made one well-structured seven-file commit read as seven and
+  // trip a limit of five on its own, so the tool built to encourage coherent
+  // changes was the tool most likely to lock the team out of committing again.
+  return countableTimes(
+    (venture.deployments || []).filter((d) => Date.parse(d.deployedAt) > since),
+    'deployedAt',
+  ).length;
 }
 
 /**
@@ -420,15 +473,40 @@ export function authorizeDeployment(id, { path }) {
 // A multi-file commit is still one deployment, so it passes the same door —
 // but the door was built to check one path, and a seven-file change has seven.
 // Checking only the first would let six ride in on the seventh's approval.
+//
+// So: the per-path gates run per path, and the cap runs once, for one commit.
+// Running the cap per path was worse than redundant — each call read the same
+// pre-commit state and saw room for one, so a changeset larger than the
+// headroom was admitted whole and then recorded past the limit. Verified: four
+// of headroom admitted a six-file commit and left seven against a cap of five.
 export function authorizeDeploymentOfPaths(id, paths) {
   const list = [...new Set((paths || []).filter(Boolean).map(String))];
   if (!list.length) throw new Error('A commit needs at least one file change.');
-  let venture = null;
-  // Every path, individually, against the full gate. Repeating the rate-limit
-  // check is harmless — it reads the same log and writes nothing — and the
-  // alternative, a bespoke "multi" variant of a nine-gate authorizer, is how
-  // two authorizers drift apart until one of them is wrong.
-  for (const path of list) venture = authorizeDeployment(id, { path });
+
+  assertRealActionsAllowed();
+  for (const path of list) assertInApprovedPlan({ ventureId: id, action: 'deploy_code', target: path });
+
+  const venture = getVenture(id);
+  if (!venture) throw new Error('Venture not found');
+  if (venture.status !== 'active') throw new Error(`Venture must be active to deploy (is ${venture.status})`);
+  if (!venture.repo) throw new Error('No repo linked to this venture yet — the founder needs to link one first.');
+  if (!venture.repo.enabled) {
+    throw new Error('Deployments are not enabled for this venture yet — the founder needs to turn them on.');
+  }
+  for (const path of list) {
+    if (!isPathAllowed(venture.repo, path)) {
+      throw new Error(
+        `"${path}" is outside the allowed scope (${venture.repo.allowedPaths.join(', ') || 'no paths allowed'}).`
+      );
+    }
+  }
+  enforceRateLimits({
+    entries: venture.deployments,
+    timestampKey: 'deployedAt',
+    scope: venture.repo,
+    label: 'deployment',
+  });
+  assertChecksNotOverdue(venture);
   return venture;
 }
 
