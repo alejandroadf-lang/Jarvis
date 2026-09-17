@@ -1,6 +1,6 @@
 // Questions that were too big for a two-minute answer.
 //
-// A turn that fans out across twenty-one agents can take many minutes, and a
+// A turn that fans out across the whole Executive Team can take many minutes, and a
 // founder holding a phone will read that as broken long before it is. So the
 // interactive turn stops widening at a deadline and answers with what it has,
 // and the question it could not do justice to is queued here to be done

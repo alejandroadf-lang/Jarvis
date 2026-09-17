@@ -57,7 +57,7 @@ import { createCompletion as createGeminiCompletion, isGeminiConfigured, geminiM
 const MAX_TOKENS = Number(process.env.AGENT_MAX_TOKENS) > 0 ? Number(process.env.AGENT_MAX_TOKENS) : 4096;
 // A leaf's answer is one contribution to someone else's synthesis, not the
 // reply the founder reads, and 4096 tokens of it is usually a specialist
-// saying the same thing at greater length. Sixteen of the twenty-one agents
+// saying the same thing at greater length. Most of the twenty-two Executive Team agents
 // are leaves, so their generation dominates the wall clock on any real
 // question — this is the single biggest latency lever in the system.
 //
@@ -143,7 +143,8 @@ function sleep(ms) {
  * tools to be identical too. Every agent carries a different tool set, which
  * means the shared-context block cannot be reused across agents no matter how
  * byte-identical its text is — an earlier version of this comment claimed it
- * "survives across the twenty-one agents a single question can reach", and that
+ * "survives across the twenty-one agents a single question can reach" — a count
+ * that was already stale when it was written — and that
  * is simply not how the mechanism works.
  *
  * What it does survive is repeated calls by the *same* agent, where tools and
@@ -697,7 +698,7 @@ export async function runAgent({
           title: report.title,
           department: report.department,
           depth: depth + 1,
-          // Without this, "the team is slow" is unanswerable: 21 agents can
+          // Without this, "the team is slow" is unanswerable: 22 agents can
           // be consulted in one turn and any of them could be the reason.
           ms: sub.durationMs ?? null,
         });

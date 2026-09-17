@@ -37,24 +37,71 @@ after(() => {
 beforeEach(() => {
   for (const k of KEYS) delete process.env[k];
   process.env.APP_ACCESS_TOKEN = 'app-secret';
+  // Reports accumulate, and getLatestDailyReport returns the newest — so a test
+  // that saves a later date silently changes what every following test reads.
+  fs.rmSync(path.join(tmpDir, 'dailyReports.json'), { force: true });
 });
 
 // --- The model --------------------------------------------------------------
 
-test('every agent is a node and every reporting link is an edge', async () => {
-  const { AGENTS } = await import('../agents/orgChart.js');
+// The bug this replaced: the graph drew only the Executive Team and reported
+// "22 agents", which is not the company. The Venture Studio is six more, it runs
+// every morning in the second phase of the sync, and its trace was read and then
+// silently discarded because none of its ids matched a node.
+test('both teams are drawn — the company is not one roster', async () => {
+  const { AGENTS: COMPANY } = await import('../agents/orgChart.js');
+  const { AGENTS: STUDIO } = await import('../agents/ideationTeam.js');
   const g = graph.buildGraph();
 
-  assert.equal(g.nodes.length, Object.keys(AGENTS).length);
-  // A tree: every agent except the root has exactly one manager.
-  assert.equal(g.edges.length, g.nodes.length - 1);
-  assert.equal(g.nodes.filter((n) => n.isRoot).length, 1);
+  assert.equal(g.nodes.length, Object.keys(COMPANY).length + Object.keys(STUDIO).length);
+  assert.equal(g.meta.teamCounts.executive, Object.keys(COMPANY).length);
+  assert.equal(g.meta.teamCounts.studio, Object.keys(STUDIO).length);
+
+  const ids = new Set(g.nodes.map((n) => n.id));
+  assert.ok(ids.has('venture_partner'), 'the Studio root is on the graph');
+  assert.ok(ids.has('validation_critic'), 'and so are its leaves');
+});
+
+// A count in prose goes stale silently — "27 agents" sat in validate.js from
+// before the Devil's Advocate was added, and the number a founder reads off the
+// picture has to be the number the company actually has. This is the one place
+// that pins it.
+test('the company is 28 agents across two teams, and the graph says so', () => {
+  const g = graph.buildGraph();
+  assert.equal(g.nodes.length, 28, 'update this deliberately when the roster changes');
+  assert.equal(g.meta.agentCount, 28);
+  assert.deepEqual(g.meta.roots.map((r) => r.id), ['ceo', 'venture_partner']);
+});
+
+test('every reporting link is an edge, and both teams are trees', () => {
+  const g = graph.buildGraph();
+
+  // Two roots, two trees: each team has exactly one agent with no manager, and
+  // edges = nodes - 1 per team.
+  assert.equal(g.nodes.filter((n) => n.isRoot).length, 2);
+  assert.equal(g.edges.length, g.nodes.length - 2);
 
   const ids = new Set(g.nodes.map((n) => n.id));
   for (const edge of g.edges) {
     assert.ok(ids.has(edge.source), `${edge.source} is an edge end with no node`);
     assert.ok(ids.has(edge.target), `${edge.target} is an edge end with no node`);
   }
+});
+
+// The two teams never consult each other mid-turn: the Studio proposes
+// ventures, the Executive Team builds them. An edge between them would mean the
+// org chart had changed, not that the drawing had.
+test('no edge crosses between the teams', () => {
+  const g = graph.buildGraph();
+  const team = new Map(g.nodes.map((n) => [n.id, n.team]));
+  const crossing = g.edges.filter((e) => team.get(e.source) !== team.get(e.target));
+  assert.deepEqual(crossing, []);
+});
+
+test('the Studio has its own department, so it gets its own hue', () => {
+  const g = graph.buildGraph();
+  const studioDepts = [...new Set(g.nodes.filter((n) => n.team === 'studio').map((n) => n.department))];
+  assert.deepEqual(studioDepts, ['Studio']);
 });
 
 // An agent that has never run is the finding, not a gap to tidy away. A roster
@@ -65,6 +112,23 @@ test('agents that have never run are present and marked idle, not omitted', () =
   assert.equal(g.meta.ranCount, 0, 'no report yet, so nothing has run');
   assert.equal(g.meta.idleCount, g.nodes.length);
   assert.ok(g.nodes.every((n) => n.ranTimes === 0));
+});
+
+// The Studio's trace was being read and thrown away, because buildGraph looked
+// up ids that were never in the node list. Nothing errored; the team simply
+// never lit up.
+test("the Studio's own trace lights up Studio agents", async () => {
+  const { saveDailyReport } = await import('../dailyReports.js');
+  saveDailyReport({
+    date: '2026-09-18',
+    generatedAt: new Date().toISOString(),
+    leadership: { reply: 'x', trace: [] },
+    studio: { reply: 'y', trace: [{ id: 'validation_critic', title: 'Validation Critic', depth: 1, ms: 900 }] },
+  });
+
+  const critic = graph.buildGraph().nodes.find((n) => n.id === 'validation_critic');
+  assert.equal(critic.ranTimes, 1);
+  assert.equal(critic.ranMs, 900);
 });
 
 test('a node carries the model it would actually run on right now', () => {
@@ -88,10 +152,13 @@ test('moving an agent to another provider changes what the graph reports', () =>
 // Answers the first question the picture prompts: why is that one still
 // expensive. Shown as a ring rather than a sixth hue, so it is legible
 // alongside the department colours.
-test('agents pinned to Anthropic by a server tool are flagged', () => {
+test('agents pinned to Anthropic by a server tool are flagged, across both teams', () => {
   const g = graph.buildGraph();
   const pinned = g.nodes.filter((n) => n.pinnedToAnthropic).map((n) => n.id).sort();
-  assert.deepEqual(pinned, ['seo_specialist', 'solutions_architect']);
+  // Four, not two: the Studio's researchers ground themselves with live web
+  // search as well, and web_search executes inside Anthropic's infrastructure
+  // so none of them can be moved to another provider however the tiers are set.
+  assert.deepEqual(pinned, ['market_researcher', 'scale_strategist', 'seo_specialist', 'solutions_architect']);
 });
 
 test('the latest report lights up the agents that actually ran', async () => {

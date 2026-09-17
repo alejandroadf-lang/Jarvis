@@ -1,6 +1,6 @@
 // Structural checks on an org chart, run at import time.
 //
-// At 27 agents you notice a broken link because the company is small enough
+// At 28 agents you notice a broken link because the company is small enough
 // to hold in your head. At 150 you don't — and every one of these faults is
 // silent at runtime rather than loud:
 //

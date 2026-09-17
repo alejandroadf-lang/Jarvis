@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-palette="#3987e5,#d95926,#199e70,#c98500,#d55181">
+<html lang="en" data-palette="#3987e5,#d95926,#199e70,#c98500,#d55181,#9085e9">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
@@ -26,6 +26,7 @@
     --dept-finance:    #199e70;
     --dept-marketing:  #c98500;
     --dept-operations: #d55181;
+    --dept-studio:     #9085e9;
 
     --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
     --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -237,6 +238,7 @@
     Finance:    getVar('--dept-finance'),
     Marketing:  getVar('--dept-marketing'),
     Operations: getVar('--dept-operations'),
+    Studio:     getVar('--dept-studio'),
   };
   const FALLBACK = getVar('--text-muted');
   function getVar(name) {
@@ -264,7 +266,13 @@
     canvas.style.height = innerHeight + 'px';
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
-  addEventListener('resize', () => { resize(); if (!fitted) fitToView(); });
+  addEventListener('resize', () => {
+    resize();
+    // A rotation flips which axis the teams stack along, so let the layout
+    // settle into the new shape rather than leaving it in the old one.
+    frames = Math.min(frames, 700);
+    fitted = false;
+  });
   resize();
 
   function showState(title, body) {
@@ -308,8 +316,8 @@
       const angle = (band / depts.length) * Math.PI * 2 + (i % 5) * 0.28;
       const radius = n.isRoot ? 0 : 120 + (i % 4) * 34;
       return Object.assign({}, n, {
-        x: Math.cos(angle) * radius,
-        y: Math.sin(angle) * radius,
+        x: home(n.team).x + Math.cos(angle) * radius,
+        y: home(n.team).y + Math.sin(angle) * radius,
         vx: 0, vy: 0,
         r: 4 + Math.min(n.reportCount, 5) * 1.8 + (n.isRoot ? 3 : 0),
       });
@@ -327,8 +335,10 @@
 
   function renderChrome() {
     const counts = document.getElementById('counts');
+    const teams = meta.teamCounts || {};
     const parts = [
       '<span><b>' + meta.agentCount + '</b> agents</span>',
+      '<span>' + (teams.executive || 0) + ' exec · ' + (teams.studio || 0) + ' studio</span>',
       '<span><b>' + meta.ranCount + '</b> ran</span>',
       '<span><b>' + meta.idleCount + '</b> idle</span>',
       '<span><b>' + meta.frontierCount + '</b> frontier</span>',
@@ -353,10 +363,28 @@
   // --- Simulation ---------------------------------------------------------
   // A plain spring/repulsion model rather than a library: the whole graph is
   // twenty-two nodes, and a dependency would be more bytes than the physics.
+  // Where each constellation settles. The Executive Team and the Venture Studio
+  // share no edge — the Studio proposes ventures, the Executive Team builds
+  // them, and neither consults the other mid-turn — so a single centering
+  // target would drag two unconnected components through each other and read as
+  // one tangled company instead of two that work separately.
+  // Orientation matters more than it looks. Side by side on a tall phone makes
+  // the bounding box wide, the fit zooms out to suit the width, and the
+  // twenty-two-node Executive cluster compresses into a mat of overlapping
+  // labels — while the screen has vertical room going spare. So the teams stack
+  // along whichever axis the screen actually has.
+  function home(team) {
+    const studio = team === 'studio';
+    if (innerHeight > innerWidth) {
+      return { x: 0, y: studio ? 300 : -110 };
+    }
+    return { x: studio ? 330 : -90, y: 0 };
+  }
+
   function step() {
-    const REPULSION = 2600;
+    const REPULSION = 3600;
     const SPRING = 0.016;
-    const REST = 78;
+    const REST = 96;
     const CENTERING = 0.0016;
     const DAMPING = 0.86;
 
@@ -389,8 +417,9 @@
 
     for (const n of nodes) {
       if (n === dragging) continue;
-      n.vx -= n.x * CENTERING;
-      n.vy -= n.y * CENTERING;
+      const at = home(n.team);
+      n.vx -= (n.x - at.x) * CENTERING;
+      n.vy -= (n.y - at.y) * CENTERING;
       n.vx *= DAMPING; n.vy *= DAMPING;
       n.x += n.vx; n.y += n.vy;
     }

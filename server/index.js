@@ -361,7 +361,7 @@ async function runCompanyTurn(sessionId, message, { deadlineAt = null, image = n
 
   // A slow turn is almost always a wide one. Logging the worst offenders
   // makes "the team is slow" answerable from the deploy log rather than by
-  // guessing at which of twenty-one agents was the reason.
+  // guessing at which of twenty-two agents was the reason.
   if (durationMs > SLOW_TURN_MS) {
     const slowest = [...trace]
       .filter((entry) => entry.ms)

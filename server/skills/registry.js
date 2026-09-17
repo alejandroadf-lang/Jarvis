@@ -5,7 +5,7 @@
 // prompt, which is sent on every call whether it is relevant or not. Teaching
 // the Security Reviewer a proper OWASP methodology means every one of its
 // turns carries that methodology, including the ones where someone asked it a
-// yes-or-no question. Multiply by twenty-one agents and the roster stops being
+// yes-or-no question. Multiply by twenty-eight agents and the roster stops being
 // able to grow.
 //
 // A skill is a markdown file with frontmatter. The agent sees a one-line
