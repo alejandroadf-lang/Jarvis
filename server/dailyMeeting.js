@@ -37,6 +37,9 @@ import {
   handleDeployChanges,
   handleCheckReady,
   handleCheckUsage,
+  handleCreatePaymentLink,
+  handleUpdatePipeline,
+  handleSetObjective,
   handleOpenPullRequest,
   handleRevertCommit,
   handleSendCustomerEmail,
@@ -207,6 +210,11 @@ export function dailyCycleActionHandlers() {
     // reports itself; shipped and used are different facts and this is the only
     // place the second one exists.
     check_usage: (input) => handleCheckUsage(input),
+    // A payment link charges nobody until a person opens it, and the pipeline
+    // and objectives are the company's own notebook. None need the founder.
+    create_payment_link: (input, ctx) => handleCreatePaymentLink(input, ctx),
+    update_pipeline: (input, ctx) => handleUpdatePipeline(input, ctx),
+    set_objective: (input, ctx) => handleSetObjective(input, ctx),
     // Finished work that has not landed. Not behind the plan — see
     // authorizePullRequest for why gating a proposal on pre-approval is a
     // deadlock rather than a review.

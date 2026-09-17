@@ -34,6 +34,9 @@ import {
   handleDeployChanges,
   handleCheckReady,
   handleCheckUsage,
+  handleCreatePaymentLink,
+  handleUpdatePipeline,
+  handleSetObjective,
   handleOpenPullRequest,
   handleRevertCommit,
   handleSendCustomerEmail,
@@ -60,7 +63,11 @@ import { startDailyMeetingScheduler, runDailyMeetingNow, isDailyMeetingRunning }
 import { getKillSwitch, haltRealActions, resumeRealActions } from './killSwitch.js';
 import { getSpendSummary } from './spend.js';
 import { getIntegrationStatus } from './integrations.js';
-import { getProfitShare, listContributions } from './finance/profitShare.js';
+import { getProfitShare, listContributions, recordContribution } from './finance/profitShare.js';
+import { verifyStripeSignature, interpretEvent } from './payments.js';
+import { recordPayment, getVenture as getVentureForPayment } from './finance/ventures.js';
+import { addTransaction as addLedgerTransaction } from './finance/ledger.js';
+import { sendPaymentEmail } from './email.js';
 import {
   isWhatsAppConfigured,
   verifyWebhookChallenge,
@@ -310,6 +317,11 @@ async function runCompanyTurn(sessionId, message, { deadlineAt = null, image = n
       // reports itself; shipped and used are different facts and this is the only
       // place the second one exists.
       check_usage: (input) => handleCheckUsage(input),
+      // Creating a link charges nobody; sending it goes through email and its
+      // gates. Pipeline and objectives are internal book-keeping.
+      create_payment_link: (input, ctx) => handleCreatePaymentLink(input, ctx),
+      update_pipeline: (input, ctx) => handleUpdatePipeline(input, ctx),
+      set_objective: (input, ctx) => handleSetObjective(input, ctx),
       // Finished work that has not landed. Not behind the plan — see
       // authorizePullRequest for why gating a proposal on pre-approval is a
       // deadlock rather than a review.
@@ -683,6 +695,64 @@ app.get('/api/whatsapp/webhook', (req, res) => {
 // wants a 200 within seconds and retries if it doesn't get one, while a team
 // turn takes 20 seconds to two minutes. So this acknowledges immediately and
 // answers afterwards through the Send API — see channels/whatsapp.js.
+// --- Stripe: money arrived ------------------------------------------------------
+//
+// The only endpoint here whose caller is a payment processor. Authenticated by
+// Stripe's signature over the raw body (see payments.js), which is why the
+// JSON middleware keeps req.rawBody. Acknowledged with 200 quickly and always
+// on a verified event: Stripe retries anything else, and a retry storm over a
+// ledger write is how a payment gets booked three times.
+app.post('/api/payments/webhook', async (req, res) => {
+  if (!verifyStripeSignature(req.rawBody, req.get('stripe-signature'))) {
+    return res.status(400).json({ error: 'Bad signature.' });
+  }
+  let outcome;
+  try {
+    outcome = interpretEvent(req.body);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+  res.json({ received: true, duplicate: Boolean(outcome.duplicate) });
+
+  if (outcome.duplicate || !outcome.paid) return;
+  const paid = outcome.paid;
+  const venture = paid.ventureId ? getVentureForPayment(paid.ventureId) : null;
+  try {
+    addLedgerTransaction({
+      type: 'revenue',
+      amount: paid.amount,
+      description: `Stripe ${paid.kind === 'monthly' ? 'subscription' : 'payment'} ${paid.currency} ${paid.amount.toFixed(2)}${
+        paid.customerEmail ? ` from ${paid.customerEmail}` : ''
+      } (${paid.reference})`,
+      ventureId: venture ? venture.id : null,
+    });
+    if (venture) {
+      recordPayment(venture.id, paid);
+      // The agent that created the link earns the credit — the same rule as
+      // every other real action, and the first time it has been for revenue
+      // a customer actually sent rather than revenue the founder reported.
+      if (paid.agentId) {
+        recordContribution({ agentId: paid.agentId, kind: 'payment_received', ventureId: venture.id, detail: `${paid.currency} ${paid.amount}` });
+      }
+      sendPaymentEmail(venture, paid).catch((err) => console.error('Payment alert failed:', err.message));
+    }
+    console.log(`Payment booked: ${paid.currency} ${paid.amount} for ${venture ? venture.title : 'no venture'}`);
+  } catch (err) {
+    console.error('Payment webhook could not book the payment:', err.message);
+  }
+});
+
+// Where a customer lands after paying. Plain text on purpose: the receipt is
+// Stripe's, and the company's job here is to say thank you and stop.
+app.get('/paid', (req, res) => {
+  const cancelled = req.query.cancelled === '1';
+  res.type('text/plain').send(
+    cancelled
+      ? 'No payment was made. If that was a mistake, the link still works.'
+      : 'Thank you — your payment went through. A receipt is on its way from Stripe, and a person will be in touch.'
+  );
+});
+
 app.post('/api/whatsapp/webhook', (req, res) => {
   if (!verifySignature(req.rawBody, req.get('x-hub-signature-256'))) {
     // Refused before anything is read out of the body: this endpoint is

@@ -172,6 +172,21 @@ export const AGENTS = {
         },
       },
       {
+        name: 'set_objective',
+        description:
+          'Set one measurable objective on a venture, for the whole team to work against: what is being counted, the target, and by when. This is the supervisor\'s tool — in Anthropic\'s Project Vend the objective-setting CEO was what turned the shop profitable, not a smarter shopkeeper. Objectives are written in the outcome the customer pays for (pages processed, paying customers, replies answered within a day), never in activity (emails sent, commits made). Setting the same key again replaces the objective. Every agent on the venture sees open objectives in its context.',
+        input_schema: {
+          type: 'object',
+          properties: {
+            ventureId: { type: 'string', description: 'The venture id.' },
+            key: { type: 'string', description: 'The thing being counted, short and stable, e.g. "paying_customers" or "pages_processed".' },
+            target: { type: 'string', description: 'The number and the condition, e.g. "2 paying customers at the floor price".' },
+            by: { type: 'string', description: 'A date, e.g. 2026-10-15.' },
+          },
+          required: ['ventureId', 'key', 'target'],
+        },
+      },
+      {
         name: 'kill_venture',
         description:
           "End a venture that isn't earning its keep — a missed milestone with no good next step, a market that turned out too small, or one that's quietly absorbing attention better spent elsewhere. This is a real, final call: only make it when the founder has actually decided to stop, not to express doubt.",
@@ -960,6 +975,40 @@ ${BASE_STYLE}`,
         },
       },
       {
+        name: 'create_payment_link',
+        description:
+          "Create a real Stripe checkout link a customer can pay through. Charges nobody until they open it. Use it the moment a prospect says yes — or asks what it costs and you have a price to give — because the conversation that ends at \"how do I pay you\" without a link is a conversation that ends. Leave amount empty to use the venture's price on record (floor plus per-unit at the customer's expected volume); give an amount only when the founder has agreed a specific figure. When the customer pays, the ledger updates itself and the founder is told. Put the link in the reply you send with send_customer_email.",
+        input_schema: {
+          type: 'object',
+          properties: {
+            ventureId: { type: 'string', description: 'The venture id, from the business context below.' },
+            kind: { type: 'string', description: '"monthly" for a recurring plan, "one_time" for a single payment. Default one_time.' },
+            amount: { type: 'number', description: 'Optional. Major units, e.g. 149.00. Leave empty to derive from the price on record.' },
+            expectedUnits: { type: 'number', description: "Optional. The customer's expected monthly volume, used with the per-unit price when amount is empty." },
+            currency: { type: 'string', description: 'Optional three-letter code. Defaults to the venture price currency, then EUR.' },
+            customerEmail: { type: 'string', description: "Optional. The customer's email, pre-filled on the checkout page." },
+            description: { type: 'string', description: 'Optional. What appears on the checkout page and the receipt.' },
+          },
+          required: ['ventureId'],
+        },
+      },
+      {
+        name: 'update_pipeline',
+        description:
+          'Record where a deal stands: the stage (lead, contacted, replied, call_booked, pilot, paying, lost), its likely monthly value, and the one thing that happens next. This is not a note about the person — log_contact_note is — it is the state of the deal, and the CFO reads the total. Update it every time something moves: a reply, a call booked, a price agreed, a no.',
+        input_schema: {
+          type: 'object',
+          properties: {
+            ventureId: { type: 'string', description: 'The venture id.' },
+            email: { type: 'string', description: "The contact's email address." },
+            stage: { type: 'string', description: 'One of: lead, contacted, replied, call_booked, pilot, paying, lost.' },
+            dealValueMonthly: { type: 'number', description: 'What this customer would be worth per month at the price on record.' },
+            nextAction: { type: 'string', description: 'The single next step, in one line, with who does it.' },
+          },
+          required: ['ventureId', 'email'],
+        },
+      },
+      {
         name: 'check_replies',
         description:
           "Read the replies that came back. This is the other half of send_customer_email: it opens the company mailbox and returns any unread message from someone this company has actually emailed. It cannot see anything else in that mailbox — a message from an address nobody here wrote to is invisible to you, by construction. Call it before drafting a follow-up and at the start of any turn about the pipeline: answering a prospect who already answered you is the single most expensive mistake in outreach. Reading a reply marks it read, so read what comes back rather than calling this twice.",
@@ -1016,6 +1065,18 @@ you were about to write, they need an answer. Check first, every time.
 You will only ever see mail from people this company has written to. The
 rest of that mailbox is the founder's and is not visible to you, so don't
 ask for it.
+
+When a prospect says yes, or asks what it costs, the next message carries a
+payment link — \`create_payment_link\` makes one from the price on record and
+the customer's expected volume. A conversation that ends at "how do I pay
+you" without a link is a conversation that ends. And every time a deal moves,
+\`update_pipeline\`: stage, monthly value, next step. The CFO reads that total;
+if it is not there, the company has no pipeline, whatever you know in your
+head.
+
+If a venture has a booking link in its context, a prospect who wants to talk
+gets it in the same reply. Nobody should have to ask twice how to speak to a
+person.
 
 Before you draft anything, read the contact history in the context below.
 It tells you how many times this person has already been emailed, when, and

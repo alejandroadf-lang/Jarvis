@@ -5,7 +5,7 @@
 
 import { getLedger } from './ledger.js';
 import { usageSummary } from '../ventureUsage.js';
-import { listVentures, listContacts, listReplies } from './ventures.js';
+import { listVentures, listContacts, listReplies, describePricing, pipelineSummary, listObjectives } from './ventures.js';
 import { getLatestWeeklyReflection } from '../weeklyReflections.js';
 import { getAgentEarnings, sharePct } from './profitShare.js';
 import { buildOperationsContext } from '../agents/operations.js';
@@ -57,13 +57,23 @@ shows it's progressing rather than merely existing.`;
 }
 
 function describeContact(contact) {
+  if (contact.blocked) {
+    // Said before anything else about them, because it overrides everything
+    // else about them.
+    return `  - ${contact.email}: DO NOT CONTACT (${contact.blocked.reason}, ${contact.blocked.at.slice(0, 10)})`;
+  }
   const history = contact.emailCount
     ? `${contact.emailCount} email(s) sent, last on ${contact.lastSentAt.slice(0, 10)}${
         contact.lastSubject ? ` — "${contact.lastSubject}"` : ''
       }`
     : 'never emailed';
+  const deal = contact.pipeline
+    ? ` | ${contact.pipeline.stage || 'lead'}${contact.pipeline.dealValueMonthly ? `, ${contact.pipeline.dealValueMonthly}/mo` : ''}${
+        contact.pipeline.nextAction ? ` — next: ${contact.pipeline.nextAction}` : ''
+      }`
+    : '';
   const notes = (contact.notes || []).map((n) => `    · ${n.at.slice(0, 10)}: ${n.note}`).join('\n');
-  return `  - ${contact.email}: ${history}${notes ? `\n${notes}` : ''}`;
+  return `  - ${contact.email}: ${history}${deal}${notes ? `\n${notes}` : ''}`;
 }
 
 // The outreach log was write-only: an agent could send a fourth follow-up to
@@ -87,7 +97,13 @@ export function buildOutreachContext() {
     const waiting = unread.length
       ? `\n  ** ${unread.length} unread repl${unread.length === 1 ? 'y' : 'ies'} waiting — call check_replies **`
       : '';
-    return `"${venture.title}" [id: ${venture.id}]:\n${body}${waiting}`;
+    const summary = pipelineSummary(venture.id);
+    const deals = summary.contacts
+      ? `\n  Pipeline: open ${summary.pipelineMonthly.toFixed(0)}/mo, paying ${summary.payingMonthly.toFixed(0)}/mo across ${summary.contacts} contact${summary.contacts === 1 ? '' : 's'}.`
+      : '';
+    const price = `\n  Price on record: ${describePricing(venture)}.`;
+    const booking = venture.bookingUrl ? `\n  Booking link (give it to anyone who wants to talk): ${venture.bookingUrl}` : '';
+    return `"${venture.title}" [id: ${venture.id}]:${price}${booking}${deals}\n${body}${waiting}`;
   });
 
   return `Contact history for ventures with an outreach scope — check this before
@@ -134,6 +150,25 @@ ${sections.join('\n')}`;
 // One line per venture, and the silent ones are named first. A week of silence
 // on a deployed product is the most important sentence in this context, and
 // burying it under a table of zeros is how it gets skimmed past.
+// What the team is working towards, in the number the customer pays for.
+//
+// Written by the CEO with set_objective and read by everyone. The supervisor
+// in Project Vend had exactly one tool, and it was this one.
+export function buildObjectivesContext() {
+  const active = listVentures().filter((v) => v.status === 'active');
+  const sections = [];
+  for (const venture of active) {
+    const open = listObjectives(venture.id);
+    if (!open.length) continue;
+    const lines = open.map((o) => `  · ${o.key}: ${o.target}${o.by ? ` by ${o.by}` : ''}${o.setBy ? ` (set by ${o.setBy})` : ''}`);
+    sections.push(`"${venture.title}" [id: ${venture.id}]:\n${lines.join('\n')}`);
+  }
+  if (!sections.length) return '';
+  return `Open objectives — the outcomes this company is measured on. Work that does not
+move one of these is work to question:
+${sections.join('\n')}`;
+}
+
 export function buildUsageContext() {
   const deployed = listVentures().filter((v) => v.status === 'active' && v.repo);
   if (!deployed.length) return '';
@@ -178,6 +213,8 @@ export function buildCompanyContext() {
     // has already written for the wrong one.
     buildFounderProfile(),
     describePlanForAgents(),
+    // Objectives before tasks: what we are measured on, then what is queued.
+    buildObjectivesContext(),
     // Outstanding work comes high up for the same reason the plan does: an
     // agent that reads it after deciding what to do has already duplicated it.
     describeTasksForAgents(),

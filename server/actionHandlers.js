@@ -7,6 +7,7 @@
 // actions; see dailyMeeting.js for why).
 
 import { getLedger, addTransaction } from './finance/ledger.js';
+import { assertRealActionsAllowed } from './killSwitch.js';
 import {
   getVenture,
   createVenture,
@@ -35,6 +36,14 @@ import {
   recordReply,
   listReplies,
   markRepliesRead,
+  blockContact,
+  updatePipeline,
+  setObjective,
+  listObjectives,
+  monthlyRecurringRevenue,
+  listVentures,
+  describePricing,
+  monthlyValue,
 } from './finance/ventures.js';
 import { recordContribution, distributeRevenue } from './finance/profitShare.js';
 import { submitPlan, getPlan, formatPlanForWhatsApp } from './dailyPlan.js';
@@ -68,6 +77,8 @@ import {
 import { probeEndpoint } from './execute/probe.js';
 import { fetchReplies, isInboxConfigured } from './inbox.js';
 import { deployReadiness, outreachReadiness, formatReadiness } from './readiness.js';
+import { withComplianceFooter, isUnsubscribe } from './outreachCompliance.js';
+import { createCheckoutLink, isPaymentsConfigured } from './payments.js';
 import { usageSummary, hasIngestKey } from './ventureUsage.js';
 import {
   isExecutionConfigured,
@@ -91,7 +102,32 @@ async function notify(sendFn, ...args) {
   }
 }
 
+// "One expensive thing, completely." The studio was the right tool for
+// choosing a venture and is the wrong tool for the next eighteen months. While
+// an active venture exists and recurring revenue is under the bar, a new
+// proposal is refused with the number it is waiting on. STUDIO_MIN_MRR_USD=0
+// turns the gate off.
+export function studioGate() {
+  const raw = process.env.STUDIO_MIN_MRR_USD;
+  const minimum = raw === undefined || raw === '' ? 1000 : Number(raw);
+  if (!Number.isFinite(minimum) || minimum <= 0) return null;
+  const active = listVentures().filter((v) => v.status === 'active');
+  if (!active.length) return null;
+  const mrr = monthlyRecurringRevenue();
+  if (mrr >= minimum) return null;
+  return { minimum, mrr, active: active.length };
+}
+
 export async function handleProposeVenture(input, ctx = {}) {
+  const gate = studioGate();
+  if (gate) {
+    return (
+      `Not started. The studio is paused until the company's first venture is paying: recurring revenue is ` +
+      `${gate.mrr.toFixed(0)} against a bar of ${gate.minimum} a month, with ${gate.active} active venture${gate.active === 1 ? '' : 's'} ` +
+      'already on the books. A second venture before the first one pays is how a company does two things badly. ' +
+      'Put this idea in a venture note if it is worth keeping, and help the one that exists reach its first customers.'
+    );
+  }
   const venture = createVenture(input);
   // Recorded only after the underlying action actually succeeded — a failed
   // one earns nothing. See finance/profitShare.js for why credit is never
@@ -481,9 +517,13 @@ export async function handleSendCustomerEmail(input, triggeredBy = 'interactive'
   }
   try {
     const venture = authorizeOutreach(ventureId, { to });
-    const sent = await sendCustomerEmail(to, subject, body);
+    // The disclosure and the opt-out are appended here, after the draft and
+    // before the send, so no message leaves without them however it was
+    // written. See outreachCompliance.js for which laws each line answers.
+    const finalBody = withComplianceFooter(body, venture);
+    const sent = await sendCustomerEmail(to, subject, finalBody);
     if (!sent) return 'Could not send: the email server rejected the send.';
-    recordOutreach(ventureId, { to, subject, body, triggeredBy, agentId: ctx.agentId });
+    recordOutreach(ventureId, { to, subject, body: finalBody, triggeredBy, agentId: ctx.agentId });
     recordContribution({ agentId: ctx.agentId, kind: 'send_customer_email', ventureId, detail: `to ${to}` });
     await notify(sendOutreachAlertEmail, venture, { to, subject, triggeredBy });
     return `Sent a real email to ${to} on behalf of "${venture.title}": "${subject}".`;
@@ -528,11 +568,21 @@ export async function handleCheckReplies(input, triggeredBy = 'interactive', ctx
   // arrival so that a turn which runs out of room halfway through still leaves
   // the mail where the next turn will find it.
   const filed = [];
+  const unsubscribed = [];
   for (const message of result.messages) {
     const venture = ventureForRecipient(message.from);
     if (!venture) continue; // sent from a venture that has since been deleted
     const { entry, duplicate } = recordReply(venture.id, message);
     if (duplicate || !entry) continue;
+    // An unsubscribe is honoured here, before any agent reads it, so that no
+    // judgment call sits between the request and the block. The reply is
+    // still filed — the founder can see it — but it is not a lead.
+    if (isUnsubscribe(entry.body)) {
+      blockContact(venture.id, message.from, 'unsubscribed by reply');
+      markRepliesRead(venture.id, [entry.messageId]);
+      unsubscribed.push(message.from);
+      continue;
+    }
     filed.push({ venture, entry });
     recordContribution({
       agentId: ctx.agentId,
@@ -552,9 +602,13 @@ export async function handleCheckReplies(input, triggeredBy = 'interactive', ctx
     for (const reply of listReplies(id, { unreadOnly: true })) unread.push({ id, reply });
   }
 
+  const unsubNote = unsubscribed.length
+    ? `\n\n${unsubscribed.length} contact${unsubscribed.length === 1 ? '' : 's'} asked not to be contacted and ${unsubscribed.length === 1 ? 'has' : 'have'} been blocked: ${unsubscribed.join(', ')}. Do not write to them again.`
+    : '';
+
   if (!unread.length) {
     const checked = result.scanned ? ` Checked ${result.scanned} message${result.scanned === 1 ? '' : 's'}.` : '';
-    return `No unread replies.${checked} Silence is data too — if a prospect has been quiet for a week, that is worth a note rather than another email.`;
+    return `No unread replies.${checked} Silence is data too — if a prospect has been quiet for a week, that is worth a note rather than another email.${unsubNote}`;
   }
 
   const lines = unread.map(({ id, reply }) => {
@@ -581,7 +635,8 @@ export async function handleCheckReplies(input, triggeredBy = 'interactive', ctx
     lines.join('\n\n---\n\n'),
     '',
     'Log what you learned with log_contact_note before you answer — the note is what the next draft reads, ' +
-      'and this reply is not going to be in your context next week.',
+      'and this reply is not going to be in your context next week.' +
+      unsubNote,
   ].join('\n');
 }
 
@@ -1118,4 +1173,91 @@ export function handleCheckUsage(input) {
   ]
     .filter(Boolean)
     .join('\n');
+}
+
+// --- Taking money -----------------------------------------------------------------
+//
+// Creating a link is not a real-world action by itself — nothing happens until
+// a person opens it — so it is gated on what a link needs (a venture, a price,
+// configured payments, the halt) and not on the daily plan. Sending it to
+// someone still goes through send_customer_email and every gate that carries.
+export async function handleCreatePaymentLink(input, ctx = {}) {
+  if (!isPaymentsConfigured()) {
+    return 'Could not create a payment link: this server has no STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET configured. The founder sets both in the deployment environment.';
+  }
+  const ventureId = typeof input?.ventureId === 'string' ? input.ventureId : '';
+  const venture = getVenture(ventureId);
+  if (!venture) return 'Could not create a payment link: venture not found.';
+  if (venture.status !== 'active') return `Could not create a payment link: venture is ${venture.status}.`;
+
+  const kind = input?.kind === 'monthly' ? 'monthly' : 'one_time';
+  let amount = Number(input?.amount);
+  const currency = (input?.currency || venture.pricing?.currency || 'EUR').toString();
+
+  // No amount given: derive it from the price on the record. A link that
+  // charges a number the agent made up is the discount problem from Project
+  // Vend with extra steps.
+  if (!Number.isFinite(amount) || amount <= 0) {
+    if (!venture.pricing) {
+      return `Could not create a payment link: no amount given and "${venture.title}" has no price set. The founder sets one with PRICE ${venture.id} <floor per month> <per unit> <unit>.`;
+    }
+    const units = Number(input?.expectedUnits) || 0;
+    amount = kind === 'monthly' ? monthlyValue(venture, units) : monthlyValue(venture, units);
+    if (amount <= 0) return `Could not create a payment link: the price on record (${describePricing(venture)}) comes to zero for that volume.`;
+  }
+
+  try {
+    assertRealActionsAllowedForLink();
+    const link = await createCheckoutLink({
+      venture,
+      amount,
+      currency,
+      kind,
+      description: typeof input?.description === 'string' ? input.description : '',
+      customerEmail: typeof input?.customerEmail === 'string' ? input.customerEmail : '',
+      agentId: ctx.agentId,
+    });
+    recordContribution({ agentId: ctx.agentId, kind: 'create_payment_link', ventureId, detail: `${link.currency.toUpperCase()} ${link.amount}` });
+    return [
+      `Payment link for "${venture.title}": ${link.url}`,
+      `${link.currency.toUpperCase()} ${link.amount.toFixed(2)} ${link.kind === 'monthly' ? 'per month' : 'one-time'}${input?.customerEmail ? ` for ${input.customerEmail}` : ''}.`,
+      '',
+      'Nothing has been charged. The customer opens the link and pays; the ledger updates itself when they do, and the founder is told. ' +
+        'Put the link in a reply with send_customer_email — do not paste it into a message you have not been asked to send.',
+    ].join('\n');
+  } catch (err) {
+    return `Could not create a payment link: ${err.message}`;
+  }
+}
+
+// A halted company does not mint payment links either.
+function assertRealActionsAllowedForLink() {
+  assertRealActionsAllowed();
+}
+
+// --- The pipeline ------------------------------------------------------------------
+export function handleUpdatePipeline(input, ctx = {}) {
+  const { ventureId, email, stage, dealValueMonthly, nextAction } = input || {};
+  try {
+    const { entry } = updatePipeline(ventureId, { email, stage, dealValueMonthly, nextAction });
+    recordContribution({ agentId: ctx.agentId, kind: 'update_pipeline', ventureId, detail: `${entry.email} -> ${entry.stage || '?'}` });
+    return `Pipeline updated: ${entry.email} is at "${entry.stage || 'lead'}"${
+      entry.dealValueMonthly ? `, worth ${entry.dealValueMonthly}/month` : ''
+    }${entry.nextAction ? `. Next: ${entry.nextAction}` : '.'}`;
+  } catch (err) {
+    return `Could not update the pipeline: ${err.message}`;
+  }
+}
+
+// --- Objectives ---------------------------------------------------------------------
+export function handleSetObjective(input, ctx = {}) {
+  const { ventureId, key, target, by } = input || {};
+  try {
+    const entry = setObjective(ventureId, { key, target, by, setBy: ctx.agentId });
+    const open = listObjectives(ventureId);
+    return `Objective set on ${ventureId}: ${entry.key} — ${entry.target}${entry.by ? ` by ${entry.by}` : ''}. ` +
+      `${open.length} open objective${open.length === 1 ? '' : 's'} on this venture. Every agent working on it sees this in their context from the next turn.`;
+  } catch (err) {
+    return `Could not set the objective: ${err.message}`;
+  }
 }

@@ -23,6 +23,7 @@ import { readJson, writeJson } from '../store.js';
 import { assertRealActionsAllowed } from '../killSwitch.js';
 import { assertInApprovedPlan } from '../dailyPlan.js';
 import { assertProbeableUrl } from '../execute/probe.js';
+import { requiresConsent } from '../outreachCompliance.js';
 
 const FILE = 'ventures.json';
 
@@ -686,6 +687,23 @@ export function authorizeOutreach(id, { to }) {
       `"${to}" is outside the allowed recipients (${venture.outreach.allowedRecipients.join(', ') || 'none allowed'}).`
     );
   }
+  // The allowlist says who may be written to. These two say who may not, and
+  // they win: an unsubscribe is a legal instruction, not a preference, and a
+  // German or Italian address without recorded consent is a fine waiting to
+  // be triggered. Neither can be argued past by an agent.
+  if (isBlocked(venture, to)) {
+    const entry = blockEntry(venture, to);
+    throw new Error(
+      `"${to}" asked not to be contacted (${entry?.reason || 'blocked'}${entry?.at ? `, ${entry.at.slice(0, 10)}` : ''}). ` +
+        'That is final unless the founder lifts it.'
+    );
+  }
+  if (requiresConsent(to) && !hasConsent(venture, to)) {
+    throw new Error(
+      `"${to}" is in a jurisdiction that requires prior consent for B2B email. The founder records it with ` +
+        `CONSENT ${venture.id} ${to} once they have it — there is no other way through.`
+    );
+  }
   enforceRateLimits({
     entries: venture.sentEmails,
     timestampKey: 'sentAt',
@@ -761,6 +779,257 @@ export function recordContactNote(id, { email, note }) {
   return { venture, note: { email: address, note: text } };
 }
 
+// --- Consent and the blocklist -------------------------------------------------
+//
+// See server/outreachCompliance.js for the law. This is the record: who said
+// yes, in writing, and who said stop.
+
+function normalizeEmail(email) {
+  return String(email || '').trim().toLowerCase();
+}
+
+export function recordConsent(id, email) {
+  const address = normalizeEmail(email);
+  if (!address.includes('@')) throw new Error('A consent record needs an email address.');
+  const data = load();
+  const venture = findOrThrow(data, id);
+  venture.consents = venture.consents || {};
+  venture.consents[address] = { at: new Date().toISOString() };
+  save(data);
+  return venture;
+}
+
+export function hasConsent(venture, email) {
+  return Boolean(venture?.consents?.[normalizeEmail(email)]);
+}
+
+export function blockContact(id, email, reason = 'unsubscribed') {
+  const address = normalizeEmail(email);
+  if (!address.includes('@')) throw new Error('A block needs an email address.');
+  const data = load();
+  const venture = findOrThrow(data, id);
+  venture.blocked = venture.blocked || {};
+  // First refusal wins. A second "unsubscribe" does not move the date, and
+  // the founder unblocking then re-blocking is two separate acts.
+  if (!venture.blocked[address]) venture.blocked[address] = { reason: String(reason), at: new Date().toISOString() };
+  save(data);
+  return venture;
+}
+
+export function unblockContact(id, email) {
+  const data = load();
+  const venture = findOrThrow(data, id);
+  if (venture.blocked) delete venture.blocked[normalizeEmail(email)];
+  save(data);
+  return venture;
+}
+
+export function isBlocked(venture, email) {
+  return Boolean(venture?.blocked?.[normalizeEmail(email)]);
+}
+
+function blockEntry(venture, email) {
+  return venture?.blocked?.[normalizeEmail(email)] || null;
+}
+
+// --- Price, in code ------------------------------------------------------------
+//
+// "Pricing approved" was a sentence in a chat log. Until it is on the venture
+// record nothing can compute what one customer is worth, a payment link cannot
+// know what to charge, and the usage counters count units nobody has priced.
+//
+// Hybrid by construction: a monthly floor plus a per-unit rate, which is what
+// the vertical-AI cohort converged on while accuracy was still being proven.
+// Either half may be zero.
+export function setPricing(id, { currency = 'EUR', floorMonthly = 0, unit = '', perUnit = 0 } = {}) {
+  const data = load();
+  const venture = findOrThrow(data, id);
+  const floor = Number(floorMonthly);
+  const rate = Number(perUnit);
+  if (!Number.isFinite(floor) || floor < 0) throw new Error('floorMonthly must be a number >= 0');
+  if (!Number.isFinite(rate) || rate < 0) throw new Error('perUnit must be a number >= 0');
+  if (rate > 0 && !String(unit).trim()) throw new Error('A per-unit rate needs a unit name (page, call, document...)');
+  venture.pricing = {
+    currency: String(currency).toUpperCase().slice(0, 3),
+    floorMonthly: floor,
+    unit: String(unit || '').trim(),
+    perUnit: rate,
+    setAt: new Date().toISOString(),
+  };
+  save(data);
+  return venture;
+}
+
+export function describePricing(venture) {
+  const p = venture?.pricing;
+  if (!p) return 'no price set';
+  const parts = [];
+  if (p.floorMonthly > 0) parts.push(`${p.currency} ${p.floorMonthly.toFixed(2)}/month`);
+  if (p.perUnit > 0) parts.push(`${p.currency} ${p.perUnit} per ${p.unit}`);
+  return parts.length ? parts.join(' + ') : 'free';
+}
+
+// What a customer at a given monthly volume is worth. The number the CFO
+// could not compute before there was a price.
+export function monthlyValue(venture, units = 0) {
+  const p = venture?.pricing;
+  if (!p) return 0;
+  return p.floorMonthly + p.perUnit * Math.max(0, Number(units) || 0);
+}
+
+// --- Where "let's talk" lands --------------------------------------------------
+export function setBookingUrl(id, url) {
+  const data = load();
+  const venture = findOrThrow(data, id);
+  const value = String(url || '').trim();
+  if (value && !/^https:\/\//.test(value)) throw new Error('The booking link must start with https://');
+  venture.bookingUrl = value || null;
+  save(data);
+  return venture;
+}
+
+// --- The pipeline, not the notepad --------------------------------------------
+//
+// Contact notes are what an agent learned. This is where a deal stands, which
+// is a different question with a different shape: a stage, a number, and the
+// one thing that happens next.
+export const PIPELINE_STAGES = ['lead', 'contacted', 'replied', 'call_booked', 'pilot', 'paying', 'lost'];
+
+export function updatePipeline(id, { email, stage, dealValueMonthly, nextAction }) {
+  const address = normalizeEmail(email);
+  if (!address.includes('@')) throw new Error('email is required');
+  const data = load();
+  const venture = findOrThrow(data, id);
+  venture.pipeline = venture.pipeline || {};
+  const current = venture.pipeline[address] || {};
+  const next = { ...current };
+  if (stage !== undefined) {
+    if (!PIPELINE_STAGES.includes(stage)) throw new Error(`stage must be one of: ${PIPELINE_STAGES.join(', ')}`);
+    next.stage = stage;
+  }
+  if (dealValueMonthly !== undefined) {
+    const value = Number(dealValueMonthly);
+    if (!Number.isFinite(value) || value < 0) throw new Error('dealValueMonthly must be a number >= 0');
+    next.dealValueMonthly = value;
+  }
+  if (nextAction !== undefined) next.nextAction = String(nextAction || '').trim();
+  next.updatedAt = new Date().toISOString();
+  venture.pipeline[address] = next;
+  save(data);
+  return { venture, entry: { email: address, ...next } };
+}
+
+export function pipelineSummary(id) {
+  const venture = getVenture(id);
+  const rows = Object.entries(venture?.pipeline || {});
+  const byStage = {};
+  let pipelineMonthly = 0;
+  let payingMonthly = 0;
+  for (const [, entry] of rows) {
+    byStage[entry.stage || 'lead'] = (byStage[entry.stage || 'lead'] || 0) + 1;
+    const value = entry.dealValueMonthly || 0;
+    if (entry.stage === 'paying') payingMonthly += value;
+    else if (entry.stage !== 'lost') pipelineMonthly += value;
+  }
+  return { contacts: rows.length, byStage, pipelineMonthly, payingMonthly };
+}
+
+// --- Objectives -----------------------------------------------------------------
+//
+// In Project Vend the supervisor's one tool was objectives and key results,
+// and it was the tool that made the shop profitable. This company had the
+// supervisor and not the tool.
+export function setObjective(id, { key, target, by, setBy }) {
+  const data = load();
+  const venture = findOrThrow(data, id);
+  const name = String(key || '').trim();
+  if (!name) throw new Error('An objective needs a key — the thing being counted.');
+  venture.objectives = venture.objectives || [];
+  const entry = {
+    key: name,
+    target: String(target || '').trim(),
+    by: String(by || '').trim() || null,
+    setBy: setBy ? String(setBy) : null,
+    setAt: new Date().toISOString(),
+    status: 'open',
+  };
+  // One live objective per key. Setting it again replaces it, which is how
+  // "sell 100 this week" becomes "sell 150 this week" without a graveyard.
+  venture.objectives = venture.objectives.filter((o) => !(o.key === name && o.status === 'open'));
+  venture.objectives.push(entry);
+  save(data);
+  return entry;
+}
+
+export function listObjectives(id, { openOnly = true } = {}) {
+  const all = getVenture(id)?.objectives || [];
+  return openOnly ? all.filter((o) => o.status === 'open') : all;
+}
+
+export function closeObjective(id, key, status = 'met') {
+  const data = load();
+  const venture = findOrThrow(data, id);
+  let closed = 0;
+  for (const o of venture.objectives || []) {
+    if (o.key === key && o.status === 'open') {
+      o.status = status;
+      o.closedAt = new Date().toISOString();
+      closed += 1;
+    }
+  }
+  if (closed) save(data);
+  return closed;
+}
+
+// --- Money that arrived ---------------------------------------------------------
+export function recordPayment(id, { amount, currency, customerEmail, kind, reference, agentId }) {
+  const data = load();
+  const venture = findOrThrow(data, id);
+  venture.payments = venture.payments || [];
+  const entry = {
+    amount: Number(amount) || 0,
+    currency: String(currency || 'EUR'),
+    customerEmail: customerEmail ? normalizeEmail(customerEmail) : null,
+    kind: kind || 'one_time',
+    reference: reference || null,
+    agentId: agentId || null,
+    paidAt: new Date().toISOString(),
+  };
+  venture.payments.push(entry);
+  // A payer is, by definition, at the paying stage.
+  if (entry.customerEmail) {
+    venture.pipeline = venture.pipeline || {};
+    const current = venture.pipeline[entry.customerEmail] || {};
+    venture.pipeline[entry.customerEmail] = { ...current, stage: 'paying', updatedAt: entry.paidAt };
+  }
+  save(data);
+  return { venture, entry };
+}
+
+export function listPayments(id) {
+  return [...(getVenture(id)?.payments || [])].sort((a, b) => (a.paidAt < b.paidAt ? 1 : -1));
+}
+
+// Recognised monthly recurring revenue: subscriptions seen in the last 35
+// days, plus what the pipeline says is paying. The number the studio gate
+// reads, and the one a million is measured in.
+export function monthlyRecurringRevenue() {
+  const cutoff = Date.now() - 35 * 24 * 60 * 60 * 1000;
+  let mrr = 0;
+  for (const venture of load().ventures) {
+    if (venture.status !== 'active') continue;
+    const seen = new Set();
+    for (const p of venture.payments || []) {
+      if (p.kind !== 'monthly' || new Date(p.paidAt).getTime() < cutoff) continue;
+      const key = p.customerEmail || p.reference;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      mrr += p.amount;
+    }
+  }
+  return mrr;
+}
+
 export function listContacts(id) {
   const venture = getVenture(id);
   if (!venture) return [];
@@ -785,6 +1054,17 @@ export function listContacts(id) {
   for (const [address, notes] of Object.entries(venture.contactNotes || {})) {
     const entry = byAddress.get(address) || { email: address, emailCount: 0, lastSentAt: null, lastSubject: '' };
     entry.notes = notes;
+    byAddress.set(address, entry);
+  }
+
+  for (const [address, deal] of Object.entries(venture.pipeline || {})) {
+    const entry = byAddress.get(address) || { email: address, emailCount: 0, lastSentAt: null, lastSubject: '' };
+    entry.pipeline = deal;
+    byAddress.set(address, entry);
+  }
+  for (const [address, block] of Object.entries(venture.blocked || {})) {
+    const entry = byAddress.get(address) || { email: address, emailCount: 0, lastSentAt: null, lastSubject: '' };
+    entry.blocked = block;
     byAddress.set(address, entry);
   }
 

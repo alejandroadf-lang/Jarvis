@@ -29,11 +29,14 @@ const PUBLIC_PATHS = new Set(['/api/health', '/api/whatsapp/webhook', '/privacy'
 // the way to do it. /api/graph accepts the app token *or* a short-lived view
 // token, because a browser following a link from WhatsApp cannot send a custom
 // header and the founder reads this on a phone (see viewToken.js).
+// /api/payments/webhook is called by Stripe, which cannot send the app token
+// and instead signs the raw body with a secret only it and this server hold
+// (see payments.js) — stronger than the bearer check, not weaker.
 //
 // Kept as a separate set from PUBLIC_PATHS rather than folded into it: a reader
 // scanning for what is unauthenticated must not find a path here that is in
 // fact authenticated by other means, and vice versa.
-const SELF_AUTHENTICATED_PATHS = new Set(['/api/graph']);
+const SELF_AUTHENTICATED_PATHS = new Set(['/api/graph', '/api/payments/webhook']);
 
 // Usage ingest is the first endpoint a machine outside this company calls.
 // It carries a per-venture key rather than the app token, and the distinction

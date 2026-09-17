@@ -207,3 +207,21 @@ export async function sendReplyAlertEmail(venture, details) {
   const { subject, text } = formatReplyAlertEmail(venture, details);
   return sendEmail(subject, text); // to the founder
 }
+
+// Money arrived. The one email in this app that carries unambiguously good
+// news, and it goes out the moment the webhook lands rather than in tomorrow's
+// digest, because the founder has waited a long time for this one.
+export function formatPaymentEmail(venture, { amount, currency, customerEmail, kind }) {
+  const subject = `Payment received: ${currency} ${Number(amount).toFixed(2)} for "${venture.title}"`;
+  const text = [
+    `${customerEmail || 'A customer'} paid ${currency} ${Number(amount).toFixed(2)} (${kind === 'monthly' ? 'monthly plan' : 'one-time'}) for "${venture.title}".`,
+    '',
+    'It is on the ledger as revenue. Nothing to approve.',
+  ].join('\n');
+  return { subject, text };
+}
+
+export async function sendPaymentEmail(venture, details) {
+  const { subject, text } = formatPaymentEmail(venture, details);
+  return sendEmail(subject, text);
+}
