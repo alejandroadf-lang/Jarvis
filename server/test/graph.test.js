@@ -39,7 +39,9 @@ beforeEach(() => {
   process.env.APP_ACCESS_TOKEN = 'app-secret';
   // Reports accumulate, and getLatestDailyReport returns the newest — so a test
   // that saves a later date silently changes what every following test reads.
-  fs.rmSync(path.join(tmpDir, 'dailyReports.json'), { force: true });
+  for (const f of ['dailyReports.json', 'tasks.json', 'ventures.json', 'spend.json']) {
+    fs.rmSync(path.join(tmpDir, f), { force: true });
+  }
 });
 
 // --- The model --------------------------------------------------------------
@@ -273,4 +275,45 @@ test('the base URL comes from PUBLIC_URL, or Railway, or is honestly absent', ()
   // An explicit setting wins over the platform's guess.
   process.env.PUBLIC_URL = 'https://company.example.com/';
   assert.equal(viewToken.publicBaseUrl(), 'https://company.example.com', 'trailing slash trimmed');
+});
+
+// --- The board ---------------------------------------------------------------
+//
+// The office view has wall space the graph does not, so the payload carries
+// company-level state alongside the per-agent state: what is queued, what is
+// running, what today has cost. Same request, because the two views are two
+// projections of one company rather than two features.
+
+test('the payload carries the company state the office view puts on the wall', async () => {
+  const { enqueueTask, startTask, completeTask } = await import('../tasks.js');
+
+  const a = enqueueTask({ ventureId: 'v_1', title: 'Write auth', queuedBy: 'cto' });
+  enqueueTask({ ventureId: 'v_1', title: 'Write docs', queuedBy: 'cto' });
+  startTask(a.id);
+  completeTask(a.id, 'done');
+
+  const meta = graph.buildGraph().meta;
+  assert.equal(meta.tasks.done, 1);
+  assert.equal(meta.tasks.queued, 1);
+  assert.equal(meta.tasks.running, 0);
+  assert.equal(meta.tasks.failed, 0);
+
+  // The cap is the founder's setting, so it travels with the spend rather than
+  // leaving the page to guess what "a lot" means.
+  assert.ok(Number.isFinite(meta.spend.spentUsd));
+  assert.ok(meta.spend.capUsd > 0);
+  assert.equal(meta.spend.overCap, false);
+});
+
+test('venture counts distinguish active from merely existing', async () => {
+  const ventures = await import('../finance/ventures.js');
+  const v = ventures.createVenture({
+    title: 'CircadianAPI', oneLiner: 'x', problem: 'y', targetCustomer: 'z',
+    businessModel: 'API', marketSize: 'big', pathToMillions: 'scale', milestones: ['ship'],
+  });
+  ventures.killVenture(v.id, 'test');
+
+  const meta = graph.buildGraph().meta;
+  assert.equal(meta.ventures.total, 1);
+  assert.equal(meta.ventures.active, 0, 'a killed venture still exists and is not active');
 });

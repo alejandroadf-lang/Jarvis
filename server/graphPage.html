@@ -78,6 +78,51 @@
   }
   .counts b { color: var(--text-primary); font-weight: 600; }
 
+  /* --- View toggle -------------------------------------------------------- */
+  #views {
+    position: fixed;
+    right: 16px;
+    top: max(12px, env(safe-area-inset-top));
+    z-index: 4;
+    display: flex;
+    border: 1px solid var(--hairline);
+    border-radius: 7px;
+    overflow: hidden;
+  }
+  #views button {
+    appearance: none;
+    background: rgba(26,26,25,0.85);
+    border: none;
+    color: var(--text-secondary);
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 7px 11px;
+    cursor: pointer;
+  }
+  #views button.on { background: var(--text-primary); color: #0e0e0d; font-weight: 600; }
+  #views button:focus-visible { outline: 2px solid var(--dept-executive); outline-offset: -2px; }
+
+  /* --- The board on the office wall --------------------------------------- */
+  /* Company-level state the graph has no room for: what is queued, what is
+     running, what today has cost. Only shown in the office view, where the
+     walls give it somewhere to live. */
+  #board {
+    position: fixed;
+    right: 16px;
+    top: calc(max(12px, env(safe-area-inset-top)) + 42px);
+    text-align: right;
+    z-index: 3;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--text-secondary);
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    pointer-events: none;
+  }
+  #board b { color: var(--text-primary); font-weight: 600; }
+  #board .warn { color: var(--dept-technology); }
+
   /* --- Legend ------------------------------------------------------------ */
   /* Always present: five hues is more than anyone holds in their head, and
      identity must never rest on colour alone. Every node is directly labelled
@@ -200,6 +245,13 @@
   <div class="counts" id="counts"></div>
 </header>
 
+<div id="views" role="group" aria-label="View">
+  <button type="button" data-view="graph" class="on">Graph</button>
+  <button type="button" data-view="office">Office</button>
+</div>
+
+<div id="board" hidden></div>
+
 <div id="legend"></div>
 
 <div id="hints">
@@ -254,6 +306,9 @@
   let edges = [];
   let meta = null;
   let selected = null;
+  // 'graph' or 'office'. Two projections of one payload — nothing is re-fetched
+  // when it changes, because nothing about the company differs between them.
+  let mode = 'graph';
 
   // --- View transform -----------------------------------------------------
   const view = { x: 0, y: 0, k: 1 };
@@ -270,8 +325,8 @@
     resize();
     // A rotation flips which axis the teams stack along, so let the layout
     // settle into the new shape rather than leaving it in the old one.
-    frames = Math.min(frames, 700);
-    fitted = false;
+    if (mode === 'office') { layoutOffice(); fitOffice(); }
+    else { frames = Math.min(frames, 700); fitted = false; }
   });
   resize();
 
@@ -328,9 +383,28 @@
       .map((e) => ({ a: byId.get(e.source), b: byId.get(e.target), active: e.active }))
       .filter((e) => e.a && e.b);
 
+    layoutOffice();
     renderChrome();
     hideState();
     requestAnimationFrame(tick);
+  }
+
+  function setMode(next) {
+    if (next === mode) return;
+    mode = next;
+    for (const b of document.querySelectorAll('#views button')) {
+      b.classList.toggle('on', b.dataset.view === mode);
+    }
+    document.getElementById('board').hidden = mode !== 'office';
+    document.getElementById('hints').innerHTML = mode === 'office'
+      ? 'DRAG SPACE · PAN<br>PINCH / SCROLL · ZOOM<br>TAP DESK · DETAIL'
+      : 'DRAG SPACE · PAN<br>PINCH / SCROLL · ZOOM<br>DRAG NODE · PULL<br>TAP NODE · DETAIL';
+    if (mode === 'office') fitOffice();
+    else { fitted = false; frames = Math.min(frames, 820); }
+  }
+
+  for (const b of document.querySelectorAll('#views button')) {
+    b.addEventListener('click', () => setMode(b.dataset.view));
   }
 
   function renderChrome() {
@@ -345,6 +419,19 @@
     ];
     if (meta.reportDate) parts.push('<span>' + meta.reportDate + (meta.reportScope === 'narrow' ? ' · quiet' : '') + '</span>');
     counts.innerHTML = parts.join('');
+
+    const t = meta.tasks || {};
+    const sp = meta.spend || {};
+    const v = meta.ventures || {};
+    const board = [];
+    board.push('<span><b>' + (v.active || 0) + '</b> active venture' + ((v.active === 1) ? '' : 's') + '</span>');
+    board.push('<span><b>' + (t.done || 0) + '</b> done · ' + (t.running || 0) + ' running · ' + (t.queued || 0) + ' queued</span>');
+    if (t.failed) board.push('<span class="warn"><b>' + t.failed + '</b> failed</span>');
+    board.push(
+      '<span' + (sp.overCap ? ' class="warn"' : '') + '>$' + Number(sp.spentUsd || 0).toFixed(2) +
+      ' of $' + Number(sp.capUsd || 0).toFixed(2) + ' today' + (sp.overCap ? ' · CAPPED' : '') + '</span>'
+    );
+    document.getElementById('board').innerHTML = board.join('');
 
     const present = [...new Set(nodes.map((n) => n.department))];
     const legend = document.getElementById('legend');
@@ -425,6 +512,166 @@
     }
   }
 
+  // --- The office -----------------------------------------------------------
+  //
+  // The same twenty-eight agents, drawn as a floor plan instead of a network.
+  // It answers a different question: the graph shows who reports to whom, the
+  // office shows who is at their desk. Same payload, same auth, same page — a
+  // second projection rather than a second feature.
+  //
+  // Isometric because a flat grid of twenty-eight boxes reads as a spreadsheet.
+  // The projection is the standard 2:1 diamond: x and y are tile coordinates,
+  // and screen position is their sum and difference. Everything is drawn back
+  // to front (sorted by x + y) so nearer desks occlude further ones without a
+  // depth buffer.
+  const TILE_W = 74;
+  const TILE_H = 37;
+
+  function isoX(x, y) { return (x - y) * (TILE_W / 2); }
+  function isoY(x, y) { return (x + y) * (TILE_H / 2); }
+
+  // One floor per team, laid out in rows. The root sits alone at the front of
+  // its floor — a CEO at the head of the room reads instantly in a way that
+  // "the node with no incoming edge" does not.
+  // Column pitch in tiles. Nameplates are far wider than desks, so this is set
+  // by the labels rather than by the furniture.
+  const COL = 1.75;
+  const ROW = 1.5;
+
+  function seat(n, col, row) {
+    // x + y is constant along a row, so the row is level on screen; x - y grows
+    // with the column, so desks march to the right rather than down-right.
+    n.ox = col * COL + row;
+    n.oy = -col * COL + row;
+    n.col = col;
+  }
+
+  function layoutOffice() {
+    const perRow = 4;
+    let row = 0;
+
+    for (const team of ['executive', 'studio']) {
+      const members = nodes.filter((n) => n.team === team);
+      if (!members.length) continue;
+
+      const root = members.find((n) => n.isRoot);
+      const rest = members.filter((n) => !n.isRoot);
+
+      // The root sits alone at the head of its floor. A CEO at the front of the
+      // room reads instantly in a way that "the node with no incoming edge"
+      // never does.
+      if (root) {
+        seat(root, 1.5, row);
+        row += ROW;
+      }
+      rest.forEach((n, i) => seat(n, i % perRow, row + Math.floor(i / perRow) * ROW));
+      row += Math.ceil(rest.length / perRow) * ROW + ROW * 1.4;
+    }
+  }
+
+  function drawDesk(n) {
+    const px = isoX(n.ox, n.oy);
+    const py = isoY(n.ox, n.oy);
+    const color = colorFor(n.department);
+    const ran = n.ranTimes > 0;
+    const isSel = selected && selected.id === n.id;
+
+    // Desk top: the iso diamond.
+    const w = TILE_W * 0.42, h = TILE_H * 0.42;
+    ctx.beginPath();
+    ctx.moveTo(px, py - h);
+    ctx.lineTo(px + w, py);
+    ctx.lineTo(px, py + h);
+    ctx.lineTo(px - w, py);
+    ctx.closePath();
+    ctx.fillStyle = ran ? hexToRgba(color, 0.26) : 'rgba(255,255,255,0.05)';
+    ctx.fill();
+    ctx.strokeStyle = ran ? hexToRgba(color, 0.7) : 'rgba(255,255,255,0.13)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // The monitor, standing on the desk. Lit only when the agent actually ran,
+    // which is the whole reason to draw an office rather than a list.
+    const screenW = 17, screenH = 12;
+    ctx.beginPath();
+    ctx.rect(px - screenW / 2, py - h - screenH - 3, screenW, screenH);
+    ctx.fillStyle = ran ? color : 'rgba(255,255,255,0.08)';
+    ctx.fill();
+    if (ran) {
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 14;
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+
+    // The agent at the desk: a head and shoulders, seated on the near side.
+    const seatY = py + h + 3;
+    ctx.beginPath();
+    ctx.ellipse(px, seatY + 5, 6.5, 4.5, 0, 0, Math.PI * 2);
+    ctx.fillStyle = ran ? hexToRgba(color, 0.85) : 'rgba(255,255,255,0.16)';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(px, seatY - 1, 3.6, 0, Math.PI * 2);
+    ctx.fillStyle = ran ? '#efefe9' : 'rgba(255,255,255,0.22)';
+    ctx.fill();
+
+    // A ring on the desk edge for the agents that cannot leave Anthropic —
+    // the same secondary encoding the graph uses, so the two views agree.
+    if (n.pinnedToAnthropic) {
+      ctx.beginPath();
+      ctx.arc(px + w - 4, py, 3, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+      ctx.lineWidth = 1.1;
+      ctx.stroke();
+    }
+
+    // The nameplate above the desk, the way the reference does it.
+    const label = n.title;
+    ctx.font = '9px ' + getVar('--mono');
+    const tw = ctx.measureText(label).width;
+    const plateY = py - h - screenH - 20 - ((n.col % 2) ? 15 : 0);
+    ctx.beginPath();
+    ctx.roundRect(px - tw / 2 - 5, plateY - 8, tw + 10, 14, 3);
+    ctx.fillStyle = isSel ? 'rgba(255,255,255,0.92)' : 'rgba(20,20,19,0.92)';
+    ctx.fill();
+    ctx.strokeStyle = ran ? hexToRgba(color, 0.65) : 'rgba(255,255,255,0.14)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.fillStyle = isSel ? '#0e0e0d' : (ran ? '#ffffff' : 'rgba(255,255,255,0.45)');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, px, plateY - 1);
+
+    // Stash where it landed so a tap can find it without recomputing.
+    n.sx = px;
+    n.sy = py;
+  }
+
+  function drawOffice() {
+    // Back to front, so a nearer desk covers the one behind it.
+    const ordered = [...nodes].sort((a, b) => (a.ox + a.oy) - (b.ox + b.oy));
+    for (const n of ordered) drawDesk(n);
+  }
+
+  function fitOffice() {
+    if (!nodes.length) return;
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const n of nodes) {
+      const px = isoX(n.ox, n.oy), py = isoY(n.ox, n.oy);
+      ctx.font = '9px ' + getVar('--mono');
+      const half = ctx.measureText(n.title).width / 2 + 8;
+      minX = Math.min(minX, px - half); maxX = Math.max(maxX, px + half);
+      // Nameplates sit well above the desk and the seated figure below it.
+      minY = Math.min(minY, py - 70); maxY = Math.max(maxY, py + 22);
+    }
+    const pad = 22;
+    const w = (maxX - minX) + pad * 2;
+    const h = (maxY - minY) + pad * 2;
+    view.k = clamp(Math.min(innerWidth / w, innerHeight / h), 0.22, 1.3);
+    view.x = -((minX + maxX) / 2) * view.k;
+    view.y = -((minY + maxY) / 2) * view.k;
+  }
+
   // --- Render -------------------------------------------------------------
   function draw() {
     const w = innerWidth, h = innerHeight;
@@ -439,6 +686,12 @@
     ctx.save();
     ctx.translate(w / 2 + view.x, h / 2 + view.y);
     ctx.scale(view.k, view.k);
+
+    if (mode === 'office') {
+      drawOffice();
+      ctx.restore();
+      return;
+    }
 
     for (const e of edges) {
       const lit = e.active;
@@ -560,7 +813,7 @@
   function tick() {
     // The layout settles; after that only redraw, so a phone is not running a
     // physics loop in the background for as long as the page is open.
-    if (frames < 900) {
+    if (mode === 'graph' && frames < 900) {
       step();
       frames++;
       // Re-frame while it settles, then stop so the founder's own panning and
@@ -588,9 +841,13 @@
     const p = toWorld(cx, cy);
     let best = null, bestD = Infinity;
     for (const n of nodes) {
-      const d = Math.hypot(n.x - p.x, n.y - p.y);
+      // In the office a node's position is its desk, not its simulated point.
+      const nx = mode === 'office' ? isoX(n.ox, n.oy) : n.x;
+      const ny = mode === 'office' ? isoY(n.ox, n.oy) : n.y;
+      const d = Math.hypot(nx - p.x, ny - p.y);
       // A generous hit target: a 6px dot is not a 6px tap target on a phone.
-      if (d < Math.max(n.r + 14, 20) && d < bestD) { best = n; bestD = d; }
+      const reach = mode === 'office' ? 26 : Math.max(n.r + 14, 20);
+      if (d < reach && d < bestD) { best = n; bestD = d; }
     }
     return best;
   }
@@ -608,7 +865,7 @@
     }
 
     const hit = nodeAt(ev.clientX, ev.clientY);
-    if (hit) { dragging = hit; hit.vx = 0; hit.vy = 0; }
+    if (hit && mode === 'graph') { dragging = hit; hit.vx = 0; hit.vy = 0; }
     else { panning = true; }
     last = { x: ev.clientX, y: ev.clientY };
   });
@@ -645,8 +902,10 @@
 
     // A tap, not a drag. The threshold is what separates "I meant this node"
     // from "my thumb slid while panning".
-    if (moved < 8 && dragging) select(dragging);
-    else if (moved < 8 && !dragging && panning) select(null);
+    if (moved < 8) {
+      const hit = dragging || nodeAt(ev.clientX, ev.clientY);
+      select(hit || null);
+    }
 
     dragging = null; panning = false; last = null;
   }

@@ -1282,6 +1282,33 @@ The view fits itself to the screen on load, including the width of the labels �
 fitting to node positions alone puts half the roster off the side of a phone
 while every dot sits comfortably inside.
 
+### Two views, one payload
+
+`Graph` and `Office` toggle on the same page. Nothing is re-fetched when you
+switch, because nothing about the company differs between them — they are two
+projections of one `/api/graph` response, not two features.
+
+The graph answers *who reports to whom, and where did this morning's question
+travel*. The office answers *who is at their desk*: twenty-eight desks on two
+floors, the monitor lit only for an agent that actually ran, the root at the
+head of its floor. Same hues, same ring for the agents pinned to Anthropic, so
+the two views never disagree.
+
+Two things about the isometric layout are worth knowing, because both were
+wrong first:
+
+- **Rows step `+1` in x and `−1` in y.** `isoY` depends on `x + y`, so holding
+  that constant keeps a row level on screen while `isoX` — which depends on
+  `x − y` — marches it to the right. Laying a row out along x alone makes it run
+  diagonally, and twenty-eight desks collapse into a thin band across one corner.
+- **Nameplates are staggered by column.** They are far wider than the desks they
+  label, so column pitch is set by the text, and alternating columns sit higher
+  so two long titles side by side still cannot collide.
+
+The office also has wall space the graph does not, so the payload carries
+company-level state next to the per-agent state: tasks done, running, queued and
+failed; today's spend against the cap; active ventures.
+
 ### Opening it from a phone
 
 `GRAPH` on WhatsApp returns a link. The mechanism is the interesting part.

@@ -41,6 +41,9 @@ import { resolveModelForAgent } from './agents/models.js';
 import { isOpenRouterConfigured } from './agents/openrouter.js';
 import { getLatestDailyReport } from './dailyReports.js';
 import { getProfitShare } from './finance/profitShare.js';
+import { listTasks } from './tasks.js';
+import { getSpendSummary } from './spend.js';
+import { listVentures } from './finance/ventures.js';
 
 /**
  * @returns {{nodes: Array, edges: Array, meta: object}}
@@ -123,6 +126,13 @@ export function buildGraph() {
 
   const ranCount = nodes.filter((n) => n.ranTimes > 0).length;
 
+  // The board on the office wall. Company-level rather than per-agent, because
+  // "what is the company doing" is a different question from "who ran", and the
+  // office view has room to answer both at once where the graph does not.
+  const tasks = listTasks({ limit: 500 });
+  const spend = getSpendSummary();
+  const ventures = listVentures();
+
   return {
     nodes,
     edges,
@@ -139,6 +149,17 @@ export function buildGraph() {
       // consulted" is the finding, and a viewer should not have to count dots.
       idleCount: nodes.length - ranCount,
       frontierCount: nodes.filter((n) => n.frontier).length,
+      tasks: {
+        done: tasks.filter((t) => t.status === 'done').length,
+        running: tasks.filter((t) => t.status === 'running').length,
+        queued: tasks.filter((t) => t.status === 'queued').length,
+        failed: tasks.filter((t) => t.status === 'failed').length,
+      },
+      spend: { spentUsd: spend.spentUsd, capUsd: spend.capUsd, overCap: spend.overCap },
+      ventures: {
+        active: ventures.filter((v) => v.status === 'active').length,
+        total: ventures.length,
+      },
       reportDate: report?.date || null,
       reportScope: report?.scope?.full === false ? 'narrow' : report?.scope ? 'full' : null,
       generatedAt: new Date().toISOString(),
