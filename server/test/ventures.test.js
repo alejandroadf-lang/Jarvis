@@ -251,7 +251,10 @@ test('authorizeOutreach enforces the weekly cap from recordOutreach history', ()
 
 test('setOutreachEnabled requires a scope to already be set up', () => {
   const v = makeVenture();
-  assert.throws(() => ventures.setOutreachEnabled(v.id, true), /Set up an outreach scope before/);
+  // The message now names the command that sets one up — see
+  // refusalQuality.test.js for why every refusal has to.
+  assert.throws(() => ventures.setOutreachEnabled(v.id, true), /Set up an outreach scope first/);
+  assert.throws(() => ventures.setOutreachEnabled(v.id, true), /OUTREACH/);
 });
 
 test('recordOutreach appends to the sent-email log with a timestamp', () => {

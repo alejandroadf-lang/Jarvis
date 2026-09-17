@@ -73,7 +73,11 @@ export function assertProbeableUrl(raw) {
 
   const host = url.hostname.toLowerCase();
   if (BLOCKED_HOSTNAMES.has(host) || BLOCKED_SUFFIXES.some((suffix) => host.endsWith(suffix))) {
-    return fail(`"${host}" is not a public address. A health check has to reach the service the way a customer does, from outside.`);
+    return fail(
+      `"${host}" is not a public address. A health check has to reach the service the way a customer does, from ` +
+        'outside — and the origin is founder-set, so this is not something to work around: the founder points it ' +
+        'at the public URL with "URL <ventureId> <https://...>".'
+    );
   }
   // An IP literal, v4 or v6, is refused outright rather than range-checked.
   // Getting private-range arithmetic right is fiddly and a deployed product

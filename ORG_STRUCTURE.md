@@ -2587,3 +2587,60 @@ the beginning, and prose was not enough while the evidence was unreachable.
 This is the fifth capability in this codebase found sitting behind a door
 nobody could open, and the most expensive of them: it did not remove an
 ability the team had, it made every build failure cost a commit to diagnose.
+
+## Every refusal names a way forward
+
+The deployment cap refused with *"Weekly deployment cap reached (3/week)"* — a
+number, and nothing else. An agent that hits a wall with no door reads it as a
+fault in itself and tries again. Five turns went that way, and one of them
+ended in a claim of work that had not happened.
+
+That shape has now appeared five times in this codebase under five different
+names. Fixing the sixth instance when it arrives is not a strategy, so
+`refusalQuality.test.js` makes it a rule: **a refusal thrown by the gate layer
+must tell whoever reads it what would change the answer.** Four things count,
+and one of them is honesty about there being nothing:
+
+1. **Something the founder does** — a named WhatsApp command, an environment
+   variable, or "the founder needs to…". The agent can then ask for exactly
+   that instead of guessing.
+2. **Something the agent does** — "call `run_checks`", "submit a plan".
+3. **Nothing, said out loud** — "nothing will change this", "wait it out; it
+   clears on its own". A closed door is fine. A closed door with no sign is
+   not.
+4. **A description of malformed input** — "ventureId is required" already
+   tells the caller what to fix.
+
+The test scans `ventures.js`, `killSwitch.js`, `dailyPlan.js`, `spend.js` and
+`probe.js` for every `throw new Error(...)`, reading the raw expression rather
+than the evaluated string, because the question is whether the *wording*
+offers a remedy. Two of its own cases guard the guard: one proves the
+extractor captures whole multi-line throws rather than first lines, and one
+proves every listed file is actually being read — a path typo would otherwise
+make the whole thing a silent no-op.
+
+On its first run it found **25 dead ends**, every one a blocker waiting to
+happen. All 25 now say what to do:
+
+| Was | Now says |
+|---|---|
+| `Venture not found` | …check the id against the business context, where every venture is listed |
+| `must be active to deploy (is killed)` | …nothing will change this — a venture that is not active cannot act |
+| `"x" is outside the allowed scope` | …ask the founder to widen it with `LINK <id> <owner/repo> <paths>`, naming this exact path |
+| `Too soon after the last deployment` | …wait it out; it clears on its own. Do the next piece of work meanwhile |
+| `Link a repo before enabling deployments` | …the founder sends `LINK <id> <owner/repo>` |
+| `All real actions are halted. <reason>` | …the founder lifts it with `RESUME` |
+| `"host" is not a public address` | …the origin is founder-set, so this is not something to work around |
+
+Two of the original 25 turned out to be false positives — `spend.js` already
+said *"Raise DAILY_SPEND_CAP_USD"* and `probe.js` builds its messages through
+a `fail()` helper, so a bare `throw new Error(message)` is judged where the
+wording is actually written. The patterns were widened rather than the
+messages changed; a guard that flags good work teaches people to ignore it.
+
+### Why this rather than another skill
+
+`diagnosing-a-blocker` has asked agents to read the evidence since the first
+week, and the team still guessed — because the evidence was unreachable and
+the refusal was silent. A prompt is a request. This is the rule, and it fails
+the build.
