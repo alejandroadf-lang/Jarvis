@@ -1223,6 +1223,74 @@ Three things came out of fixing it:
   for itself from one quietly surcharging every call, and leaving it unmeasured
   is how the first version of this went wrong.
 
+## The company as a picture
+
+The org chart has always been a tree in a JS object and a list in a sidebar.
+Neither answers the question a founder actually has at a glance: which parts of
+the company moved this morning, which are expensive, and which have never done
+anything at all. A list sorts by name; a graph sorts by structure, and
+structure is the question — *who did the CEO actually talk to* is one look at a
+picture and a paragraph of prose.
+
+`GET /graph` draws all twenty-two agents as a force-directed graph, live from
+`server/graph.js`. Every field comes from something already recorded, never
+computed for display:
+
+- edges are the `reportsTo` links `validate.js` already enforces
+- lit vs unlit is the latest daily report's delegation trace — a node glows if
+  it was actually consulted, and an edge lights up if the question travelled it
+- `provider` is what `resolveModelForAgent` would pick **right now**, which is
+  the only honest answer when `AGENT_MODEL_TIERS` can change it without a deploy
+- earnings come from the profit-share ledger
+
+Agents that have never run stay in the picture, dimmed. A roster of twenty-two
+where thirteen were never consulted is a finding, and dropping them would hide
+exactly that — so `meta.idleCount` names the number rather than leaving a viewer
+to count dots.
+
+### Encoding
+
+Hue is department, assigned in fixed order from a palette validated for
+lightness, chroma, colourblind separation and contrast against this surface.
+Two things deliberately avoid becoming a sixth and seventh hue: **a ring** means
+the agent cannot leave Anthropic because it uses a server tool (the first
+question the picture prompts is "why is that one still expensive"), and
+**dimming** means never consulted. Every structurally important node is directly
+labelled, so identity never rests on colour alone.
+
+The view fits itself to the screen on load, including the width of the labels —
+fitting to node positions alone puts half the roster off the side of a phone
+while every dot sits comfortably inside.
+
+### Opening it from a phone
+
+`GRAPH` on WhatsApp returns a link. The mechanism is the interesting part.
+
+A browser following a link sends no custom headers, so the app's bearer token is
+useless here. The obvious fix is `?token=…`, and this repo's own
+`api-authentication` skill spends a paragraph on why not: a URL is logged by the
+web server, the proxy, the CDN, the browser history and every error tracker in
+between. Writing that down and then doing it anyway would be worse than never
+writing it.
+
+So the token rides in the **fragment** — `/graph#t=…`. Fragments are never sent
+to the server, so it appears in no request line and no access log; the page reads
+it from `location.hash` and presents it as a normal `Authorization` header on its
+own fetch. Two further properties follow from the same reasoning: it **expires**
+(a WhatsApp message gets forwarded, screenshotted and backed up, so a permanent
+link is a credential in a chat log), and it is **derived from** `APP_ACCESS_TOKEN`
+rather than being it, so a leaked view link opens one read-only view and cannot
+be replayed against the mutating API.
+
+`/graph` itself is public and contains no company data — it is an empty shell.
+`/api/graph` is in `SELF_AUTHENTICATED_PATHS`, a set kept deliberately separate
+from `PUBLIC_PATHS` so that a reader scanning for what is unauthenticated never
+finds a path there that is in fact authenticated by other means.
+
+Set `PUBLIC_URL` (or let Railway set `RAILWAY_PUBLIC_DOMAIN`) for the link to be
+a link rather than a path; `VIEW_TOKEN_TTL_MINUTES` changes the 30-minute
+default.
+
 ### The unattended cycle could deploy but not read
 
 The daily cycle wired five action handlers against a roster that defines
