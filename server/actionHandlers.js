@@ -67,6 +67,7 @@ import {
 } from './deploy/github.js';
 import { probeEndpoint } from './execute/probe.js';
 import { fetchReplies, isInboxConfigured } from './inbox.js';
+import { deployReadiness, outreachReadiness, formatReadiness } from './readiness.js';
 import {
   isExecutionConfigured,
   dispatchWorkflow,
@@ -1010,4 +1011,58 @@ async function pushPlanToFounder(plan) {
     }
   }
   return delivered;
+}
+
+// --- Is the door open? --------------------------------------------------------
+//
+// Eleven conditions guard a commit and nine guard an email, and every one of
+// them throws. An agent that tries to deploy therefore learns exactly one of
+// them per attempt, which is how this team spent three turns discovering, one
+// refusal at a time, that a repo had never been enabled.
+//
+// It is also why the daily report kept saying "blocked" without saying on
+// what. Nothing in this app could answer "what do you need from me" in a
+// single call, so the answer came out as a paragraph of guesses — and a guess
+// in a status report is worse than a blank, because the founder acts on it.
+//
+// Grants nothing, reaches nothing, costs nothing. It only reads the gates that
+// were already there.
+export function handleCheckReady(input) {
+  const ventureId = typeof input?.ventureId === 'string' ? input.ventureId : '';
+  if (!ventureId) return 'Could not check: ventureId is required.';
+
+  const action = typeof input?.action === 'string' ? input.action : 'deploy_code';
+  const target = typeof input?.target === 'string' && input.target.trim() ? input.target.trim() : undefined;
+
+  try {
+    if (action === 'send_customer_email') {
+      return formatReadiness(outreachReadiness(ventureId, { to: target }));
+    }
+    if (action === 'deploy_code' || action === 'deploy_changes' || action === 'open_pull_request' || action === 'revert_commit') {
+      const report = deployReadiness(ventureId, { path: target });
+      // open_pull_request and revert_commit skip the plan gate by design (see
+      // authorizePullRequest). Saying so here is the point: the report is what
+      // an agent reads before deciding whether to propose or to land, and a
+      // report that hid the difference would send it back to asking permission
+      // for the one thing that does not need it.
+      if (action === 'open_pull_request' || action === 'revert_commit') {
+        const withoutPlan = {
+          ...report,
+          gates: report.gates.filter((g) => g.name !== 'Approved daily plan'),
+        };
+        const shut = withoutPlan.gates.filter((g) => !g.open);
+        return formatReadiness({
+          ...withoutPlan,
+          action,
+          shut,
+          ready: shut.length === 0,
+          blockedBy: shut[0] || null,
+        });
+      }
+      return formatReadiness({ ...report, action });
+    }
+    return `Could not check: "${action}" is not a gated action. Gated actions are deploy_code, deploy_changes, open_pull_request, revert_commit and send_customer_email.`;
+  } catch (err) {
+    return `Could not check: ${err.message}`;
+  }
 }

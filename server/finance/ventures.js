@@ -150,6 +150,45 @@ const DAILY_CAP_WINDOW_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_MAX_PER_DAY = 1;
 const MIN_MS_BETWEEN_ACTIONS = 60 * 1000;
 
+// The same arithmetic enforceRateLimits does, as data rather than as a throw.
+//
+// readiness.js needs to report every cap at once — "weekly fine, daily spent,
+// cooldown clear" — and an authorizer that throws can only ever name the first
+// thing it hits. Sharing the computation rather than copying it is what keeps
+// the readiness report and the actual gate from disagreeing, which would be
+// worse than having no report: a team told it is clear and then refused stops
+// believing either.
+export function rateLimitState({ entries, timestampKey, scope }) {
+  const now = Date.now();
+  const times = (entries || [])
+    .map((entry) => new Date(entry[timestampKey]).getTime())
+    .filter((time) => Number.isFinite(time));
+
+  const maxPerWeek = scope?.maxPerWeek ?? 0;
+  const maxPerDay = scope?.maxPerDay || DEFAULT_MAX_PER_DAY;
+  const inWeek = times.filter((time) => time >= now - WEEKLY_CAP_WINDOW_MS).length;
+  const inDay = times.filter((time) => time >= now - DAILY_CAP_WINDOW_MS).length;
+  const sinceLast = times.length ? now - Math.max(...times) : Infinity;
+
+  return {
+    inWeek,
+    maxPerWeek,
+    weekOk: inWeek < maxPerWeek,
+    inDay,
+    maxPerDay,
+    dayOk: inDay < maxPerDay,
+    cooldownMs: MIN_MS_BETWEEN_ACTIONS,
+    cooldownRemainingMs: Math.max(0, MIN_MS_BETWEEN_ACTIONS - sinceLast),
+    cooldownOk: sinceLast >= MIN_MS_BETWEEN_ACTIONS,
+  };
+}
+
+// Exported for readiness.js, which reports the allowlist rather than tripping
+// over it.
+export function pathAllowed(repo, targetPath) {
+  return Boolean(repo) && isPathAllowed(repo, targetPath);
+}
+
 function enforceRateLimits({ entries, timestampKey, scope, label }) {
   const now = Date.now();
   const times = (entries || [])

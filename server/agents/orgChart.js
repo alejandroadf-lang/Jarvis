@@ -404,6 +404,28 @@ ${BASE_STYLE}`,
       'Consult the Engineering Lead for concrete implementation questions: how to build something, technical design detail, effort estimates, or code-level tradeoffs.',
     actions: [
       {
+        name: 'check_ready',
+        description:
+          "Ask what is actually stopping you, and get every answer at once. Real actions pass up to eleven separate conditions — the global halt, the spend cap, an active venture, a linked repo, an enabled flag, a path or recipient allowlist, weekly and daily caps, a cooldown, overdue checks, an approved plan — and each one refuses on its own. Trying and reading the error tells you about one of them; this tells you about all of them, which are open, which are shut, and specifically what opens each shut one. Call it BEFORE attempting a real action, and call it the moment you are about to report that something is blocked: \"blocked\" without naming the door is not a status, it is a shrug.",
+        input_schema: {
+          type: 'object',
+          properties: {
+            ventureId: { type: 'string', description: 'The venture id, from the business context below.' },
+            action: {
+              type: 'string',
+              description:
+                'Which action to check: deploy_code, deploy_changes, open_pull_request, revert_commit, or send_customer_email. Defaults to deploy_code.',
+            },
+            target: {
+              type: 'string',
+              description:
+                'Optional. The file path or email address you intend to use, checked against the allowlist. Leave it out and the allowlist is reported rather than judged.',
+            },
+          },
+          required: ['ventureId'],
+        },
+      },
+      {
         name: 'deploy_code',
         description:
           "Commit a real file change to a venture's linked repo — an actual, permanent, publicly-visible commit, not a simulation. Only works when the founder has already linked a repo and enabled deployments for that venture; even then, only paths the founder explicitly allowed and only up to that venture's weekly cap will succeed. This is for real, ready work — a landing page copy update, a config change, a small fix — not a first draft to iterate on live. If you're not confident the change is correct and complete, say so and don't call this yet.",
@@ -874,6 +896,28 @@ ${BASE_STYLE}`,
     toolDescription:
       'Consult the Sales & Commercial Manager for deal strategy, proposal/quote drafting, pricing execution, negotiation approach, or contract terms.',
     actions: [
+      {
+        name: 'check_ready',
+        description:
+          "Ask what is actually stopping you, and get every answer at once. Real actions pass up to eleven separate conditions — the global halt, the spend cap, an active venture, a linked repo, an enabled flag, a path or recipient allowlist, weekly and daily caps, a cooldown, overdue checks, an approved plan — and each one refuses on its own. Trying and reading the error tells you about one of them; this tells you about all of them, which are open, which are shut, and specifically what opens each shut one. Call it BEFORE attempting a real action, and call it the moment you are about to report that something is blocked: \"blocked\" without naming the door is not a status, it is a shrug.",
+        input_schema: {
+          type: 'object',
+          properties: {
+            ventureId: { type: 'string', description: 'The venture id, from the business context below.' },
+            action: {
+              type: 'string',
+              description:
+                'Which action to check: deploy_code, deploy_changes, open_pull_request, revert_commit, or send_customer_email. Defaults to deploy_code.',
+            },
+            target: {
+              type: 'string',
+              description:
+                'Optional. The file path or email address you intend to use, checked against the allowlist. Leave it out and the allowlist is reported rather than judged.',
+            },
+          },
+          required: ['ventureId'],
+        },
+      },
       {
         name: 'send_customer_email',
         description:

@@ -32,6 +32,7 @@ import {
   handleKillVenture,
   handleDeployCode,
   handleDeployChanges,
+  handleCheckReady,
   handleOpenPullRequest,
   handleRevertCommit,
   handleSendCustomerEmail,
@@ -298,6 +299,10 @@ async function runCompanyTurn(sessionId, message, { deadlineAt = null, image = n
       deploy_code: (input) => handleDeployCode(input, 'interactive'),
       // One commit for a change that spans several files, because four commits
       // for one change is how the deploy branch ends up holding half a refactor.
+      // Reads the gates that already exist and reports every one at once,
+      // rather than letting the team discover them one refusal per turn. Grants
+      // nothing and reaches nothing.
+      check_ready: (input) => handleCheckReady(input),
       deploy_changes: (input, ctx) => handleDeployChanges(input, 'interactive', ctx),
       // Finished work that has not landed. Not behind the plan — see
       // authorizePullRequest for why gating a proposal on pre-approval is a

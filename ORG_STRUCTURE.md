@@ -2175,3 +2175,71 @@ commit but cannot un-commit gets more cautious over time, not less — every
 change is permanent, so every change deserves another round of deliberation,
 and caution of that kind looks exactly like never shipping. The Engineering
 Lead's prompt now says the quiet part: *you can undo now, ship accordingly.*
+
+## What is actually stopping you
+
+`deploy_code` passes eleven separate conditions before a commit happens: the
+global halt, the daily spend cap, a configured token, an active venture, a
+linked repo, an enabled flag, a path allowlist, a weekly cap, a daily cap, a
+cooldown, a checks-overdue rule — and above all of those, an approved daily
+plan. Every one of them throws.
+
+So an agent that tries to deploy learns exactly one of them per attempt. That
+is how this team spent three turns discovering, one refusal at a time, that a
+repo had never been enabled.
+
+It is also why the daily report kept saying "blocked" without saying on what.
+Nothing in this app could answer "what do you need from me" in a single call,
+so the answer came out as a paragraph of guesses — and a guess in a status
+report is worse than a blank, because the founder acts on it.
+
+`check_ready` (`server/readiness.js`) reports every gate at once: which are
+open, which are shut, and specifically what opens each shut one. It is on the
+Engineering Lead and the Sales & Commercial Manager — the two agents that hold
+the gated tools — and wired into both the interactive chat and the daily cycle.
+It grants nothing, reaches nothing, and costs nothing: it only reads gates that
+already existed.
+
+### It reports the open gates too
+
+A list containing only failures reads as "everything is broken" whatever it
+actually says. The difference between one shut door and eleven is the
+difference between a one-line message to the founder and a strategy
+conversation, and a team that can only see its failures cannot tell them apart.
+
+Each shut gate carries a `fix`. "Deployments are not enabled" tells an agent it
+is stuck; "the founder turns this on in the Ventures panel" tells it what to
+ask for. The report also names `blockedBy` — the first shut gate, the one an
+attempt would actually hit — so nobody fixes the third item on the list and
+tries again.
+
+Without a `path`, the allowlist gate reports what is allowed rather than
+judging a specific file. "What can I touch" is the question that actually
+precedes a deploy.
+
+### Shared arithmetic, not copied
+
+`rateLimitState()` and `pathAllowed()` are exported from
+`server/finance/ventures.js` and used by both the authorizer and the report.
+Re-deriving the caps in a second place would have been quicker and would have
+drifted, and a readiness report that disagrees with the gate it describes is
+worse than no report at all: a team told it is clear and then refused stops
+believing either, and the next thing it does is guess.
+
+### The agreement test
+
+`readiness.test.js` walks a venture through every state it can be in —
+nothing set up, repo linked but disabled, fully enabled, halted, killed — and
+asserts at each step that `ready` and "the authorizer does not throw" are the
+same thing, in both directions.
+
+Verified the way the daily-cycle parity test was: by injecting a divergence
+(forcing `ready: true`) and watching the test fail. It does.
+
+### It knows which gates a PR skips
+
+`open_pull_request` and `revert_commit` deliberately do not require an approved
+plan, so `check_ready` leaves that gate out when asked about them. That is not
+cosmetic: the report is what an agent reads before deciding whether to propose
+or to land, and one that hid the difference would send it back to asking
+permission for the one thing that does not need it.
