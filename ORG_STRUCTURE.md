@@ -2543,3 +2543,47 @@ not vouch for a deploy.
 
 The warning goes at the *top* of the daily report email, before the report. A
 warning that the report may be wrong is not a footnote to the report.
+
+## The team could not read its own build logs
+
+`run_checks` reported a failed run as the name of the step that failed — "Run
+tests" — plus a conclusion and a link to a GitHub web page. No agent has a
+browser. The error itself never reached the reply.
+
+So a red build could only be answered with a theory. And in this company a
+theory is expensive: testing one costs a commit against the venture's cap,
+which is how five turns went into a guessing loop over a build failure whose
+cause was one line of log:
+
+```
+src/test_auth.py:23: from src.auth import (
+E   ModuleNotFoundError: No module named 'src'
+```
+
+That is not recoverable by reasoning. `pytest src/` under the bare console
+script does not put the working directory on `sys.path`; `python -m pytest`
+does. The tests passed locally and could not pass in CI, and nothing in the
+tool result said why.
+
+`jobLogTail()` now fetches the failing job's log and `failureSummary()`
+attaches it, so `run_checks` returns the error text with the failure. Three
+details earn their place:
+
+- **Timestamps are stripped.** Every Actions line carries an ISO prefix that
+  costs tokens and tells an agent nothing.
+- **The cleanup epilogue is trimmed.** A run ends with a dozen lines of git
+  plumbing and a Node deprecation warning, so an untrimmed 40-line tail is
+  mostly noise and the error scrolls off the top. The tail now ends at the
+  last line of real output.
+- **A log that will not download comes back as `null`, never as a throw.** A
+  missing log is worse than having one; it is not a reason to turn a red build
+  into an error the agent cannot act on at all.
+
+The reply also now says what to do with it: *that is the actual error, read it
+before proposing a cause.* The evidence and the instruction to prefer it over
+inference are the same fix — `diagnosing-a-blocker` has said so in prose since
+the beginning, and prose was not enough while the evidence was unreachable.
+
+This is the fifth capability in this codebase found sitting behind a door
+nobody could open, and the most expensive of them: it did not remove an
+ability the team had, it made every build failure cost a commit to diagnose.

@@ -920,7 +920,27 @@ export async function handleRunChecks(input, triggeredBy = 'interactive', ctx = 
           .map((f) => `${f.job} (${f.conclusion})${f.failedSteps.length ? ` at: ${f.failedSteps.join(', ')}` : ''}`)
           .join('; ')
       : 'no job-level detail available';
-    return `${file} failed on ${owner}/${repo}@${branch} — ${detail}. Full logs: ${run.html_url}. Fix the cause and run it again; do not report this as passing.`;
+
+    // The error text, not just the name of the step that produced it. Before
+    // this the reply named the failing step and linked a web page no agent can
+    // open, so every red build began with a guess — and each guess cost a
+    // commit. The instruction below is the other half: read this, do not
+    // theorise around it.
+    const logs = failures
+      .filter((f) => f.logTail)
+      .map((f) => `--- ${f.job} — last lines of the log ---\n${f.logTail}`)
+      .join('\n\n');
+
+    return [
+      `${file} failed on ${owner}/${repo}@${branch} — ${detail}.`,
+      logs ? `\n${logs}\n` : '',
+      logs
+        ? 'That is the actual error. Read it before proposing a cause — the line that names a file and a reason is worth more than any inference about what might be wrong.'
+        : `The log could not be downloaded. Full logs: ${run.html_url}`,
+      'Fix the cause and run it again; do not report this as passing.',
+    ]
+      .filter(Boolean)
+      .join('\n');
   } catch (err) {
     recordRun(ventureId, { workflow: file, status: 'error', conclusion: err.message, triggeredBy, agentId: ctx.agentId });
     return `Could not run checks: ${err.message}`;
