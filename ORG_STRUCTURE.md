@@ -2726,3 +2726,60 @@ and nothing in this app should ever guess a URL.
 The 20th skill, `exposing-an-api-to-agents`, is the other half — what to
 expose, how to name it, and why a tool description is now sales copy read by a
 machine.
+
+## The rehearsal
+
+Everything on the outreach path is gated, footnoted, capped and reviewed. None
+of it had ever run. The first end-to-end execution of that chain would have
+been the moment a real prospect received a real email — the worst possible
+time to find out that SMTP is misconfigured, the footer renders badly, or the
+CEO vetoes every draft.
+
+`DRYRUN <ventureId> <email>` runs the real pipeline against the real
+recipient and delivers the result to the founder instead of to the prospect.
+`DRYRUN <ventureId> <email> | subject | body` rehearses the founder's own
+words; without them a plain sample draft is used, because the thing under test
+is the pipeline and clever copy would only make the review harder to read.
+
+Three properties make it a rehearsal rather than a demo.
+
+### The gates are the same gates
+
+`authorizeOutreach` used to be a straight-line function that threw on the
+first problem. That is exactly right for a send — fail closed, say one thing,
+stop — and exactly wrong for a founder asking *would this actually go out?*,
+who would need six attempts to discover six shut gates.
+
+So the gates became a list. `outreachGates()` evaluates all ten and returns
+them; `authorizeOutreach()` runs the same list and throws the first shut one's
+reason, word for word. A test asserts the two can never disagree, because the
+whole value of a green dry run rests on that. A copy of the gate logic would
+have rehearsed the wrong code — which is the same failure as a prompt that
+asks for what the code should enforce, wearing a different hat.
+
+A gate whose precondition is missing reports *not checked* rather than a
+verdict. "Not checked" and "checked and fine" are different answers.
+
+### Nothing is consumed
+
+No cap is spent, no contact history is written, no profit share is credited.
+The cooldown especially: a rehearsal that recorded itself would lock the
+founder out of a real send for a minute afterwards, and three rehearsals in a
+row would have been impossible.
+
+### The prospect's address is evaluated and never delivered to
+
+`sendOutreachDryRunEmail` takes no recipient parameter. Not "takes one and is
+careful with it" — there is no argument to get wrong, which is the same
+reasoning that made the price floor arithmetic instead of a prompt.
+
+### What it caught
+
+The refactor tripped `refusalQuality.test.js` immediately:
+`throw new Error(shut.reason)` reads as a refusal with no way forward. It is
+actually a re-throw of text written ten lines above, the same shape as
+`probe.js`'s `fail()` helper — so the extractor was widened to skip a bare name
+or a property read off one, and a new test pins the exemption to exactly that
+so it can never grow into a hole. The guard flagging its own author's refactor
+is the intended behaviour; being able to tell that from a real finding is why
+the exemption is narrow.

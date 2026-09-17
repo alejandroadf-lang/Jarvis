@@ -82,6 +82,7 @@ import {
 import { recordInbound, recordReceipt, recentInbound, waitingMessage, STAGES } from './channels/whatsappLog.js';
 import { isImage, SUPPORTED_IMAGE_TYPES } from './channels/whatsapp.js';
 import { parseFounderCommand, runFounderCommand } from './channels/founderCommands.js';
+import { dryRunOutreach } from './outreachDryRun.js';
 import { runEval } from './eval/run.js';
 import { listTasks } from './tasks.js';
 import { getDegradationToday } from './degradation.js';
@@ -888,6 +889,10 @@ async function handleWhatsAppMessage(message) {
     try {
       const reply = await runFounderCommand(founderCommand, {
         probeIntegrations: getIntegrationStatus,
+        // The rehearsal needs a model client for the CEO review, and it is
+        // the same one every agent turn uses — a dry run against a different
+        // client would be rehearsing a different company.
+        dryRunOutreach: (args) => dryRunOutreach({ ...args, anthropic }),
         // Started, not awaited: the eval takes minutes of real API calls, and
         // holding the webhook open for it would time out long before it
         // finished. The result finds the founder when it exists.
