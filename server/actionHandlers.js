@@ -7,6 +7,7 @@
 // actions; see dailyMeeting.js for why).
 
 import { getLedger, addTransaction } from './finance/ledger.js';
+import { assertRealActionsAllowed } from './killSwitch.js';
 import {
   getVenture,
   createVenture,
@@ -26,6 +27,23 @@ import {
   setDeploymentEnabled,
   authorizeProbe,
   recordProbe,
+  authorizeDeploymentOfPaths,
+  authorizePullRequest,
+  recordPullRequest,
+  authorizeRevert,
+  outreachRecipients,
+  ventureForRecipient,
+  recordReply,
+  listReplies,
+  markRepliesRead,
+  blockContact,
+  updatePipeline,
+  setObjective,
+  listObjectives,
+  monthlyRecurringRevenue,
+  listVentures,
+  describePricing,
+  monthlyValue,
 } from './finance/ventures.js';
 import { recordContribution, distributeRevenue } from './finance/profitShare.js';
 import { submitPlan, getPlan, formatPlanForWhatsApp } from './dailyPlan.js';
@@ -43,10 +61,25 @@ import {
   sendDeploymentEmail,
   sendCustomerEmail,
   sendOutreachAlertEmail,
+  sendReplyAlertEmail,
   isEmailConfigured,
 } from './email.js';
-import { commitFile, readFile as readRepoFile, listFiles as listRepoFiles, isGithubConfigured } from './deploy/github.js';
+import {
+  commitFile,
+  commitFiles,
+  createBranch,
+  openPullRequest,
+  planRevert,
+  readFile as readRepoFile,
+  listFiles as listRepoFiles,
+  isGithubConfigured,
+} from './deploy/github.js';
 import { probeEndpoint } from './execute/probe.js';
+import { fetchReplies, isInboxConfigured } from './inbox.js';
+import { deployReadiness, outreachReadiness, formatReadiness } from './readiness.js';
+import { withComplianceFooter, isUnsubscribe } from './outreachCompliance.js';
+import { createCheckoutLink, isPaymentsConfigured } from './payments.js';
+import { usageSummary, hasIngestKey } from './ventureUsage.js';
 import {
   isExecutionConfigured,
   dispatchWorkflow,
@@ -69,7 +102,32 @@ async function notify(sendFn, ...args) {
   }
 }
 
+// "One expensive thing, completely." The studio was the right tool for
+// choosing a venture and is the wrong tool for the next eighteen months. While
+// an active venture exists and recurring revenue is under the bar, a new
+// proposal is refused with the number it is waiting on. STUDIO_MIN_MRR_USD=0
+// turns the gate off.
+export function studioGate() {
+  const raw = process.env.STUDIO_MIN_MRR_USD;
+  const minimum = raw === undefined || raw === '' ? 1000 : Number(raw);
+  if (!Number.isFinite(minimum) || minimum <= 0) return null;
+  const active = listVentures().filter((v) => v.status === 'active');
+  if (!active.length) return null;
+  const mrr = monthlyRecurringRevenue();
+  if (mrr >= minimum) return null;
+  return { minimum, mrr, active: active.length };
+}
+
 export async function handleProposeVenture(input, ctx = {}) {
+  const gate = studioGate();
+  if (gate) {
+    return (
+      `Not started. The studio is paused until the company's first venture is paying: recurring revenue is ` +
+      `${gate.mrr.toFixed(0)} against a bar of ${gate.minimum} a month, with ${gate.active} active venture${gate.active === 1 ? '' : 's'} ` +
+      'already on the books. A second venture before the first one pays is how a company does two things badly. ' +
+      'Put this idea in a venture note if it is worth keeping, and help the one that exists reach its first customers.'
+    );
+  }
   const venture = createVenture(input);
   // Recorded only after the underlying action actually succeeded — a failed
   // one earns nothing. See finance/profitShare.js for why credit is never
@@ -220,6 +278,224 @@ export async function handleDeployCode(input, triggeredBy = 'interactive', ctx =
   }
 }
 
+// Normalizes the `changes` array the three tools below all take. Tolerant of
+// what a model actually emits — a missing `deleted` flag, a numeric path, an
+// empty-string body that is a legitimate "make this file empty" — and strict
+// about the one thing that is genuinely ambiguous: a change with no path.
+function readChanges(input) {
+  const raw = Array.isArray(input?.changes) ? input.changes : [];
+  const changes = [];
+  for (const item of raw) {
+    const path = typeof item?.path === 'string' ? item.path.trim() : '';
+    if (!path) continue;
+    if (item.deleted === true) {
+      changes.push({ path, deleted: true });
+    } else {
+      changes.push({ path, content: typeof item.content === 'string' ? item.content : '' });
+    }
+  }
+  return changes;
+}
+
+function describeChanges(changes) {
+  return changes
+    .map((c) => (c.deleted ? `  - deleted ${c.path}` : `  - ${c.path}`))
+    .join('\n');
+}
+
+// One commit, several files, all of it or none of it.
+//
+// deploy_code writes one file per commit, which quietly decided how this
+// company could work: a change spanning seven files became seven commits, and
+// a turn that ran out of room at the fourth left the deploy branch holding
+// half a refactor. Every gate deploy_code passes, this passes — once per path,
+// so six files cannot ride in on the seventh's approval.
+export async function handleDeployChanges(input, triggeredBy = 'interactive', ctx = {}) {
+  if (!isGithubConfigured()) {
+    return 'Could not deploy: this server has no GITHUB_TOKEN configured, so real deployments are unavailable.';
+  }
+  const changes = readChanges(input);
+  if (!changes.length) {
+    return 'Could not deploy: changes is required — a list of { path, content } to write, or { path, deleted: true } to remove.';
+  }
+  const { ventureId, message, rationale } = input;
+  try {
+    const venture = authorizeDeploymentOfPaths(ventureId, changes.map((c) => c.path));
+    const { commitSha, commitUrl, files } = await commitFiles({
+      owner: venture.repo.owner,
+      repo: venture.repo.name,
+      branch: venture.repo.branch,
+      changes,
+      message: message?.trim() || `Update ${changeLabel(changes)} for ${venture.title}`,
+    });
+    // One ledger entry per path, so the deploy caps and the founder's log both
+    // count what actually changed rather than counting a seven-file commit as
+    // one small thing.
+    for (const change of changes) {
+      recordDeployment(ventureId, {
+        path: change.path,
+        message,
+        commitSha,
+        commitUrl,
+        rationale,
+        triggeredBy,
+        agentId: ctx.agentId,
+      });
+    }
+    recordContribution({
+      agentId: ctx.agentId,
+      kind: 'deploy_code',
+      ventureId,
+      detail: `${files} files in one commit`,
+    });
+    await notify(sendDeploymentEmail, venture, { path: `${files} files`, commitUrl, triggeredBy });
+    return `Deployed one commit touching ${files} file${files === 1 ? '' : 's'} to "${venture.title}"'s repo (${venture.repo.owner}/${venture.repo.name}, branch ${venture.repo.branch}):\n${describeChanges(changes)}\nCommit: ${commitUrl || commitSha}.`;
+  } catch (err) {
+    return `Could not deploy: ${err.message}`;
+  }
+}
+
+function changeLabel(changes) {
+  if (changes.length === 1) return changes[0].path;
+  return `${changes.length} files`;
+}
+
+// Real work, finished, on a branch, not landed.
+//
+// Until now every option was binary: commit to the branch a deploy watches, or
+// write a paragraph describing what you would have committed. This is the
+// third thing, and it is the one a real engineering team uses by default.
+//
+// Deliberately not gated on the approved daily plan (see authorizePullRequest):
+// a PR is how work gets proposed, and requiring pre-approval to propose
+// something means the only way to propose is to have already been approved.
+export async function handleOpenPullRequest(input, triggeredBy = 'interactive', ctx = {}) {
+  if (!isGithubConfigured()) {
+    return 'Could not open a pull request: this server has no GITHUB_TOKEN configured.';
+  }
+  const changes = readChanges(input);
+  if (!changes.length) {
+    return 'Could not open a pull request: changes is required — a list of { path, content }, or { path, deleted: true }.';
+  }
+  const title = typeof input?.title === 'string' ? input.title.trim() : '';
+  if (!title) return 'Could not open a pull request: title is required.';
+
+  const { ventureId, body } = input;
+  // A branch name the founder can read at a glance in the repo's branch list,
+  // and one that cannot collide with a second PR the same day.
+  const branch =
+    (typeof input?.branch === 'string' && input.branch.trim()) ||
+    `agents/${slugify(title)}-${Date.now().toString(36)}`;
+
+  try {
+    const venture = authorizePullRequest(ventureId, { paths: changes.map((c) => c.path) });
+    const base = venture.repo.branch;
+    await createBranch({ owner: venture.repo.owner, repo: venture.repo.name, branch, fromBranch: base });
+    await commitFiles({
+      owner: venture.repo.owner,
+      repo: venture.repo.name,
+      branch,
+      changes,
+      message: title,
+    });
+    const pr = await openPullRequest({
+      owner: venture.repo.owner,
+      repo: venture.repo.name,
+      head: branch,
+      base,
+      title,
+      body: typeof body === 'string' ? body : '',
+    });
+    recordPullRequest(ventureId, {
+      number: pr.number,
+      url: pr.url,
+      title,
+      branch,
+      paths: changes.map((c) => c.path),
+      triggeredBy,
+      agentId: ctx.agentId,
+    });
+    recordContribution({ agentId: ctx.agentId, kind: 'open_pull_request', ventureId, detail: title });
+    return `Opened pull request #${pr.number} on ${venture.repo.owner}/${venture.repo.name}: "${title}".\nBranch ${branch} -> ${base}, ${changes.length} file${changes.length === 1 ? '' : 's'}:\n${describeChanges(changes)}\n${pr.url}\n\nNothing has landed. The founder reviews and merges, or closes it and nothing happened.`;
+  } catch (err) {
+    return `Could not open a pull request: ${err.message}`;
+  }
+}
+
+function slugify(text) {
+  return String(text)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40) || 'change';
+}
+
+// The undo button.
+//
+// This company could commit and could not un-commit, which made a bad change
+// the founder's problem on a laptop the founder does not always have. The
+// asymmetry was more dangerous than any individual commit: a team that can
+// only move forward gets more cautious over time, not less, and caution here
+// looks like never shipping.
+export async function handleRevertCommit(input, triggeredBy = 'interactive', ctx = {}) {
+  if (!isGithubConfigured()) {
+    return 'Could not revert: this server has no GITHUB_TOKEN configured.';
+  }
+  const sha = typeof input?.sha === 'string' ? input.sha.trim() : '';
+  if (!sha) return 'Could not revert: sha is required — the commit to undo.';
+
+  const { ventureId } = input;
+  const venture = getVenture(ventureId);
+  if (!venture) return 'Could not revert: venture not found.';
+  if (!venture.repo) return 'Could not revert: no repo is linked to this venture.';
+
+  try {
+    // Read what that commit did before deciding whether it may be undone. The
+    // paths are not the agent's to supply — they are whatever the commit
+    // touched — so the allowlist gets checked against the truth rather than
+    // against a claim.
+    const plan = await planRevert({ owner: venture.repo.owner, repo: venture.repo.name, sha });
+    authorizeRevert(ventureId, { paths: plan.paths });
+
+    const { commitSha, commitUrl, files } = await commitFiles({
+      owner: venture.repo.owner,
+      repo: venture.repo.name,
+      branch: venture.repo.branch,
+      changes: plan.changes,
+      message: `Revert "${plan.subject}"\n\nThis reverts commit ${sha}.`,
+    });
+
+    for (const change of plan.changes) {
+      recordDeployment(ventureId, {
+        path: change.path,
+        message: `Revert ${sha.slice(0, 7)}`,
+        commitSha,
+        commitUrl,
+        rationale: typeof input?.rationale === 'string' ? input.rationale : '',
+        triggeredBy,
+        agentId: ctx.agentId,
+      });
+    }
+    recordContribution({ agentId: ctx.agentId, kind: 'revert_commit', ventureId, detail: sha.slice(0, 7) });
+    await notify(sendDeploymentEmail, venture, { path: `revert of ${sha.slice(0, 7)}`, commitUrl, triggeredBy });
+
+    // The caveat is stated every time rather than buried in a doc. A revert is
+    // scoped to the paths that commit touched, so if something later also
+    // edited one of them, this just overwrote that later edit — and the agent
+    // is the only one positioned to notice before the founder does.
+    return [
+      `Reverted ${sha.slice(0, 7)} ("${plan.subject}") on "${venture.title}" — one commit putting ${files} file${files === 1 ? '' : 's'} back:`,
+      describeChanges(plan.changes),
+      `Commit: ${commitUrl || commitSha}.`,
+      '',
+      'This put those specific paths back to their state before that commit. If anything landed on them since, ' +
+        'that work is now overwritten — check before moving on.',
+    ].join('\n');
+  } catch (err) {
+    return `Could not revert: ${err.message}`;
+  }
+}
+
 // The second action reaching a real, live system outside the simulation —
 // same shape as handleDeployCode: fail-closed on every check (SMTP not
 // configured, missing input, an out-of-scope recipient, a spent weekly
@@ -241,15 +517,127 @@ export async function handleSendCustomerEmail(input, triggeredBy = 'interactive'
   }
   try {
     const venture = authorizeOutreach(ventureId, { to });
-    const sent = await sendCustomerEmail(to, subject, body);
+    // The disclosure and the opt-out are appended here, after the draft and
+    // before the send, so no message leaves without them however it was
+    // written. See outreachCompliance.js for which laws each line answers.
+    const finalBody = withComplianceFooter(body, venture);
+    const sent = await sendCustomerEmail(to, subject, finalBody);
     if (!sent) return 'Could not send: the email server rejected the send.';
-    recordOutreach(ventureId, { to, subject, body, triggeredBy, agentId: ctx.agentId });
+    recordOutreach(ventureId, { to, subject, body: finalBody, triggeredBy, agentId: ctx.agentId });
     recordContribution({ agentId: ctx.agentId, kind: 'send_customer_email', ventureId, detail: `to ${to}` });
     await notify(sendOutreachAlertEmail, venture, { to, subject, triggeredBy });
     return `Sent a real email to ${to} on behalf of "${venture.title}": "${subject}".`;
   } catch (err) {
     return `Could not send: ${err.message}`;
   }
+}
+
+// The other half of send_customer_email, and the reason that tool stopped
+// being a broadcast.
+//
+// No scope grant of its own, and that is deliberate rather than an oversight.
+// Sending is gated because it reaches a real person; reading a reply from
+// someone this company already wrote to reaches nobody. Putting it behind the
+// same door as sending would be the mistake this codebase has now made four
+// times: a capability the team holds and cannot open (see the READY check).
+//
+// It is still not unguarded. inbox.js will not return a message from an
+// address the company never emailed, so the founder's private mail is
+// unreachable from here no matter what an agent asks for.
+export async function handleCheckReplies(input, triggeredBy = 'interactive', ctx = {}) {
+  if (!isInboxConfigured()) {
+    return (
+      'Could not check: this server has no inbound mailbox configured, so replies are invisible to the company. ' +
+      'The founder needs to set IMAP_HOST, IMAP_USER and IMAP_PASS.'
+    );
+  }
+
+  const known = outreachRecipients();
+  if (!known.size) {
+    return 'Nothing to check: this company has not sent a customer email yet, so there is nobody who could be replying.';
+  }
+
+  let result;
+  try {
+    result = await fetchReplies({ isKnownSender: (address) => known.has(address) });
+  } catch (err) {
+    return `Could not check the mailbox: ${err.message}`;
+  }
+
+  // Filing happens before reading. A reply is recorded against its venture on
+  // arrival so that a turn which runs out of room halfway through still leaves
+  // the mail where the next turn will find it.
+  const filed = [];
+  const unsubscribed = [];
+  for (const message of result.messages) {
+    const venture = ventureForRecipient(message.from);
+    if (!venture) continue; // sent from a venture that has since been deleted
+    const { entry, duplicate } = recordReply(venture.id, message);
+    if (duplicate || !entry) continue;
+    // An unsubscribe is honoured here, before any agent reads it, so that no
+    // judgment call sits between the request and the block. The reply is
+    // still filed — the founder can see it — but it is not a lead.
+    if (isUnsubscribe(entry.body)) {
+      blockContact(venture.id, message.from, 'unsubscribed by reply');
+      markRepliesRead(venture.id, [entry.messageId]);
+      unsubscribed.push(message.from);
+      continue;
+    }
+    filed.push({ venture, entry });
+    recordContribution({
+      agentId: ctx.agentId,
+      kind: 'check_replies',
+      ventureId: venture.id,
+      detail: `reply from ${message.from}`,
+    });
+    await notify(sendReplyAlertEmail, venture, { from: message.from, subject: entry.subject, triggeredBy });
+  }
+
+  // Unread, not new: a reply filed by yesterday's daily cycle and never acted
+  // on is exactly as much of an open loop as one that arrived this minute.
+  const ventureId = typeof input?.ventureId === 'string' ? input.ventureId : null;
+  const ventureIds = ventureId ? [ventureId] : [...new Set(filed.map((f) => f.venture.id))];
+  const unread = [];
+  for (const id of ventureIds) {
+    for (const reply of listReplies(id, { unreadOnly: true })) unread.push({ id, reply });
+  }
+
+  const unsubNote = unsubscribed.length
+    ? `\n\n${unsubscribed.length} contact${unsubscribed.length === 1 ? '' : 's'} asked not to be contacted and ${unsubscribed.length === 1 ? 'has' : 'have'} been blocked: ${unsubscribed.join(', ')}. Do not write to them again.`
+    : '';
+
+  if (!unread.length) {
+    const checked = result.scanned ? ` Checked ${result.scanned} message${result.scanned === 1 ? '' : 's'}.` : '';
+    return `No unread replies.${checked} Silence is data too — if a prospect has been quiet for a week, that is worth a note rather than another email.${unsubNote}`;
+  }
+
+  const lines = unread.map(({ id, reply }) => {
+    const who = reply.fromName ? `${reply.fromName} <${reply.from}>` : reply.from;
+    return [
+      `From: ${who}`,
+      `Subject: ${reply.subject || '(no subject)'}`,
+      `Received: ${reply.receivedAt}`,
+      `Venture: ${id}`,
+      '',
+      reply.body || '(empty body)',
+    ].join('\n');
+  });
+
+  // Marked read only now — after the text is in hand and about to be returned
+  // into the turn. Marking earlier would lose a reply to a crash in between.
+  for (const id of ventureIds) {
+    markRepliesRead(id, unread.filter((u) => u.id === id).map((u) => u.reply.messageId));
+  }
+
+  return [
+    `${unread.length} unread repl${unread.length === 1 ? 'y' : 'ies'}:`,
+    '',
+    lines.join('\n\n---\n\n'),
+    '',
+    'Log what you learned with log_contact_note before you answer — the note is what the next draft reads, ' +
+      'and this reply is not going to be in your context next week.' +
+      unsubNote,
+  ].join('\n');
 }
 
 // Purely internal memory — no scope grant, no kill switch, no cap, because
@@ -679,4 +1067,198 @@ async function pushPlanToFounder(plan) {
     }
   }
   return delivered;
+}
+
+// --- Is the door open? --------------------------------------------------------
+//
+// Eleven conditions guard a commit and nine guard an email, and every one of
+// them throws. An agent that tries to deploy therefore learns exactly one of
+// them per attempt, which is how this team spent three turns discovering, one
+// refusal at a time, that a repo had never been enabled.
+//
+// It is also why the daily report kept saying "blocked" without saying on
+// what. Nothing in this app could answer "what do you need from me" in a
+// single call, so the answer came out as a paragraph of guesses — and a guess
+// in a status report is worse than a blank, because the founder acts on it.
+//
+// Grants nothing, reaches nothing, costs nothing. It only reads the gates that
+// were already there.
+export function handleCheckReady(input) {
+  const ventureId = typeof input?.ventureId === 'string' ? input.ventureId : '';
+  if (!ventureId) return 'Could not check: ventureId is required.';
+
+  const action = typeof input?.action === 'string' ? input.action : 'deploy_code';
+  const target = typeof input?.target === 'string' && input.target.trim() ? input.target.trim() : undefined;
+
+  try {
+    if (action === 'send_customer_email') {
+      return formatReadiness(outreachReadiness(ventureId, { to: target }));
+    }
+    if (action === 'deploy_code' || action === 'deploy_changes' || action === 'open_pull_request' || action === 'revert_commit') {
+      const report = deployReadiness(ventureId, { path: target });
+      // open_pull_request and revert_commit skip the plan gate by design (see
+      // authorizePullRequest). Saying so here is the point: the report is what
+      // an agent reads before deciding whether to propose or to land, and a
+      // report that hid the difference would send it back to asking permission
+      // for the one thing that does not need it.
+      if (action === 'open_pull_request' || action === 'revert_commit') {
+        const withoutPlan = {
+          ...report,
+          gates: report.gates.filter((g) => g.name !== 'Approved daily plan'),
+        };
+        const shut = withoutPlan.gates.filter((g) => !g.open);
+        return formatReadiness({
+          ...withoutPlan,
+          action,
+          shut,
+          ready: shut.length === 0,
+          blockedBy: shut[0] || null,
+        });
+      }
+      return formatReadiness({ ...report, action });
+    }
+    return `Could not check: "${action}" is not a gated action. Gated actions are deploy_code, deploy_changes, open_pull_request, revert_commit and send_customer_email.`;
+  } catch (err) {
+    return `Could not check: ${err.message}`;
+  }
+}
+
+// --- Did anyone use it? -------------------------------------------------------
+//
+// This company measures its own cost to the cent and its product's use not at
+// all, which is the wrong half of the equation to know exactly. A venture with
+// a linked repo, a green deploy and zero calls looks identical in every other
+// view of this app to one that is working — and those are the two most
+// different states a venture can be in.
+export function handleCheckUsage(input) {
+  const ventureId = typeof input?.ventureId === 'string' ? input.ventureId : '';
+  if (!ventureId) return 'Could not check: ventureId is required.';
+  const venture = getVenture(ventureId);
+  if (!venture) return 'Could not check: venture not found.';
+
+  const days = Math.min(90, Math.max(1, Number(input?.days) || 7));
+  const summary = usageSummary(ventureId, { days });
+
+  if (!summary.known) {
+    return hasIngestKey(ventureId)
+      ? `"${venture.title}" has a usage key but has never reported. Either it is not deployed, or the reporting call is not wired into it yet — those are different problems and worth telling apart before drawing any conclusion about demand.`
+      : `"${venture.title}" is not reporting usage. Nothing is counting, so nothing can be said about whether anyone is using it. The founder mints a key from the Ventures panel and puts it in the venture's own environment as JARVIS_USAGE_KEY; the code reads it from there and posts to /api/ventures/${ventureId}/usage/report.`;
+  }
+
+  const lines = summary.days.map(
+    (row) => `  ${row.date}: ${row.calls} call${row.calls === 1 ? '' : 's'}, ${row.errors} error${row.errors === 1 ? '' : 's'}, ${row.callers} caller${row.callers === 1 ? '' : 's'}`,
+  );
+
+  if (summary.silent) {
+    return [
+      `"${venture.title}" reported nothing in the last ${days} day${days === 1 ? '' : 's'}.`,
+      summary.lastSeenAt ? `Last reported usage: ${summary.lastSeenAt}.` : '',
+      '',
+      'Silence is a finding, not a gap in the data. Something is running and counting, and nobody is calling it. ' +
+        'That is a demand question or a distribution question — not an engineering one, and not one more feature will answer it.',
+    ]
+      .filter(Boolean)
+      .join('\n');
+  }
+
+  const errorNote =
+    summary.errorRate > 0.05
+      ? `\n\n${Math.round(summary.errorRate * 100)}% of requests are failing. That is high enough to be the reason for anything else you were about to investigate — look here first.`
+      : '';
+
+  const unit = venture.pricing?.unit || 'outcome';
+  return [
+    `"${venture.title}" over ${days} day${days === 1 ? '' : 's'}: ${summary.calls} calls, ${summary.errors} errors, ${summary.callers} distinct caller${summary.callers === 1 ? '' : 's'}, ${summary.outcomes} ${unit}${summary.outcomes === 1 ? '' : 's'} delivered.`,
+    ...lines,
+    errorNote,
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+// --- Taking money -----------------------------------------------------------------
+//
+// Creating a link is not a real-world action by itself — nothing happens until
+// a person opens it — so it is gated on what a link needs (a venture, a price,
+// configured payments, the halt) and not on the daily plan. Sending it to
+// someone still goes through send_customer_email and every gate that carries.
+export async function handleCreatePaymentLink(input, ctx = {}) {
+  if (!isPaymentsConfigured()) {
+    return 'Could not create a payment link: this server has no STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET configured. The founder sets both in the deployment environment.';
+  }
+  const ventureId = typeof input?.ventureId === 'string' ? input.ventureId : '';
+  const venture = getVenture(ventureId);
+  if (!venture) return 'Could not create a payment link: venture not found.';
+  if (venture.status !== 'active') return `Could not create a payment link: venture is ${venture.status}.`;
+
+  const kind = input?.kind === 'monthly' ? 'monthly' : 'one_time';
+  let amount = Number(input?.amount);
+  const currency = (input?.currency || venture.pricing?.currency || 'EUR').toString();
+
+  // No amount given: derive it from the price on the record. A link that
+  // charges a number the agent made up is the discount problem from Project
+  // Vend with extra steps.
+  if (!Number.isFinite(amount) || amount <= 0) {
+    if (!venture.pricing) {
+      return `Could not create a payment link: no amount given and "${venture.title}" has no price set. The founder sets one with PRICE ${venture.id} <floor per month> <per unit> <unit>.`;
+    }
+    const units = Number(input?.expectedUnits) || 0;
+    amount = kind === 'monthly' ? monthlyValue(venture, units) : monthlyValue(venture, units);
+    if (amount <= 0) return `Could not create a payment link: the price on record (${describePricing(venture)}) comes to zero for that volume.`;
+  }
+
+  try {
+    assertRealActionsAllowedForLink();
+    const link = await createCheckoutLink({
+      venture,
+      amount,
+      currency,
+      kind,
+      description: typeof input?.description === 'string' ? input.description : '',
+      customerEmail: typeof input?.customerEmail === 'string' ? input.customerEmail : '',
+      agentId: ctx.agentId,
+    });
+    recordContribution({ agentId: ctx.agentId, kind: 'create_payment_link', ventureId, detail: `${link.currency.toUpperCase()} ${link.amount}` });
+    return [
+      `Payment link for "${venture.title}": ${link.url}`,
+      `${link.currency.toUpperCase()} ${link.amount.toFixed(2)} ${link.kind === 'monthly' ? 'per month' : 'one-time'}${input?.customerEmail ? ` for ${input.customerEmail}` : ''}.`,
+      '',
+      'Nothing has been charged. The customer opens the link and pays; the ledger updates itself when they do, and the founder is told. ' +
+        'Put the link in a reply with send_customer_email — do not paste it into a message you have not been asked to send.',
+    ].join('\n');
+  } catch (err) {
+    return `Could not create a payment link: ${err.message}`;
+  }
+}
+
+// A halted company does not mint payment links either.
+function assertRealActionsAllowedForLink() {
+  assertRealActionsAllowed();
+}
+
+// --- The pipeline ------------------------------------------------------------------
+export function handleUpdatePipeline(input, ctx = {}) {
+  const { ventureId, email, stage, dealValueMonthly, nextAction } = input || {};
+  try {
+    const { entry } = updatePipeline(ventureId, { email, stage, dealValueMonthly, nextAction });
+    recordContribution({ agentId: ctx.agentId, kind: 'update_pipeline', ventureId, detail: `${entry.email} -> ${entry.stage || '?'}` });
+    return `Pipeline updated: ${entry.email} is at "${entry.stage || 'lead'}"${
+      entry.dealValueMonthly ? `, worth ${entry.dealValueMonthly}/month` : ''
+    }${entry.nextAction ? `. Next: ${entry.nextAction}` : '.'}`;
+  } catch (err) {
+    return `Could not update the pipeline: ${err.message}`;
+  }
+}
+
+// --- Objectives ---------------------------------------------------------------------
+export function handleSetObjective(input, ctx = {}) {
+  const { ventureId, key, target, by } = input || {};
+  try {
+    const entry = setObjective(ventureId, { key, target, by, setBy: ctx.agentId });
+    const open = listObjectives(ventureId);
+    return `Objective set on ${ventureId}: ${entry.key} — ${entry.target}${entry.by ? ` by ${entry.by}` : ''}. ` +
+      `${open.length} open objective${open.length === 1 ? '' : 's'} on this venture. Every agent working on it sees this in their context from the next turn.`;
+  } catch (err) {
+    return `Could not set the objective: ${err.message}`;
+  }
 }

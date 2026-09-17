@@ -31,7 +31,16 @@ import {
   handleReportMilestoneProgress,
   handleKillVenture,
   handleDeployCode,
+  handleDeployChanges,
+  handleCheckReady,
+  handleCheckUsage,
+  handleCreatePaymentLink,
+  handleUpdatePipeline,
+  handleSetObjective,
+  handleOpenPullRequest,
+  handleRevertCommit,
   handleSendCustomerEmail,
+  handleCheckReplies,
   handleLogContactNote,
   handleRunChecks,
   handleListChecks,
@@ -54,7 +63,11 @@ import { startDailyMeetingScheduler, runDailyMeetingNow, isDailyMeetingRunning }
 import { getKillSwitch, haltRealActions, resumeRealActions } from './killSwitch.js';
 import { getSpendSummary } from './spend.js';
 import { getIntegrationStatus } from './integrations.js';
-import { getProfitShare, listContributions } from './finance/profitShare.js';
+import { getProfitShare, listContributions, recordContribution } from './finance/profitShare.js';
+import { verifyStripeSignature, interpretEvent } from './payments.js';
+import { recordPayment, getVenture as getVentureForPayment } from './finance/ventures.js';
+import { addTransaction as addLedgerTransaction } from './finance/ledger.js';
+import { sendPaymentEmail } from './email.js';
 import {
   isWhatsAppConfigured,
   verifyWebhookChallenge,
@@ -86,6 +99,7 @@ import {
   listDeepDives,
   queueDepth,
 } from './deepDives.js';
+import { recordUsage, mintIngestKey, verifyIngestKey, hasIngestKey, usageSummary } from './ventureUsage.js';
 import { requireAccess, warnIfUnprotected, isAccessProtected, hasAppToken } from './auth.js';
 import {
   getPlan,
@@ -99,6 +113,7 @@ import {
 import { isOpenAIConfigured, transcribeAudio } from './agents/openai.js';
 import { listWeeklyReflections, getWeeklyReflection, getLatestWeeklyReflection } from './weeklyReflections.js';
 import { startWeeklyReflectionScheduler, runWeeklyReflectionNow, isWeeklyReflectionRunning } from './weeklyScheduler.js';
+import { startInboxWatcher } from './inboxWatch.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3001;
@@ -292,6 +307,30 @@ async function runCompanyTurn(sessionId, message, { deadlineAt = null, image = n
       // deployment/outreach log — see dailyMeeting.js for the 'daily_cycle'
       // counterpart.
       deploy_code: (input) => handleDeployCode(input, 'interactive'),
+      // One commit for a change that spans several files, because four commits
+      // for one change is how the deploy branch ends up holding half a refactor.
+      deploy_changes: (input, ctx) => handleDeployChanges(input, 'interactive', ctx),
+      // Reads the gates that already exist and reports every one at once, rather
+      // than letting the team discover them one refusal per turn. Grants nothing
+      // and reaches nothing.
+      check_ready: (input) => handleCheckReady(input),
+      // Whether anyone is actually calling the product. Reads counters the venture
+      // reports itself; shipped and used are different facts and this is the only
+      // place the second one exists.
+      check_usage: (input) => handleCheckUsage(input),
+      // Creating a link charges nobody; sending it goes through email and its
+      // gates. Pipeline and objectives are internal book-keeping.
+      create_payment_link: (input, ctx) => handleCreatePaymentLink(input, ctx),
+      update_pipeline: (input, ctx) => handleUpdatePipeline(input, ctx),
+      set_objective: (input, ctx) => handleSetObjective(input, ctx),
+      // Finished work that has not landed. Not behind the plan — see
+      // authorizePullRequest for why gating a proposal on pre-approval is a
+      // deadlock rather than a review.
+      open_pull_request: (input, ctx) => handleOpenPullRequest(input, 'interactive', ctx),
+      // The undo button. Also not behind the plan: the paths belong to the
+      // commit being undone, so no plan could have named them, and a bad
+      // commit waiting until tomorrow is worse than the revert.
+      revert_commit: (input, ctx) => handleRevertCommit(input, 'interactive', ctx),
       // Execution is wired the same way as deploy_code: available in a live
       // conversation, where the founder is present to see a red run.
       // Self-service deployment, bounded by AUTONOMOUS_DEPLOY_REPOS. Wired
@@ -332,6 +371,10 @@ async function runCompanyTurn(sessionId, message, { deadlineAt = null, image = n
       // the agent supplies only a path.
       check_service: (input, ctx) => handleCheckService(input, ctx),
       send_customer_email: (input) => handleSendCustomerEmail(input, 'interactive'),
+      // Reading the answers. Not gated like sending, because it reaches
+      // nobody — and inbox.js will only surface mail from an address this
+      // company already wrote to, so the founder's own inbox stays shut.
+      check_replies: (input, ctx) => handleCheckReplies(input, 'interactive', ctx),
       // Internal memory only — no scope grant or cap, since nothing leaves
       // the building (see actionHandlers.js).
       log_contact_note: handleLogContactNote,
@@ -543,6 +586,55 @@ app.post('/api/ventures/:id/repo', (req, res) => {
   }
 });
 
+// --- Usage ingest -------------------------------------------------------------
+//
+// The first endpoint in this app a machine outside the company calls, and the
+// only one authenticated by something other than the founder's app token. A
+// venture's deployed product holds a key that can increment that venture's
+// counters and do nothing else — handing it the app token instead would mean
+// a compromised product could disable the kill switch.
+//
+// Deliberately forgiving. A counter that 500s and takes a customer's request
+// down with it would be a product outage caused by bookkeeping, which is an
+// absurd trade; anything malformed is rejected with a 400 and a reason, and
+// nothing here can throw its way into the venture's own latency.
+app.post('/api/ventures/:id/usage/report', (req, res) => {
+  const { id } = req.params;
+  const key = (req.get('x-venture-key') || '').trim();
+  if (!verifyIngestKey(id, key) && !hasAppToken(req)) {
+    return res.status(401).json({ error: 'Bad or missing venture key.' });
+  }
+  try {
+    const recorded = recordUsage(id, req.body || {});
+    res.json({ recorded });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Mints the key and returns it once. Founder-only, and it is the founder who
+// puts it into the venture's own deployment environment — no agent tool reads
+// it, because an agent that can read a credential is an agent that can commit
+// one.
+app.post('/api/ventures/:id/usage/key', (req, res) => {
+  try {
+    const key = mintIngestKey(req.params.id);
+    res.json({
+      key,
+      variable: 'JARVIS_USAGE_KEY',
+      endpoint: `/api/ventures/${req.params.id}/usage/report`,
+      note: 'Put this in the venture\'s own deployment environment. It will not be shown again.',
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/ventures/:id/usage', (req, res) => {
+  const days = Math.min(90, Math.max(1, Number(req.query.days) || 7));
+  res.json({ usage: usageSummary(req.params.id, { days }), configured: hasIngestKey(req.params.id) });
+});
+
 app.post('/api/ventures/:id/deployment/enable', (req, res) => {
   try {
     const venture = setDeploymentEnabled(req.params.id, true);
@@ -604,6 +696,64 @@ app.get('/api/whatsapp/webhook', (req, res) => {
 // wants a 200 within seconds and retries if it doesn't get one, while a team
 // turn takes 20 seconds to two minutes. So this acknowledges immediately and
 // answers afterwards through the Send API — see channels/whatsapp.js.
+// --- Stripe: money arrived ------------------------------------------------------
+//
+// The only endpoint here whose caller is a payment processor. Authenticated by
+// Stripe's signature over the raw body (see payments.js), which is why the
+// JSON middleware keeps req.rawBody. Acknowledged with 200 quickly and always
+// on a verified event: Stripe retries anything else, and a retry storm over a
+// ledger write is how a payment gets booked three times.
+app.post('/api/payments/webhook', async (req, res) => {
+  if (!verifyStripeSignature(req.rawBody, req.get('stripe-signature'))) {
+    return res.status(400).json({ error: 'Bad signature.' });
+  }
+  let outcome;
+  try {
+    outcome = interpretEvent(req.body);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+  res.json({ received: true, duplicate: Boolean(outcome.duplicate) });
+
+  if (outcome.duplicate || !outcome.paid) return;
+  const paid = outcome.paid;
+  const venture = paid.ventureId ? getVentureForPayment(paid.ventureId) : null;
+  try {
+    addLedgerTransaction({
+      type: 'revenue',
+      amount: paid.amount,
+      description: `Stripe ${paid.kind === 'monthly' ? 'subscription' : 'payment'} ${paid.currency} ${paid.amount.toFixed(2)}${
+        paid.customerEmail ? ` from ${paid.customerEmail}` : ''
+      } (${paid.reference})`,
+      ventureId: venture ? venture.id : null,
+    });
+    if (venture) {
+      recordPayment(venture.id, paid);
+      // The agent that created the link earns the credit — the same rule as
+      // every other real action, and the first time it has been for revenue
+      // a customer actually sent rather than revenue the founder reported.
+      if (paid.agentId) {
+        recordContribution({ agentId: paid.agentId, kind: 'payment_received', ventureId: venture.id, detail: `${paid.currency} ${paid.amount}` });
+      }
+      sendPaymentEmail(venture, paid).catch((err) => console.error('Payment alert failed:', err.message));
+    }
+    console.log(`Payment booked: ${paid.currency} ${paid.amount} for ${venture ? venture.title : 'no venture'}`);
+  } catch (err) {
+    console.error('Payment webhook could not book the payment:', err.message);
+  }
+});
+
+// Where a customer lands after paying. Plain text on purpose: the receipt is
+// Stripe's, and the company's job here is to say thank you and stop.
+app.get('/paid', (req, res) => {
+  const cancelled = req.query.cancelled === '1';
+  res.type('text/plain').send(
+    cancelled
+      ? 'No payment was made. If that was a mistake, the link still works.'
+      : 'Thank you — your payment went through. A receipt is on its way from Stripe, and a person will be in touch.'
+  );
+});
+
 app.post('/api/whatsapp/webhook', (req, res) => {
   if (!verifySignature(req.rawBody, req.get('x-hub-signature-256'))) {
     // Refused before anything is read out of the body: this endpoint is
@@ -1154,4 +1304,5 @@ app.listen(PORT, () => {
   warnIfUnprotected();
   startDailyMeetingScheduler({ anthropic });
   startWeeklyReflectionScheduler({ anthropic });
+  startInboxWatcher({ anthropic });
 });

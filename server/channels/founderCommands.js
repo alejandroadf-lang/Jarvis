@@ -33,6 +33,14 @@ import {
   setDeploymentCaps,
   setServiceUrl,
   clearServiceUrl,
+  setPricing,
+  describePricing,
+  setBookingUrl,
+  recordConsent,
+  blockContact,
+  unblockContact,
+  pipelineSummary,
+  listObjectives,
 } from '../finance/ventures.js';
 import { getLatestDailyReport } from '../dailyReports.js';
 import { withdrawPlan, getApprovedPlan } from '../dailyPlan.js';
@@ -40,6 +48,7 @@ import { listAffordableModels } from '../agents/openrouter.js';
 import { listTasks } from '../tasks.js';
 import { describeDegradation } from '../degradation.js';
 import { isEvalRunning } from '../eval/run.js';
+import { deployReadiness, outreachReadiness, formatReadinessBrief } from '../readiness.js';
 
 const COMMANDS = [
   { kind: 'help', re: /^(help|commands|\?)$/i },
@@ -48,6 +57,21 @@ const COMMANDS = [
   { kind: 'spend', re: /^(spend|cost|budget)$/i },
   { kind: 'integrations', re: /^(integrations|connections|health)$/i },
   { kind: 'ventures', re: /^(ventures|portfolio|list\s+ventures)$/i },
+  // The founder's own version of the team's check_ready.
+  //
+  // The report that names every shut gate was built for agents and reachable
+  // only by them, which left the founder's actual question — "why is the team
+  // blocked and what can I do" — answerable by the company and not askable by
+  // the person who needed it. VENTURES says what a venture is allowed to do;
+  // this says what is stopping it right now, which is a different question and
+  // the one that gets typed at 7am.
+  //
+  // No venture id shows every active venture, because the founder asking this
+  // usually does not have an id to hand and should not need one.
+  // Not "why". A bare "why" is ordinary prose far more often than it is a
+  // command, and hijacking it would swallow a real message to the team — the
+  // exact failure the venture-id requirement above exists to prevent.
+  { kind: 'ready', re: /^(ready|blocked)(?:\s+(v_\S+))?$/i, arg: 'ventureId' },
   { kind: 'models', re: /^models(?:\s+(\S+))?$/i, arg: 'search' },
   // Withdrawing an approval the founder already gave.
   //
@@ -81,6 +105,19 @@ const COMMANDS = [
   // "caps v_123 12 40" — commits per day, then per week.
   { kind: 'caps', re: /^caps\s+(v_\S+)\s+(\d+)(?:\s+(\d+))?$/i },
   { kind: 'service_url_clear', re: /^url\s+clear\s+(v_\S+)$/i, arg: 'ventureId' },
+  // Price, on the record. "price v_123 149 0.02 page" — floor per month, then
+  // the per-unit rate and its unit. Either number may be 0.
+  { kind: 'price', re: /^price\s+(v_\S+)\s+([\d.]+)(?:\s+([\d.]+)\s+([a-z_-]+))?(?:\s+([a-z]{3}))?$/i },
+  // Where "let's talk" lands.
+  { kind: 'booking', re: /^booking\s+(v_\S+)\s+(https:\/\/\S+)$/i },
+  { kind: 'booking_clear', re: /^booking\s+clear\s+(v_\S+)$/i, arg: 'ventureId' },
+  // The legal record: consent from an address that needs it, and the stop
+  // list. See outreachCompliance.js.
+  { kind: 'consent', re: /^consent\s+(v_\S+)\s+(\S+@\S+)$/i },
+  { kind: 'block', re: /^block\s+(v_\S+)\s+(\S+@\S+)(?:\s+(.+))?$/i },
+  { kind: 'unblock', re: /^unblock\s+(v_\S+)\s+(\S+@\S+)$/i },
+  // The deal board and the objectives, as a message.
+  { kind: 'pipeline', re: /^(pipeline|deals)(?:\s+(v_\S+))?$/i, arg: 'ventureId' },
 ];
 
 // "outreach v_123 @acme.com, someone@corp.com" — the grant itself, which
@@ -134,6 +171,22 @@ export function parseFounderCommand(text) {
           maxPerWeek: match[3] ? Number(match[3]) : Number(match[2]) * 5,
         };
       }
+      // The same reason caps is special-cased: more than one capture, and the
+      // last one is not the argument.
+      if (kind === 'price') {
+        return {
+          kind,
+          ventureId: match[1],
+          floorMonthly: Number(match[2]),
+          perUnit: match[3] !== undefined ? Number(match[3]) : 0,
+          unit: match[4] || '',
+          currency: (match[5] || 'EUR').toUpperCase(),
+        };
+      }
+      if (kind === 'booking') return { kind, ventureId: match[1], url: match[2] };
+      if (kind === 'consent') return { kind, ventureId: match[1], email: match[2] };
+      if (kind === 'block') return { kind, ventureId: match[1], email: match[2], reason: (match[3] || 'blocked by founder').trim() };
+      if (kind === 'unblock') return { kind, ventureId: match[1], email: match[2] };
       // The argument is always the last capture group: some patterns group
       // the verb's synonyms first ("halt|stop|freeze") and some don't, so a
       // fixed index silently reads the wrong group for half the table.
@@ -274,6 +327,7 @@ const HELP = `Founder controls — send any of these on their own:
 HALT <reason> — stop every real action now
 RESUME — lift the halt
 VENTURES — every venture, its id and what it's allowed to do
+READY [ventureId] — what is actually stopping the team, and what opens it
 BUILD [ventureId] — what the team is building right now
 SPEND — today's model spend against the cap
 INTEGRATIONS — what's actually connected
@@ -290,6 +344,12 @@ URL CLEAR <ventureId> — revoke that
 OUTREACH <ventureId> <emails or @domains> — grant and enable an outreach scope
 OUTREACH OFF <ventureId> — revoke it
 CAPS <ventureId> <per day> [per week] — how often they may commit
+PRICE <ventureId> <floor/month> [<per unit> <unit>] [ccy] — the price, on record
+BOOKING <ventureId> <https://...> — where a prospect books a call
+CONSENT <ventureId> <email> — record consent from a .de/.it address
+BLOCK <ventureId> <email> — never contact this person again
+UNBLOCK <ventureId> <email> — lift that
+PIPELINE [ventureId] — every deal, its stage and value, and open objectives
 DEPLOY OFF <ventureId> — stop commits for one venture
 DEPLOY ON <ventureId> — allow them again
 
@@ -351,6 +411,37 @@ export async function runFounderCommand(command, deps = {}) {
         .join('\n\n')}`;
     }
 
+    case 'ready': {
+      const ventures = command.ventureId
+        ? [getVenture(command.ventureId)].filter(Boolean)
+        : listVentures().filter((v) => v.status === 'active');
+
+      if (!ventures.length) {
+        return command.ventureId
+          ? `No venture with id ${command.ventureId}.`
+          : 'No active ventures, so nothing is blocked. Ask the team to start one.';
+      }
+
+      const sections = ventures.map((venture) => {
+        const deploy = deployReadiness(venture.id);
+        // Outreach is only worth reporting once the founder has set a scope up.
+        // Before that the answer is always the same missing scope, and printing
+        // it next to every venture teaches the founder to skim the whole thing.
+        const outreach = venture.outreach ? outreachReadiness(venture.id) : null;
+
+        const parts = [`"${venture.title}" [${venture.id}]`, formatReadinessBrief(deploy)];
+        if (outreach && !outreach.ready) parts.push('', formatReadinessBrief(outreach));
+        return parts.join('\n');
+      });
+
+      const stuck = ventures.filter((v) => !deployReadiness(v.id).ready).length;
+      const headline = stuck
+        ? `${stuck} of ${ventures.length} venture${ventures.length === 1 ? '' : 's'} cannot commit right now.`
+        : `Nothing is blocking ${ventures.length === 1 ? 'the venture' : 'any venture'} from committing. If the team says it is blocked, the blocker is not a permission.`;
+
+      return `${headline}\n\n${sections.join('\n\n---\n\n')}`;
+    }
+
     case 'eval': {
       if (!deps.startEval) return 'Running the eval is not available on this build.';
       if (isEvalRunning()) return 'An eval is already running. I\'ll send the result when it lands.';
@@ -370,6 +461,65 @@ export async function runFounderCommand(command, deps = {}) {
           : 'No active ventures yet. Ask the team to start one.';
       }
       return formatBuildForWhatsApp(venture);
+    }
+
+    case 'price': {
+      const venture = setPricing(command.ventureId, {
+        currency: command.currency,
+        floorMonthly: command.floorMonthly,
+        unit: command.unit,
+        perUnit: command.perUnit,
+      });
+      return `Price set on "${venture.title}": ${describePricing(venture)}. The team can now create payment links from it and the CFO can value a customer.`;
+    }
+
+    case 'booking': {
+      const venture = setBookingUrl(command.ventureId, command.url);
+      return `Booking link set on "${venture.title}". Sales will include it whenever a prospect wants to talk.`;
+    }
+
+    case 'booking_clear': {
+      const venture = setBookingUrl(command.ventureId, '');
+      return `Booking link removed from "${venture.title}".`;
+    }
+
+    case 'consent': {
+      const venture = recordConsent(command.ventureId, command.email);
+      return `Consent recorded for ${command.email.toLowerCase()} on "${venture.title}". Keep the written consent somewhere you can produce it — this records that you have it, not the thing itself.`;
+    }
+
+    case 'block': {
+      const venture = blockContact(command.ventureId, command.email, command.reason);
+      return `${command.email.toLowerCase()} is blocked on "${venture.title}". No agent can email them again unless you UNBLOCK.`;
+    }
+
+    case 'unblock': {
+      const venture = unblockContact(command.ventureId, command.email);
+      return `${command.email.toLowerCase()} is no longer blocked on "${venture.title}".`;
+    }
+
+    case 'pipeline': {
+      const ventures = command.ventureId
+        ? [getVenture(command.ventureId)].filter(Boolean)
+        : listVentures().filter((v) => v.status === 'active');
+      if (!ventures.length) return command.ventureId ? `No venture with id ${command.ventureId}.` : 'No active ventures.';
+      return ventures
+        .map((v) => {
+          const summary = pipelineSummary(v.id);
+          const stages = Object.entries(summary.byStage).map(([k, n]) => `${k} ${n}`).join(', ') || 'empty';
+          const objectives = listObjectives(v.id);
+          const rows = Object.entries(v.pipeline || {})
+            .sort((a, b) => (b[1].dealValueMonthly || 0) - (a[1].dealValueMonthly || 0))
+            .slice(0, 8)
+            .map(([email, d]) => `  · ${email} — ${d.stage || 'lead'}${d.dealValueMonthly ? `, ${d.dealValueMonthly}/mo` : ''}${d.nextAction ? ` — next: ${d.nextAction}` : ''}`);
+          return [
+            `"${v.title}" [${v.id}] — price: ${describePricing(v)}`,
+            `Pipeline: ${stages}. Open: ${summary.pipelineMonthly.toFixed(0)}/mo. Paying: ${summary.payingMonthly.toFixed(0)}/mo.`,
+            ...rows,
+            objectives.length ? `Objectives: ${objectives.map((o) => `${o.key} → ${o.target}${o.by ? ` by ${o.by}` : ''}`).join('; ')}` : 'No open objectives.',
+          ].join('\n');
+        })
+        .join('\n\n');
     }
 
     case 'report': {

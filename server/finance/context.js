@@ -4,7 +4,10 @@
 // real numbers instead of drifting on stale context.
 
 import { getLedger } from './ledger.js';
-import { listVentures, listContacts } from './ventures.js';
+import { usageSummary } from '../ventureUsage.js';
+import { economicsLast30 } from '../spend.js';
+import { buildKnowledgeContext } from '../workspace/knowledge.js';
+import { listVentures, listContacts, listReplies, describePricing, pipelineSummary, listObjectives } from './ventures.js';
 import { getLatestWeeklyReflection } from '../weeklyReflections.js';
 import { getAgentEarnings, sharePct } from './profitShare.js';
 import { buildOperationsContext } from '../agents/operations.js';
@@ -56,13 +59,23 @@ shows it's progressing rather than merely existing.`;
 }
 
 function describeContact(contact) {
+  if (contact.blocked) {
+    // Said before anything else about them, because it overrides everything
+    // else about them.
+    return `  - ${contact.email}: DO NOT CONTACT (${contact.blocked.reason}, ${contact.blocked.at.slice(0, 10)})`;
+  }
   const history = contact.emailCount
     ? `${contact.emailCount} email(s) sent, last on ${contact.lastSentAt.slice(0, 10)}${
         contact.lastSubject ? ` — "${contact.lastSubject}"` : ''
       }`
     : 'never emailed';
+  const deal = contact.pipeline
+    ? ` | ${contact.pipeline.stage || 'lead'}${contact.pipeline.dealValueMonthly ? `, ${contact.pipeline.dealValueMonthly}/mo` : ''}${
+        contact.pipeline.nextAction ? ` — next: ${contact.pipeline.nextAction}` : ''
+      }`
+    : '';
   const notes = (contact.notes || []).map((n) => `    · ${n.at.slice(0, 10)}: ${n.note}`).join('\n');
-  return `  - ${contact.email}: ${history}${notes ? `\n${notes}` : ''}`;
+  return `  - ${contact.email}: ${history}${deal}${notes ? `\n${notes}` : ''}`;
 }
 
 // The outreach log was write-only: an agent could send a fourth follow-up to
@@ -78,7 +91,21 @@ export function buildOutreachContext() {
   const sections = withOutreach.map((venture) => {
     const contacts = listContacts(venture.id);
     const body = contacts.length ? contacts.map(describeContact).join('\n') : '  (no contacts on record yet)';
-    return `"${venture.title}" [id: ${venture.id}]:\n${body}`;
+    const unread = listReplies(venture.id, { unreadOnly: true });
+    // The count, not the mail. The bodies come through check_replies, which
+    // marks them read as it hands them over; putting them here too would mean
+    // every agent on every turn carries the same inbox, and nobody would ever
+    // be sure whether a reply had actually been dealt with.
+    const waiting = unread.length
+      ? `\n  ** ${unread.length} unread repl${unread.length === 1 ? 'y' : 'ies'} waiting — call check_replies **`
+      : '';
+    const summary = pipelineSummary(venture.id);
+    const deals = summary.contacts
+      ? `\n  Pipeline: open ${summary.pipelineMonthly.toFixed(0)}/mo, paying ${summary.payingMonthly.toFixed(0)}/mo across ${summary.contacts} contact${summary.contacts === 1 ? '' : 's'}.`
+      : '';
+    const price = `\n  Price on record: ${describePricing(venture)}.`;
+    const booking = venture.bookingUrl ? `\n  Booking link (give it to anyone who wants to talk): ${venture.bookingUrl}` : '';
+    return `"${venture.title}" [id: ${venture.id}]:${price}${booking}${deals}\n${body}${waiting}`;
   });
 
   return `Contact history for ventures with an outreach scope — check this before
@@ -114,6 +141,88 @@ ${sections.join('\n')}`;
 // been contacted. The Venture Studio deliberately doesn't get the
 // contact history — it's an execution concern, and ideation doesn't send
 // email.
+// Whether anybody is actually calling the product.
+//
+// Shipped and used are different facts, and until now only the first one
+// existed anywhere in this app — so a venture with a green deploy and no users
+// read as a success in every view the team had. This puts the second fact in
+// the shared context rather than behind a tool call, because the agent most
+// likely to need it is the one least likely to think of asking.
+//
+// One line per venture, and the silent ones are named first. A week of silence
+// on a deployed product is the most important sentence in this context, and
+// burying it under a table of zeros is how it gets skimmed past.
+// What the team is working towards, in the number the customer pays for.
+//
+// Written by the CEO with set_objective and read by everyone. The supervisor
+// in Project Vend had exactly one tool, and it was this one.
+export function buildObjectivesContext() {
+  const active = listVentures().filter((v) => v.status === 'active');
+  const sections = [];
+  for (const venture of active) {
+    const open = listObjectives(venture.id);
+    if (!open.length) continue;
+    const lines = open.map((o) => `  · ${o.key}: ${o.target}${o.by ? ` by ${o.by}` : ''}${o.setBy ? ` (set by ${o.setBy})` : ''}`);
+    sections.push(`"${venture.title}" [id: ${venture.id}]:\n${lines.join('\n')}`);
+  }
+  if (!sections.length) return '';
+  return `Open objectives — the outcomes this company is measured on. Work that does not
+move one of these is work to question:
+${sections.join('\n')}`;
+}
+
+// What a customer costs the company to serve, and what a unit of revenue
+// costs to earn. Nothing until there is revenue; then the one line that says
+// whether the model works.
+export function buildEconomicsContext() {
+  const { transactions } = getLedger();
+  const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  const revenue = transactions
+    .filter((t) => t.type === 'revenue' && new Date(t.createdAt).getTime() >= cutoff)
+    .reduce((sum, t) => sum + t.amount, 0);
+  const paying = new Set();
+  for (const v of listVentures()) {
+    for (const [email, d] of Object.entries(v.pipeline || {})) if (d.stage === 'paying') paying.add(email);
+  }
+  const e = economicsLast30({ revenue, payingCustomers: paying.size });
+  if (!e.revenue && !e.payingCustomers) return '';
+  const perUnit = e.spendPerRevenueUnit != null ? `${e.spendPerRevenueUnit.toFixed(2)} of model spend per unit of revenue` : 'no revenue yet';
+  const perCustomer = e.spendPerPayingCustomer != null ? `${e.spendPerPayingCustomer.toFixed(2)} per paying customer` : 'no paying customers yet';
+  return `Economics, last 30 days: model spend ${e.spentUsd.toFixed(2)} against revenue ${e.revenue.toFixed(2)} from ${e.payingCustomers} paying customer${e.payingCustomers === 1 ? '' : 's'} — ${perUnit}, ${perCustomer}. Above 1.0 per unit the company loses money on every sale.`;
+}
+
+export function buildUsageContext() {
+  const deployed = listVentures().filter((v) => v.status === 'active' && v.repo);
+  if (!deployed.length) return '';
+
+  const rows = [];
+  for (const venture of deployed) {
+    const usage = usageSummary(venture.id, { days: 7 });
+    if (!usage.known) {
+      rows.push(`  · "${venture.title}" — not reporting usage. Nothing is counting, so nothing is known about demand.`);
+      continue;
+    }
+    if (usage.silent) {
+      rows.push(`  · "${venture.title}" — SILENT. Zero calls in 7 days from a product that is deployed and counting.`);
+      continue;
+    }
+    const errors = usage.errorRate > 0.05 ? `, ${Math.round(usage.errorRate * 100)}% failing` : '';
+    const unit = venture.pricing?.unit ? ` ${venture.pricing.unit}s` : ' outcomes';
+    const outcomes = usage.outcomes ? `, ${usage.outcomes}${unit} delivered` : '';
+    rows.push(
+      `  · "${venture.title}" — ${usage.calls} calls from ${usage.callers} caller${usage.callers === 1 ? '' : 's'} in 7 days${outcomes}${errors}.`,
+    );
+  }
+
+  // Silent and unmeasured first. Those are the two states that should change
+  // what someone does today.
+  rows.sort((a, b) => Number(b.includes('SILENT') || b.includes('not reporting')) - Number(a.includes('SILENT') || a.includes('not reporting')));
+
+  return `Real product usage over the last 7 days — what the deployed code reports, not
+what anyone thinks. Zero is an answer, not missing data:
+${rows.join('\n')}`;
+}
+
 export function buildCompanyContext() {
   // The plan goes first when there is one. An agent that reads it last has
   // already decided what it intends to do, and the plan then reads as an
@@ -128,12 +237,21 @@ export function buildCompanyContext() {
     // has already written for the wrong one.
     buildFounderProfile(),
     describePlanForAgents(),
+    // Objectives before tasks: what we are measured on, then what is queued.
+    buildObjectivesContext(),
     // Outstanding work comes high up for the same reason the plan does: an
     // agent that reads it after deciding what to do has already duplicated it.
     describeTasksForAgents(),
     buildBusinessContext(),
+    buildEconomicsContext(),
+    // The compiled pages before the raw notes: what we concluded, then what
+    // we observed lately.
+    buildKnowledgeContext(),
     buildVentureNotesContext(),
     buildOutreachContext(),
+    // Last of the business facts and deliberately not buried: the only place
+    // this app says whether the product is used, as opposed to shipped.
+    buildUsageContext(),
   ]
     .filter((part) => part && part.trim())
     .join('\n\n');

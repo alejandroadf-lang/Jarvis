@@ -1975,3 +1975,571 @@ all, so it needs no scope grant, no cap, and no kill-switch check. It only
 writes into the memory the next draft will read. The Ventures panel shows
 the latest note per contact under "What Sales knows", so the founder can see
 the same thing the agent will.
+
+## Hearing the answer
+
+`server/email.js` had six ways to send and zero ways to receive. The Sales &
+Commercial Manager could write to a real prospect and never learn what they
+said back. Every outreach was a broadcast into a room the company could not
+hear, which is not a small gap: it is the difference between a mailing list
+and a conversation, and a company that cannot hear "yes, tell me more" cannot
+close anything.
+
+The tell was that the loop was already closing — through a human. The founder
+was reading replies in their own mail client and relaying them into WhatsApp
+by hand. That is a person doing an integration's job.
+
+`server/inbox.js` reads the mailbox over IMAP, and `check_replies` on the
+Sales & Commercial Manager hands what it finds to the agent. It is wired into
+both the interactive chat and the unattended daily cycle, and it belongs in
+the cycle more than most things do: a reply that arrives at 9pm should be in
+front of the team at 8am, not waiting for someone to notice it.
+
+### The allowlist works in both directions
+
+IMAP credentials open the founder's entire mailbox — bank mail, family,
+everything. No agent has any business in most of it, and a system prompt
+saying "only read customer replies" is not a control, it is a hope.
+
+So `fetchReplies()` never returns a message from an address this company has
+not already emailed. The set of known senders comes from `outreachRecipients()`,
+which walks the `sentEmails` log across every venture. The founder's outreach
+allowlist — the thing that already decides who the company may write to — is
+therefore also the only door to who it may hear from, set once, in one place,
+and not widenable by anything an agent says.
+
+One detail there is load-bearing. Known senders are derived from what was
+*sent*, not from the allowlist itself. An allowlist entry of `@acme.com`
+permits writing to anyone at Acme, but it makes nobody at Acme readable: only
+the specific people this company actually wrote to can be heard. The set grows
+when the company acts, never when a scope is granted.
+
+The filter also runs inside `fetchReplies()` rather than at the call site. A
+function that returns everything and trusts its caller to discard the private
+mail is one careless caller away from putting the founder's inbox into a model
+context. The narrow return type is the control.
+
+### Unread, not new
+
+A reply is filed against its venture the moment it is seen, and marked read
+only when an agent has actually been handed the text. Three consequences:
+
+- A turn that dies halfway through reading its mail does not lose the mail.
+- The daily report can say "two replies nobody has read" rather than
+  re-listing everything that ever arrived.
+- A reply filed by yesterday's cycle and never acted on stays just as loud as
+  one that landed a minute ago, which is correct: both are open loops.
+
+Messages are deduped on `messageId`, because the daily cycle runs every
+morning over the same lookback window. Filing twice would have the Sales
+Manager answer the same prospect twice — precisely the failure the contact log
+exists to prevent.
+
+`buildOutreachContext()` shows the unread *count* per venture, not the
+bodies. The bodies come through `check_replies`, which marks them read as it
+hands them over. Putting them in the shared context too would mean every agent
+on every turn carried the same inbox, and nobody would ever be sure whether a
+reply had been dealt with.
+
+### Reading what actually arrives
+
+Real replies are not clean text. They arrive base64'd inside a multipart
+body, or as HTML only, or quoted-printable — and an agent handed
+`PGRpdj5IaSE8L2Rpdj4=` learns nothing. `extractPlainText()` is just enough
+MIME to get the text out: prefer `text/plain`, fall back to HTML with tags
+stripped, decode both common transfer encodings.
+
+The quoted-printable decoder goes through a `Buffer` rather than
+`String.fromCharCode`, because `=C3=A9` is two bytes of UTF-8 and not two
+characters. Decoding per character turns `Café` into `CafÃ©` — which is how a
+prospect's name ends up mangled in the reply an agent then quotes back at
+them. The test caught that; nothing else would have until a customer saw it.
+
+Quoted history is cut before the agent sees it. It is most of a reply by
+volume and none of it by information — the agent already knows what it sent —
+and leaving it in makes a thread grow quadratically in the context window as
+it goes back and forth.
+
+### Configuring it
+
+`IMAP_HOST`, `IMAP_USER`, `IMAP_PASS`, optionally `IMAP_PORT`, `IMAP_SECURE`
+and `IMAP_MAILBOX`. Usually the same account as `SMTP_*`; for Gmail it is the
+same app password. Leave them blank and the module is inert — `check_replies`
+returns the reason rather than failing, and the integration status panel shows
+inbound as unconfigured next to outbound, separately, because they are
+separate credentials and for most of this company's life only one of them
+existed.
+
+## Hands that can do more than one thing
+
+`commitFile` wrote exactly one file per commit, and that quietly decided how
+this company could work. A change spanning seven files became seven commits.
+A turn that ran out of room at the fourth left the deploy branch holding half
+a refactor — pushed, live, on the branch a deploy watches. There was no way to
+remove a file, no way to work on a branch, no way to propose a change rather
+than land it, and no way to undo one.
+
+The Contents API cannot express any of that. The git data API can: build a
+tree, hang a commit off it, move the ref. Same token, same guardrails — a
+wider hand, not a wider grant.
+
+Four tools now, and picking between them is most of the judgment:
+
+- **`deploy_code`** — one file. Unchanged.
+- **`deploy_changes`** — several files, one commit, all of it or none of it.
+  Also the only tool that can delete a file.
+- **`open_pull_request`** — real, finished work on a branch, not landed.
+- **`revert_commit`** — the undo button.
+
+### Checked once per path
+
+`authorizeDeploymentOfPaths()` runs the full nine-gate `authorizeDeployment()`
+once for every path in the commit. Checking only the first would let six files
+ride in on the seventh's approval, and writing a bespoke "multi" variant of a
+nine-gate authorizer is how two authorizers drift apart until one of them is
+wrong. Repeating the rate-limit check is harmless: it reads a log and writes
+nothing.
+
+Each path also gets its own entry in the deployment log, so a seven-file
+commit counts as seven changes against the founder's caps rather than as one
+small thing.
+
+### Fast-forward only
+
+The ref update passes `force: false`. Without it, a stale read followed by a
+slow turn silently discards whatever landed in between. "The commit I made an
+hour ago is gone" is the single failure that would end the founder's trust in
+this entirely, and it costs one field to make impossible.
+
+### A pull request does not need an approved plan
+
+This is the one deliberate hole in the plan gate, and it is the point rather
+than an oversight.
+
+A PR is how work gets *proposed*. Requiring a pre-approved daily plan in order
+to propose something means the only way to propose is to have already been
+approved — which is not a review step, it is a deadlock. It is also a direct
+answer to "why is the team constantly blocked": a plan gates what lands, and a
+PR is precisely what does not land.
+
+Everything else still applies: the kill switch, an active venture, a linked
+and enabled repo, the path allowlist, and its own rate limit. That last part
+is separate from the deploy caps on purpose — a team that has to spend its one
+daily commit to open a PR will stop opening PRs and go back to committing
+straight to the deploy branch, which is the opposite of the intent.
+
+A PR also cannot start CI/CD on the deploy branch, cannot overwrite a file
+anyone is running, and is undone by closing a tab. It is the only real-world
+write in this app that is reversible by default.
+
+### Undo does not need one either, for a different reason
+
+The paths a revert touches are not the agent's to choose — they are whatever
+the commit being undone changed. No plan written this morning could have named
+them. Gating on the plan would therefore mean a bad commit stays live until
+tomorrow, which inverts what the gate is for: a revert *shrinks* the blast
+radius of something this company already did.
+
+Every other gate holds, including the allowlist. A commit that reached outside
+the allowed scope cannot be undone through here — correct, because this app
+did not make that change.
+
+Reverts do count against the deploy caps, and that is the one place a cap is
+doing real work rather than bounding cost: two turns disagreeing about a file
+will undo each other forever, and the cap stops the loop at a price the
+founder set.
+
+### Plan, then commit
+
+`planRevert()` is split from the commit that applies it. The caller has to
+learn from GitHub which paths that commit touched before it can check them
+against the allowlist, so the order is: read what the commit did, authorize
+against the truth, then write. Authorizing against a claim the agent made
+would be authorizing nothing.
+
+A revert is scoped to those paths rather than resetting the branch to the
+parent commit. A hard reset would also discard everything that landed
+afterwards — a much larger act than "undo that", and not what anyone asking
+for an undo means. The tradeoff is real: if a later commit also edited one of
+those files, the revert overwrites that later edit. So the handler says so,
+every time, in the text the agent reads:
+
+> This put those specific paths back to their state before that commit. If
+> anything landed on them since, that work is now overwritten — check before
+> moving on.
+
+### Why this was the gap worth closing
+
+The asymmetry mattered more than any individual missing verb. A team that can
+commit but cannot un-commit gets more cautious over time, not less — every
+change is permanent, so every change deserves another round of deliberation,
+and caution of that kind looks exactly like never shipping. The Engineering
+Lead's prompt now says the quiet part: *you can undo now, ship accordingly.*
+
+## What is actually stopping you
+
+`deploy_code` passes eleven separate conditions before a commit happens: the
+global halt, the daily spend cap, a configured token, an active venture, a
+linked repo, an enabled flag, a path allowlist, a weekly cap, a daily cap, a
+cooldown, a checks-overdue rule — and above all of those, an approved daily
+plan. Every one of them throws.
+
+So an agent that tries to deploy learns exactly one of them per attempt. That
+is how this team spent three turns discovering, one refusal at a time, that a
+repo had never been enabled.
+
+It is also why the daily report kept saying "blocked" without saying on what.
+Nothing in this app could answer "what do you need from me" in a single call,
+so the answer came out as a paragraph of guesses — and a guess in a status
+report is worse than a blank, because the founder acts on it.
+
+`check_ready` (`server/readiness.js`) reports every gate at once: which are
+open, which are shut, and specifically what opens each shut one. It is on the
+Engineering Lead and the Sales & Commercial Manager — the two agents that hold
+the gated tools — and wired into both the interactive chat and the daily cycle.
+It grants nothing, reaches nothing, and costs nothing: it only reads gates that
+already existed.
+
+### It reports the open gates too
+
+A list containing only failures reads as "everything is broken" whatever it
+actually says. The difference between one shut door and eleven is the
+difference between a one-line message to the founder and a strategy
+conversation, and a team that can only see its failures cannot tell them apart.
+
+Each shut gate carries a `fix`. "Deployments are not enabled" tells an agent it
+is stuck; "the founder turns this on in the Ventures panel" tells it what to
+ask for. The report also names `blockedBy` — the first shut gate, the one an
+attempt would actually hit — so nobody fixes the third item on the list and
+tries again.
+
+Without a `path`, the allowlist gate reports what is allowed rather than
+judging a specific file. "What can I touch" is the question that actually
+precedes a deploy.
+
+### Shared arithmetic, not copied
+
+`rateLimitState()` and `pathAllowed()` are exported from
+`server/finance/ventures.js` and used by both the authorizer and the report.
+Re-deriving the caps in a second place would have been quicker and would have
+drifted, and a readiness report that disagrees with the gate it describes is
+worse than no report at all: a team told it is clear and then refused stops
+believing either, and the next thing it does is guess.
+
+### The agreement test
+
+`readiness.test.js` walks a venture through every state it can be in —
+nothing set up, repo linked but disabled, fully enabled, halted, killed — and
+asserts at each step that `ready` and "the authorizer does not throw" are the
+same thing, in both directions.
+
+Verified the way the daily-cycle parity test was: by injecting a divergence
+(forcing `ready: true`) and watching the test fail. It does.
+
+### It knows which gates a PR skips
+
+`open_pull_request` and `revert_commit` deliberately do not require an approved
+plan, so `check_ready` leaves that gate out when asked about them. That is not
+cosmetic: the report is what an agent reads before deciding whether to propose
+or to land, and one that hid the difference would send it back to asking
+permission for the one thing that does not need it.
+
+## Did anyone use it?
+
+This company measures its own cost to the cent — every model call, every
+token, priced and capped — and measured its product's use not at all. That is
+the wrong half of the equation to know exactly. A venture with a linked repo, a
+green deploy and zero users looked identical, in every view this app had, to
+one that was working.
+
+`server/ventureUsage.js` is the receiving end, and it was built deliberately
+*before* the venture launches. Usage is the one number that cannot be
+backfilled: a request that was not counted when it happened is gone, and "we
+had customers that first week but no idea how many" is a permanent hole in the
+only evidence that matters.
+
+### Three states, not two
+
+The distinction the whole module exists to preserve:
+
+| State | What it means | What to do |
+|---|---|---|
+| **Not reporting** | Nothing is counting | Wire it up, or find out why the deployed code isn't calling home |
+| **Silent** | Counting, and nobody is calling | A demand or distribution question. Not one more feature |
+| **Used** | Real calls from real callers | Now the numbers mean something |
+
+"Not reporting" and "silent" look the same from outside and lead to opposite
+next actions — one is an engineering problem, the other is a business one.
+Collapsing them sends the team to fix the wrong thing.
+
+That distinction was almost lost to a one-line bug: minting a key creates the
+venture's record, so `usageSummary` checking for the object's existence made an
+un-instrumented venture read as "counting, and silent". The test caught it.
+
+### A key that can do one thing
+
+Ingest is the first endpoint in this app a machine outside the company calls,
+and the only one not authenticated by the founder's app token. A venture's
+deployed product holds a per-venture key that can increment that venture's
+counters and nothing else. Handing it the app token instead would mean a
+compromised product could disable the kill switch.
+
+No agent tool can read the key. The founder mints it from the Ventures panel
+and puts it in the venture's own deployment environment; the agent writing that
+venture's code writes `os.environ["JARVIS_USAGE_KEY"]`, which needs the
+variable's *name* and not its value. An agent that can read a credential is an
+agent that can commit one.
+
+### Counters, batched
+
+Per-day counters rather than an event log: a product that succeeds would
+outgrow this server's disk in a month, and nothing anyone asks — how many
+calls, from how many customers, failing how often — needs the individual rows.
+Ninety days kept, so the file stays small forever.
+
+Reports are batched rather than per-request. A product calling this server once
+per inbound request would make this server its latency floor and its
+availability ceiling, which is an absurd thing to do to a product for the sake
+of a counter. The venture accumulates and flushes on its own schedule, and a
+flush that fails is dropped without the customer noticing.
+
+The distinct-caller set is capped at 500 per day. It is the one unbounded thing
+here, and past the cap the count keeps rising while the identities stop being
+recorded — the right thing to lose first.
+
+### In the context, not behind a tool
+
+`buildUsageContext()` puts one line per deployed venture into the shared
+business context, with the silent and unmeasured ones sorted first. The agent
+most likely to need this number is the one least likely to think of asking for
+it, and a week of silence on a deployed product is the most important sentence
+in that context — buried under a table of zeros, it gets skimmed past.
+
+`check_usage` on the CFO and the Engineering Lead gives the detail on demand.
+Zero calls comes back as a finding, in those words: *silence is a finding, not
+a gap in the data.*
+
+## READY: the founder's half of the same question
+
+`check_ready` answered "what is actually stopping you" for the agents. The
+founder — who had asked that exact question, in those words, about why the team
+was constantly blocked — could not reach it. `VENTURES` says what a venture is
+*allowed* to do; nothing said what was stopping it right now.
+
+`READY [ventureId]` on WhatsApp closes that. `BLOCKED` is the same command,
+because that is the other word someone types at 7am.
+
+Not `WHY`. A bare "why" is ordinary prose far more often than it is a command,
+and hijacking it would swallow a real question meant for the team — the exact
+failure that requiring a `v_` id in the other commands exists to prevent.
+
+### Two audiences, two shapes
+
+`formatReadiness` shows the open gates deliberately: an agent handed only
+failures reads "everything is broken" whatever the text says, and the
+difference between one shut door and eleven changes what it does next.
+
+None of that transfers to the founder. They are not going to conclude the
+company is broken — they asked one question, and a twelve-line audit with two
+lines of signal does not answer it on a phone, it gets scrolled. So
+`formatReadinessBrief` drops every gate that already passes and leads with
+what they can type.
+
+### What they can type, not what they must do
+
+Each gate now carries a `founderCommand` alongside its `fix`. "Turn it on in
+the Ventures panel" is a task; `DEPLOY ON v_123` is done before the phone goes
+back in a pocket.
+
+Only the gates a founder can genuinely open from a message carry one. A missing
+`GITHUB_TOKEN` is a Railway variable, and pretending otherwise would be worse
+than saying nothing — so those are still listed, under a heading that says they
+are not a message.
+
+A test asserts that every `founderCommand` the report suggests is one
+`parseFounderCommand` actually accepts. A report that tells the founder to send
+something the parser rejects is worse than one that stays quiet: they send it,
+nothing happens, and they stop trusting the report.
+
+## The €1M gap, applied
+
+The deep-research assessment (September 2026) found the company ahead of most
+enterprise agent programmes on governance and behind every startup that ever
+reached a million on everything commercial: no way to take money, no price in
+code, no lawful basis for the emails it was built to send, no loop that fed
+what it measured back into what it did. This section is what closed.
+
+### Money in
+
+`server/payments.js` speaks to Stripe over plain fetch — the same reason the
+GitHub client does. `create_payment_link` on the Sales Manager makes a Checkout
+Session from the price on record and the customer's expected volume; an amount
+the agent made up is Project Vend's discount problem with extra steps, so the
+amount is derived unless the founder agreed a specific figure.
+
+`POST /api/payments/webhook` is the first endpoint here whose caller is a
+payment processor. It verifies Stripe's signature over the raw body (stronger
+than the bearer check, not weaker), books the payment to the ledger, moves the
+payer to the `paying` stage, credits the agent that created the link, and tells
+the founder. Idempotent on event id: Stripe retries, and booking a payment
+twice is worse than missing it once.
+
+### Price, in code
+
+`PRICE v_123 149 0.02 page` puts a hybrid price on the venture record — a
+monthly floor plus a per-unit rate, which is what the vertical-AI cohort
+converged on while accuracy was still being proven. `monthlyValue()` is the
+number the CFO could not compute before: the prospect who asked about 50,000
+pages is worth €1,149 a month, and a million is 73 of her.
+
+### The law around the emails
+
+`server/outreachCompliance.js`. Every outbound message now ends with an
+AI-authorship disclosure (EU AI Act Article 50, in force since 2 August 2026)
+and an opt-out line, appended by the handler after the draft so no message
+leaves without them however it was written.
+
+An "unsubscribe" in any reply blocks the address before an agent reads it. A
+blocked address cannot be emailed by any agent; only the founder lifts it. The
+allowlist says who may be written to. The block says who refused. The person
+wins.
+
+German and Italian addresses — jurisdictions where B2B cold email needs prior
+consent in practice — are refused unless `CONSENT v_123 email` has recorded
+it. Matched on top-level domain, which is a known limit and why `BLOCK` exists
+by hand. `LEGITIMATE_INTEREST_ASSESSMENT.md` at the repo root is the document
+the founder completes and signs; the code cannot do that part and says so.
+
+### The supervisor's tool
+
+In Project Vend the change that made the shop profitable was a CEO agent with
+an objectives tool that vetoed bad discounts. This company had the CEO and not
+the tool. `set_objective` writes one measurable objective per venture, in the
+outcome the customer pays for, and every agent sees the open ones in context
+before the task list. `PIPELINE` shows them to the founder next to the deals.
+
+### The loops
+
+**The eval is kept.** `server/evalRuns.js` stores every run; the runner now
+prints the agent beside each scenario so a failure has a role. The weekly
+reflection opens with the latest failures and is asked, per failure, what the
+agent did instead and what would fix it — Ng's error analysis, which nothing
+else in the company performed. The eval runs itself every Sunday after the
+reflection (`EVAL_WEEKLY=false` to stop), and the knowledge pages compile
+after that.
+
+**A reply wakes one agent.** `server/inboxWatch.js` polls the mailbox every
+fifteen minutes (`INBOX_POLL_MINUTES`) and, when a known contact writes, runs
+one narrow Sales turn — the Sales Manager alone, with only the tools a reply
+needs, on a four-minute deadline. An unsubscribe wakes nobody and blocks the
+address. A same-day reply is most of what closes a first deal, and the daily
+cycle left prospects unread for 23 hours.
+
+**Knowledge that compiles.** `server/workspace/knowledge.js` has the CEO
+rewrite one page per active venture each week — what it is, where it stands,
+what was learned and on what evidence, what is believed but untested, what
+contradicts what. Published to the vault under `Company/Knowledge/` and kept
+locally so the shared context actually contains it. A wiki nobody reads is a
+diary.
+
+### The register and the trace
+
+Every graph node now carries `realActions` — the tools whose effect leaves
+this server — and `evalPassRate` from the latest run, null for an agent no
+scenario exercises. That null is the finding: an agent with no eval is an
+agent whose judgment nobody has measured.
+
+The runner records every action-tool call in the trace beside the delegations,
+with the tool, the agent, whether the handler refused, and how long it took.
+"Why did the team do that" now has an answer after the fact.
+
+### Outcomes and economics
+
+Usage reports carry `outcomes` — pages processed, documents extracted — the
+unit the customer pays for and the number objectives are written in. Calls are
+activity; outcomes are what the activity was for. `buildEconomicsContext()`
+relates thirty days of model spend to revenue and paying customers, and says
+nothing until there is revenue, then one line: above 1.0 per unit, the company
+loses money on every sale.
+
+### The studio gate
+
+`propose_venture` refuses while an active venture exists and recurring revenue
+is under `STUDIO_MIN_MRR_USD` (default 1000). One expensive thing, completely.
+The studio was the right tool for choosing a venture and the wrong tool for
+the next eighteen months.
+
+### Held
+
+Exposing the venture's API as an MCP server waits for the API to exist. The
+model tiers, the design partners, and sending `EVAL` for the first time are the
+founder's, and no code changes that.
+
+## Five turns against a wall nobody could see
+
+The team shipped three files, then spent five turns failing to commit a fourth
+— and one of those turns narrated a deploy it had not performed. The report
+called it "purely mechanical execution, not design." That was right, and the
+mechanism was three bugs in this repo, none of them in the agent.
+
+### `LINK` handed a venture under construction a three-file week
+
+`LINK v_123 owner/repo` passes no caps, so `linkRepo` used its defaults: **one
+commit a day, three a week.** Three files is an afternoon on a product that
+does not exist yet, and it was the entire weekly allowance. Every attempt at
+`auth.py` came back:
+
+> Weekly deployment cap reached (3/week) for this venture.
+
+Those defaults were chosen when a commit was a rare and precious thing. They
+are now 4/day and 20/week — still bounded, and `CAPS` moves either number in
+one message.
+
+### The refusal named a number and no door
+
+Every other gate in `ventures.js` says what to ask the founder for: *the
+founder turns this on in the Ventures panel*. The two cap refusals said only
+that a limit had been reached. An agent that hits a wall with no door reads it
+as a fault in itself, and tries again — which is exactly what happened, five
+times. Both messages now name `CAPS <ventureId> <per day> <per week>` and say
+plainly that re-attempting will not change it.
+
+### One commit counted as one unit per file
+
+The deployment log keeps a row per path, because "what changed" wants every
+path. The caps were counting those rows. So a well-structured seven-file
+commit cost seven times what the seven sloppy single-file commits it replaced
+would have cost — `deploy_changes`, added to encourage coherent changes, was
+the most expensive way to use the repo.
+
+`countableTimes()` now collapses rows sharing a `commitSha` to one. The log is
+unchanged; the cap counts acts.
+
+Two further defects fell out of fixing it, both found by the tests rather than
+by reading:
+
+- **`authorizeDeploymentOfPaths` checked headroom for one and consumed N.**
+  Every per-path call read the same pre-commit state, saw room for one, and
+  passed — four of headroom admitted a six-file commit and recorded seven
+  against a cap of five. The per-path gates (allowlist, plan) still run per
+  path; the cap runs once, for one commit.
+- **The checks-overdue gate counted rows too.** A seven-file commit read as
+  seven and tripped a limit of five on its own — with no check run to clear it
+  against, because the CI workflow was one of the files still unwritten. That
+  is a deadlock, and it was one commit away from being the next blocker.
+
+### A claim of work is now checkable
+
+One turn reported deploying with no tool call behind it. A person caught it.
+That is luck with a good habit attached, not a control — and the
+`reporting-status` skill asking agents not to do it is a request, not a rule.
+
+The runner records every action-tool call in the trace. `server/claimCheck.js`
+reads a turn's text against that list and flags one shape only: the reply
+asserts a real-world act was completed, and no successful action of that kind
+happened in the same turn. Honest refusals, plans, and accurate summaries of
+several commits all pass; a delegation to six specialists about a deploy does
+not vouch for a deploy.
+
+The warning goes at the *top* of the daily report email, before the report. A
+warning that the report may be wrong is not a footnote to the report.

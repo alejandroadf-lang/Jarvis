@@ -181,3 +181,69 @@ test('a skill is long enough to be a procedure and short enough to load', () => 
     assert.ok(body.length < 12000, `${id} is too long to load mid-task (${body.length} chars)`);
   }
 });
+
+// --- The five written for the capabilities that just landed --------------------
+//
+// Each of these exists because a tool arrived without the judgment to use it
+// well. A team that can open a pull request but has never reviewed one, or
+// that can revert a commit and does not know to revert first, has a new verb
+// and no grammar.
+
+test('reviewing-a-diff keeps the three findings that matter from becoming eleven nits', () => {
+  const skill = read('reviewing-a-diff');
+  // The failure it exists to stop: a review that finds eleven small things and
+  // misses the one real one, and reads as thorough.
+  assert.match(skill.body, /eleven small things/);
+  assert.match(skill.body, /It is wrong\./);
+  assert.match(skill.body, /It is unsafe\./);
+  assert.match(skill.body, /It will break something else\./);
+  // Approving cleanly has to be an available verdict, or approval becomes
+  // about persistence rather than quality.
+  assert.match(skill.body, /never approves anything cleanly/);
+  assert.ok(skill.agents.includes('engineering_lead'));
+  assert.ok(skill.agents.includes('security_reviewer'));
+});
+
+test('when-the-service-is-down puts undoing before understanding', () => {
+  const skill = read('when-the-service-is-down');
+  // The whole point. Understanding takes an unknown amount of time and the
+  // service is down for all of it.
+  assert.match(skill.body, /Undo first/);
+  assert.match(skill.body, /revert_commit/);
+  // The distinction an afternoon disappears into.
+  assert.match(skill.body, /Nothing is listening/);
+  assert.match(skill.body, /the code threw/);
+  assert.ok(skill.agents.includes('engineering_lead'));
+});
+
+test('refactoring-without-breaking-it refuses the refactor of untested code', () => {
+  const skill = read('refactoring-without-breaking-it');
+  assert.match(skill.body, /rewrite with extra confidence/);
+  // Three commits rather than one, and the reason is revertability, not tidiness.
+  assert.match(skill.body, /deploy_changes/);
+  assert.match(skill.body, /revert step two/);
+  // The bug found mid-refactor goes in its own commit.
+  assert.match(skill.body, /do not fix it in the same commit/i);
+});
+
+test('choosing-what-to-build-next asks what we would learn, not what is most valuable', () => {
+  const skill = read('choosing-what-to-build-next');
+  assert.match(skill.body, /find out fastest by building this/);
+  // The evidence ladder, and the honest admission about where most ideas sit.
+  assert.match(skill.body, /A customer asked for it/);
+  assert.match(skill.body, /sits at 4/);
+  // Founder decisions are not relitigated.
+  assert.match(skill.body, /raised three times is an obstruction/);
+  assert.ok(skill.agents.includes('ceo'));
+});
+
+test('writing-docs-someone-can-follow assumes the phone, because the founder is on one', () => {
+  const skill = read('writing-docs-someone-can-follow');
+  assert.match(skill.body, /on a phone/);
+  assert.match(skill.body, /no\s+terminal/);
+  // Every step names something observable, which is the cheap test.
+  assert.match(skill.body, /name a thing you can see/);
+  // Secrets go to the environment, never into chat — stated where a doc author
+  // would otherwise resolve the ambiguity the easy way.
+  assert.match(skill.body, /never into chat/);
+});

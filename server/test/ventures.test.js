@@ -164,17 +164,23 @@ test('authorizeDeployment enforces the daily cap before the weekly one is anywhe
   ventures.recordDeployment(v.id, { path: 'content/a.md' });
   ventures.recordDeployment(v.id, { path: 'content/b.md' });
 
-  assert.throws(() => ventures.authorizeDeployment(v.id, { path: 'content/c.md' }), /Daily deployment cap reached \(2\/day\)/);
+  assert.throws(() => ventures.authorizeDeployment(v.id, { path: 'content/c.md' }), /Daily deployment cap reached \(2 of 2 today\)/);
 });
 
-test('a venture linked without a daily cap defaults to one real action per day', () => {
+test('a venture linked without a daily cap gets a default suited to building', () => {
+  // Was one a day, which is the right shape for a venture in maintenance and
+  // the wrong one for a venture that does not exist yet: the team shipped
+  // three files, spent the week, and then spent five turns failing to commit a
+  // fourth. Four a day, clamped to the weekly cap, still bounded.
   const v = makeVenture();
   ventures.linkRepo(v.id, { owner: 'acme', name: 'landing', allowedPaths: ['content/'], maxPerWeek: 5 });
   ventures.setDeploymentEnabled(v.id, true);
 
-  assert.equal(ventures.getVenture(v.id).repo.maxPerDay, 1);
-  ventures.recordDeployment(v.id, { path: 'content/a.md' });
-  assert.throws(() => ventures.authorizeDeployment(v.id, { path: 'content/b.md' }), /Daily deployment cap reached \(1\/day\)/);
+  assert.equal(ventures.getVenture(v.id).repo.maxPerDay, 4);
+  for (const path of ['content/a.md', 'content/b.md', 'content/c.md', 'content/d.md']) {
+    ventures.recordDeployment(v.id, { path, commitSha: `sha-${path}` });
+  }
+  assert.throws(() => ventures.authorizeDeployment(v.id, { path: 'content/e.md' }), /Daily deployment cap reached \(4 of 4 today\)/);
 });
 
 test('a daily cap above the weekly cap is clamped, since it could never bind', () => {

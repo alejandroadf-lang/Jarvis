@@ -24,6 +24,7 @@
 // new venture has no repo and no outreach list until the founder gives it
 // one.
 
+import { unsupportedClaims } from './claimCheck.js';
 import { runAgent } from './agents/agentRunner.js';
 import { AGENTS as COMPANY_AGENTS, ROOT_AGENT_ID as COMPANY_ROOT } from './agents/orgChart.js';
 import { AGENTS as STUDIO_AGENTS, ROOT_AGENT_ID as STUDIO_ROOT } from './agents/ideationTeam.js';
@@ -34,7 +35,16 @@ import { planSyncScope } from './movement.js';
 import {
   handleProposeVenture,
   handleDeployCode,
+  handleDeployChanges,
+  handleCheckReady,
+  handleCheckUsage,
+  handleCreatePaymentLink,
+  handleUpdatePipeline,
+  handleSetObjective,
+  handleOpenPullRequest,
+  handleRevertCommit,
   handleSendCustomerEmail,
+  handleCheckReplies,
   handleLogContactNote,
   handleSubmitDailyPlan,
   handleCheckDailyPlan,
@@ -190,7 +200,37 @@ export function dailyCycleActionHandlers() {
     // founder can tell an unattended real action apart from one that happened
     // during a live conversation — see index.js's 'interactive' counterpart.
     deploy_code: (input) => handleDeployCode(input, 'daily_cycle'),
+    // One commit for a change that spans several files, because four commits
+    // for one change is how the deploy branch ends up holding half a refactor.
+    deploy_changes: (input, ctx) => handleDeployChanges(input, 'daily_cycle', ctx),
+    // Reads the gates that already exist and reports every one at once, rather
+    // than letting the team discover them one refusal per turn. Grants nothing
+    // and reaches nothing.
+    check_ready: (input) => handleCheckReady(input),
+    // Whether anyone is actually calling the product. Reads counters the venture
+    // reports itself; shipped and used are different facts and this is the only
+    // place the second one exists.
+    check_usage: (input) => handleCheckUsage(input),
+    // A payment link charges nobody until a person opens it, and the pipeline
+    // and objectives are the company's own notebook. None need the founder.
+    create_payment_link: (input, ctx) => handleCreatePaymentLink(input, ctx),
+    update_pipeline: (input, ctx) => handleUpdatePipeline(input, ctx),
+    set_objective: (input, ctx) => handleSetObjective(input, ctx),
+    // Finished work that has not landed. Not behind the plan — see
+    // authorizePullRequest for why gating a proposal on pre-approval is a
+    // deadlock rather than a review.
+    open_pull_request: (input, ctx) => handleOpenPullRequest(input, 'daily_cycle', ctx),
+    // The undo button. Also not behind the plan: the paths belong to the
+    // commit being undone, so no plan could have named them, and a bad
+    // commit waiting until tomorrow is worse than the revert.
+    revert_commit: (input, ctx) => handleRevertCommit(input, 'daily_cycle', ctx),
     send_customer_email: (input) => handleSendCustomerEmail(input, 'daily_cycle'),
+
+    // Sending is a real action and sits behind the plan. Reading what came
+    // back is not, and it belongs in the unattended cycle more than anywhere
+    // else: a reply that arrives at 9pm should be in front of the team at 8am,
+    // not waiting for the founder to notice it and paste it into WhatsApp.
+    check_replies: (input, ctx) => handleCheckReplies(input, 'daily_cycle', ctx),
 
     // The cycle's way of asking. Without it the sync is refused on every real
     // action and cannot even put a plan up.
@@ -407,6 +447,13 @@ export async function runDailyMeeting({ anthropic }) {
     scope: { full: scope.full, reason: scope.reason, moved: scope.movement.lines },
     leadership: { reply: leadership.text, trace: leadership.trace },
     studio: { reply: studio.text, trace: studio.trace },
+    // Claims of real-world work with no tool call behind them. Normally empty;
+    // when it is not, the founder should not have to catch it by reading
+    // carefully. See claimCheck.js.
+    unsupportedClaims: [
+      ...unsupportedClaims({ text: leadership.text, trace: leadership.trace }),
+      ...unsupportedClaims({ text: studio.text, trace: studio.trace }),
+    ],
     proposedVentureIds,
     business: { revenue, expenses, net },
     usage,

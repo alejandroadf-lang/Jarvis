@@ -22,6 +22,7 @@
 // as personas for this org chart rather than copied verbatim.
 
 import { CHEAP_TIER } from './models.js';
+import { RESEARCH_TOOLS } from './serverTools.js';
 import { validateOrgChart } from './validate.js';
 
 // A handful of roles below carry `modelTier: CHEAP_TIER`. Those are the
@@ -171,6 +172,21 @@ export const AGENTS = {
         },
       },
       {
+        name: 'set_objective',
+        description:
+          'Set one measurable objective on a venture, for the whole team to work against: what is being counted, the target, and by when. This is the supervisor\'s tool — in Anthropic\'s Project Vend the objective-setting CEO was what turned the shop profitable, not a smarter shopkeeper. Objectives are written in the outcome the customer pays for (pages processed, paying customers, replies answered within a day), never in activity (emails sent, commits made). Setting the same key again replaces the objective. Every agent on the venture sees open objectives in its context.',
+        input_schema: {
+          type: 'object',
+          properties: {
+            ventureId: { type: 'string', description: 'The venture id.' },
+            key: { type: 'string', description: 'The thing being counted, short and stable, e.g. "paying_customers" or "pages_processed".' },
+            target: { type: 'string', description: 'The number and the condition, e.g. "2 paying customers at the floor price".' },
+            by: { type: 'string', description: 'A date, e.g. 2026-10-15.' },
+          },
+          required: ['ventureId', 'key', 'target'],
+        },
+      },
+      {
         name: 'kill_venture',
         description:
           "End a venture that isn't earning its keep — a missed milestone with no good next step, a market that turned out too small, or one that's quietly absorbing attention better spent elsewhere. This is a real, final call: only make it when the founder has actually decided to stop, not to express doubt.",
@@ -289,6 +305,19 @@ ${BASE_STYLE}`,
       'Consult the CFO for pricing decisions, unit economics, margin analysis, or whether a venture is genuinely earning rather than merely projecting revenue.',
     actions: [
       {
+        name: 'check_usage',
+        description:
+          "Find out whether anybody is actually using a venture's product. Returns real call counts, error counts and distinct callers per day, reported by the deployed product itself — not an estimate and not the team's impression. Call it before claiming a venture is going well or badly, before deciding what to build next, and whenever a status report is about to describe progress: shipped and used are different facts, and this is the only place the second one exists. Zero calls is an answer, not a missing one.",
+        input_schema: {
+          type: 'object',
+          properties: {
+            ventureId: { type: 'string', description: 'The venture id, from the business context below.' },
+            days: { type: 'number', description: 'How many days back to look. Defaults to 7.' },
+          },
+          required: ['ventureId'],
+        },
+      },
+      {
         name: 'report_milestone_progress',
         description:
           "Record whether a venture's milestone was actually hit or missed. Only call this when the founder reports a real outcome for a specific milestone — not a plan or an estimate.",
@@ -403,6 +432,41 @@ ${BASE_STYLE}`,
       'Consult the Engineering Lead for concrete implementation questions: how to build something, technical design detail, effort estimates, or code-level tradeoffs.',
     actions: [
       {
+        name: 'check_usage',
+        description:
+          "Find out whether anybody is actually using a venture's product. Returns real call counts, error counts and distinct callers per day, reported by the deployed product itself — not an estimate and not the team's impression. Call it before claiming a venture is going well or badly, before deciding what to build next, and whenever a status report is about to describe progress: shipped and used are different facts, and this is the only place the second one exists. Zero calls is an answer, not a missing one.",
+        input_schema: {
+          type: 'object',
+          properties: {
+            ventureId: { type: 'string', description: 'The venture id, from the business context below.' },
+            days: { type: 'number', description: 'How many days back to look. Defaults to 7.' },
+          },
+          required: ['ventureId'],
+        },
+      },
+      {
+        name: 'check_ready',
+        description:
+          "Ask what is actually stopping you, and get every answer at once. Real actions pass up to eleven separate conditions — the global halt, the spend cap, an active venture, a linked repo, an enabled flag, a path or recipient allowlist, weekly and daily caps, a cooldown, overdue checks, an approved plan — and each one refuses on its own. Trying and reading the error tells you about one of them; this tells you about all of them, which are open, which are shut, and specifically what opens each shut one. Call it BEFORE attempting a real action, and call it the moment you are about to report that something is blocked: \"blocked\" without naming the door is not a status, it is a shrug.",
+        input_schema: {
+          type: 'object',
+          properties: {
+            ventureId: { type: 'string', description: 'The venture id, from the business context below.' },
+            action: {
+              type: 'string',
+              description:
+                'Which action to check: deploy_code, deploy_changes, open_pull_request, revert_commit, or send_customer_email. Defaults to deploy_code.',
+            },
+            target: {
+              type: 'string',
+              description:
+                'Optional. The file path or email address you intend to use, checked against the allowlist. Leave it out and the allowlist is reported rather than judged.',
+            },
+          },
+          required: ['ventureId'],
+        },
+      },
+      {
         name: 'deploy_code',
         description:
           "Commit a real file change to a venture's linked repo — an actual, permanent, publicly-visible commit, not a simulation. Only works when the founder has already linked a repo and enabled deployments for that venture; even then, only paths the founder explicitly allowed and only up to that venture's weekly cap will succeed. This is for real, ready work — a landing page copy update, a config change, a small fix — not a first draft to iterate on live. If you're not confident the change is correct and complete, say so and don't call this yet.",
@@ -416,6 +480,81 @@ ${BASE_STYLE}`,
             rationale: { type: 'string', description: 'Why this change, right now — for the audit log the founder sees.' },
           },
           required: ['ventureId', 'path', 'content', 'message'],
+        },
+      },
+      {
+        name: 'deploy_changes',
+        description:
+          "Commit several real file changes at once — one commit, all of it or none of it. Use this instead of calling deploy_code repeatedly whenever a change spans more than one file, which is most real changes: a new module and the thing that imports it, a rename across three files, a file added and another deleted. Committing them separately means a turn that runs out of room halfway leaves the branch holding half a refactor, and a reviewer reading the history sees four unexplained commits instead of one change. Same permissions as deploy_code, checked once per path. This can also DELETE files, which deploy_code cannot.",
+        input_schema: {
+          type: 'object',
+          properties: {
+            ventureId: { type: 'string', description: 'The venture id, from the business context below.' },
+            changes: {
+              type: 'array',
+              description:
+                'Every file this change touches, together. One commit, all of it or none of it.',
+              items: {
+                type: 'object',
+                properties: {
+                  path: { type: 'string', description: "File path within the repo. Must fall inside the venture's allowed paths." },
+                  content: { type: 'string', description: 'The full new content of the file. This replaces the file — it is not a diff. Omit when deleting.' },
+                  deleted: { type: 'boolean', description: 'Set true to remove the file instead of writing it. Leave content out.' },
+                },
+                required: ['path'],
+              },
+            },
+            message: { type: 'string', description: 'A real commit message describing the whole change.' },
+            rationale: { type: 'string', description: 'Why this change, right now — for the audit log the founder sees.' },
+          },
+          required: ['ventureId', 'changes', 'message'],
+        },
+      },
+      {
+        name: 'open_pull_request',
+        description:
+          "Put finished work up for review WITHOUT landing it. Creates a branch, commits the changes to it, and opens a real pull request against the venture's deploy branch. Use this whenever the change is real and complete but you would want a human to look before it goes live: anything touching money, auth, data, or a file you are not certain about; any change large enough that being wrong would be expensive to undo. This is the third option between committing straight to the deploy branch and writing a paragraph about what you would have committed — and unlike deploy_code it does NOT need an approved daily plan, because a pull request is how work gets proposed. Nothing is live until the founder merges it, and closing it undoes everything.",
+        input_schema: {
+          type: 'object',
+          properties: {
+            ventureId: { type: 'string', description: 'The venture id, from the business context below.' },
+            title: { type: 'string', description: 'The pull request title — what this change does, in one line.' },
+            body: {
+              type: 'string',
+              description:
+                'The description a reviewer reads first: what changed, why, what you checked, and what you are least sure about. Name the risk you would want caught — that is what the review is for.',
+            },
+            changes: {
+              type: 'array',
+              description:
+                'Every file this change touches, together. One commit, all of it or none of it.',
+              items: {
+                type: 'object',
+                properties: {
+                  path: { type: 'string', description: "File path within the repo. Must fall inside the venture's allowed paths." },
+                  content: { type: 'string', description: 'The full new content of the file. This replaces the file — it is not a diff. Omit when deleting.' },
+                  deleted: { type: 'boolean', description: 'Set true to remove the file instead of writing it. Leave content out.' },
+                },
+                required: ['path'],
+              },
+            },
+            branch: { type: 'string', description: 'Optional branch name. Leave it out and one is generated from the title.' },
+          },
+          required: ['ventureId', 'title', 'changes'],
+        },
+      },
+      {
+        name: 'revert_commit',
+        description:
+          "Undo a commit by putting the files it touched back the way they were. Use it the moment a change is found to be wrong — a broken deploy, a bad config, a file committed by mistake. It does not need an approved daily plan, because the paths are whatever that commit touched and no plan written this morning could have named them, and because a bad commit waiting until tomorrow is worse than the revert. It puts back only the paths that commit changed, so anything that landed on those same paths afterwards is overwritten — check what came after before calling it.",
+        input_schema: {
+          type: 'object',
+          properties: {
+            ventureId: { type: 'string', description: 'The venture id, from the business context below.' },
+            sha: { type: 'string', description: 'The commit to undo, from the deployment log in the context below.' },
+            rationale: { type: 'string', description: 'What went wrong — for the audit log the founder sees.' },
+          },
+          required: ['ventureId', 'sha'],
         },
       },
       {
@@ -609,6 +748,33 @@ would find clear. If a request needs a path outside your scope or the
 venture isn't set up for deployment yet, say so plainly rather than
 working around it.
 
+You have four ways to change a repo, and picking the right one is most of
+the judgment:
+
+- \`deploy_changes\` for anything touching more than one file. One commit,
+  all of it or none of it. Four separate commits for one change is how the
+  deploy branch ends up holding half a refactor when a turn runs out of
+  room, and it is how a reviewer ends up reading four messages that each
+  describe a fragment. It is also the only tool that can delete a file.
+- \`deploy_code\` for a genuine one-file change. Nothing more.
+- \`open_pull_request\` for finished work you want looked at before it goes
+  live. This is not the cautious option to reach for when you are unsure —
+  work you are unsure about should not be proposed at all. It is the right
+  option when the work is *correct and consequential*: anything touching
+  money, auth, or customer data, anything large enough that being wrong
+  would be expensive to undo. Write the description for someone who was
+  not in this conversation, and name the thing you would most want caught.
+  It does not need an approved plan, because a pull request is how work
+  gets proposed and nothing about it is live.
+- \`revert_commit\` the moment something is found to be broken. Undo first,
+  diagnose second. It puts back only the paths that commit touched, so
+  check what landed on those paths afterwards before you call it.
+
+That last one matters more than it sounds. Until recently this company
+could commit and could not un-commit, and a team that can only move
+forward gets more cautious over time, not less. You can undo now. Ship
+accordingly.
+
 ${BASE_STYLE}`,
   },
 
@@ -643,7 +809,7 @@ ${BASE_STYLE}`,
     mission: 'Designs technical solutions for prospects and customers, and scopes feasibility for sales.',
     toolDescription:
       'Consult the Solutions Architect for pre-sales technical scoping, solution design for a specific customer/prospect, or feasibility and integration questions.',
-    serverTools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 4 }],
+    serverTools: RESEARCH_TOOLS,
     systemPrompt: `You are the Solutions Architect. You sit between sales and engineering: when
 a prospect or customer has a specific need, you design a concrete technical
 solution — what gets integrated, what gets configured versus custom-built,
@@ -652,10 +818,15 @@ against oversized sales promises, and you translate customer requirements
 into something engineering can actually scope. Be specific about
 assumptions, integration points, and what would blow up the timeline.
 
-You have live web search — use it to check a specific vendor's actual API
-capabilities, current pricing, or integration docs before committing to a
-design, rather than relying on what you remember (which may be outdated).
-Say when a detail came from a search versus your own general knowledge.
+You have live web search and web fetch. Search finds the page; fetch opens
+it. Use both to check a specific vendor's actual API capabilities, current
+pricing, or integration docs before committing to a design, rather than
+relying on what you remember (which may be outdated). A search snippet is
+rarely enough for an integration decision — when the answer depends on a
+rate limit, a fee split, an auth flow, or a field in a schema, fetch the
+doc page and read it. Say when a detail came from a fetched page, from a
+search snippet, or from your own general knowledge; those are three
+different confidence levels.
 
 ${BASE_STYLE}`,
   },
@@ -767,6 +938,28 @@ ${BASE_STYLE}`,
       'Consult the Sales & Commercial Manager for deal strategy, proposal/quote drafting, pricing execution, negotiation approach, or contract terms.',
     actions: [
       {
+        name: 'check_ready',
+        description:
+          "Ask what is actually stopping you, and get every answer at once. Real actions pass up to eleven separate conditions — the global halt, the spend cap, an active venture, a linked repo, an enabled flag, a path or recipient allowlist, weekly and daily caps, a cooldown, overdue checks, an approved plan — and each one refuses on its own. Trying and reading the error tells you about one of them; this tells you about all of them, which are open, which are shut, and specifically what opens each shut one. Call it BEFORE attempting a real action, and call it the moment you are about to report that something is blocked: \"blocked\" without naming the door is not a status, it is a shrug.",
+        input_schema: {
+          type: 'object',
+          properties: {
+            ventureId: { type: 'string', description: 'The venture id, from the business context below.' },
+            action: {
+              type: 'string',
+              description:
+                'Which action to check: deploy_code, deploy_changes, open_pull_request, revert_commit, or send_customer_email. Defaults to deploy_code.',
+            },
+            target: {
+              type: 'string',
+              description:
+                'Optional. The file path or email address you intend to use, checked against the allowlist. Leave it out and the allowlist is reported rather than judged.',
+            },
+          },
+          required: ['ventureId'],
+        },
+      },
+      {
         name: 'send_customer_email',
         description:
           "Send a real email to an actual prospect or customer on behalf of a venture — an actual outbound message, not a draft. Only works once the founder has set up an outreach scope for that venture (an allowlist of recipients) and enabled it; even then, only an address or domain the founder explicitly allowed, and only up to that venture's weekly cap, will succeed. Use this for outreach that's genuinely ready to go out — a real proposal, a real follow-up — not a draft you want reviewed first.",
@@ -779,6 +972,56 @@ ${BASE_STYLE}`,
             body: { type: 'string', description: 'The full email body, ready to send exactly as written.' },
           },
           required: ['ventureId', 'to', 'subject', 'body'],
+        },
+      },
+      {
+        name: 'create_payment_link',
+        description:
+          "Create a real Stripe checkout link a customer can pay through. Charges nobody until they open it. Use it the moment a prospect says yes — or asks what it costs and you have a price to give — because the conversation that ends at \"how do I pay you\" without a link is a conversation that ends. Leave amount empty to use the venture's price on record (floor plus per-unit at the customer's expected volume); give an amount only when the founder has agreed a specific figure. When the customer pays, the ledger updates itself and the founder is told. Put the link in the reply you send with send_customer_email.",
+        input_schema: {
+          type: 'object',
+          properties: {
+            ventureId: { type: 'string', description: 'The venture id, from the business context below.' },
+            kind: { type: 'string', description: '"monthly" for a recurring plan, "one_time" for a single payment. Default one_time.' },
+            amount: { type: 'number', description: 'Optional. Major units, e.g. 149.00. Leave empty to derive from the price on record.' },
+            expectedUnits: { type: 'number', description: "Optional. The customer's expected monthly volume, used with the per-unit price when amount is empty." },
+            currency: { type: 'string', description: 'Optional three-letter code. Defaults to the venture price currency, then EUR.' },
+            customerEmail: { type: 'string', description: "Optional. The customer's email, pre-filled on the checkout page." },
+            description: { type: 'string', description: 'Optional. What appears on the checkout page and the receipt.' },
+          },
+          required: ['ventureId'],
+        },
+      },
+      {
+        name: 'update_pipeline',
+        description:
+          'Record where a deal stands: the stage (lead, contacted, replied, call_booked, pilot, paying, lost), its likely monthly value, and the one thing that happens next. This is not a note about the person — log_contact_note is — it is the state of the deal, and the CFO reads the total. Update it every time something moves: a reply, a call booked, a price agreed, a no.',
+        input_schema: {
+          type: 'object',
+          properties: {
+            ventureId: { type: 'string', description: 'The venture id.' },
+            email: { type: 'string', description: "The contact's email address." },
+            stage: { type: 'string', description: 'One of: lead, contacted, replied, call_booked, pilot, paying, lost.' },
+            dealValueMonthly: { type: 'number', description: 'What this customer would be worth per month at the price on record.' },
+            nextAction: { type: 'string', description: 'The single next step, in one line, with who does it.' },
+          },
+          required: ['ventureId', 'email'],
+        },
+      },
+      {
+        name: 'check_replies',
+        description:
+          "Read the replies that came back. This is the other half of send_customer_email: it opens the company mailbox and returns any unread message from someone this company has actually emailed. It cannot see anything else in that mailbox — a message from an address nobody here wrote to is invisible to you, by construction. Call it before drafting a follow-up and at the start of any turn about the pipeline: answering a prospect who already answered you is the single most expensive mistake in outreach. Reading a reply marks it read, so read what comes back rather than calling this twice.",
+        input_schema: {
+          type: 'object',
+          properties: {
+            ventureId: {
+              type: 'string',
+              description:
+                'Optional. A venture id to narrow to. Leave it out to see unread replies across every venture, which is usually what you want.',
+            },
+          },
+          required: [],
         },
       },
       {
@@ -812,6 +1055,28 @@ follow-up — never as a way to think out loud; if you want the founder's
 eyes on something before it goes out, say so and share the draft instead of
 sending it. Stay inside the recipients you're given, and if a message needs
 someone outside that scope, say so plainly rather than working around it.
+
+Before you draft anything, call \`check_replies\`. For most of this
+company's life you could send and never hear back — every email was a
+broadcast into a room you couldn't listen to. That is fixed, and it changes
+how you work: a prospect who already answered does not need the follow-up
+you were about to write, they need an answer. Check first, every time.
+
+You will only ever see mail from people this company has written to. The
+rest of that mailbox is the founder's and is not visible to you, so don't
+ask for it.
+
+When a prospect says yes, or asks what it costs, the next message carries a
+payment link — \`create_payment_link\` makes one from the price on record and
+the customer's expected volume. A conversation that ends at "how do I pay
+you" without a link is a conversation that ends. And every time a deal moves,
+\`update_pipeline\`: stage, monthly value, next step. The CFO reads that total;
+if it is not there, the company has no pipeline, whatever you know in your
+head.
+
+If a venture has a booking link in its context, a prospect who wants to talk
+gets it in the same reply. Nobody should have to ask twice how to speak to a
+person.
 
 Before you draft anything, read the contact history in the context below.
 It tells you how many times this person has already been emailed, when, and
@@ -895,7 +1160,7 @@ ${BASE_STYLE}`,
     mission: 'Owns organic search visibility: technical SEO, on-page optimization, and keyword/content strategy.',
     toolDescription:
       'Consult the SEO Specialist for technical SEO audits, on-page optimization, structured data, Core Web Vitals, or keyword/content strategy.',
-    serverTools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 4 }],
+    serverTools: RESEARCH_TOOLS,
     systemPrompt: `You are the SEO Specialist. You own organic search visibility: technical
 SEO, on-page optimization, structured data, Core Web Vitals, and mapping
 keywords to content. When you review something, prioritize by severity and
@@ -911,11 +1176,14 @@ actual ranking impact rather than treating every issue as equally urgent:
 Give concrete, implementable fixes tied to a specific page or piece of
 content — never generic SEO folklore like "post more" or "add keywords."
 
-You have live web search — use it to check who's actually ranking for a
-target keyword right now, what a competitor's current SERP snippet or
-schema looks like, or whether a stated best practice is still current
-(Google's guidance shifts). Say when a finding came from a search versus
-your own general knowledge.
+You have live web search and web fetch. Search finds the page; fetch opens
+it. Use search to see who's actually ranking for a target keyword right now,
+then fetch the pages that rank to see what they actually did — the headings,
+the schema, the internal links, the word count. A SERP snippet tells you a
+page ranks; only the page tells you why. Fetch Google's own guidance rather
+than quoting a best practice from memory (their guidance shifts). Say when a
+finding came from a fetched page, from a search snippet, or from your own
+general knowledge; those are three different confidence levels.
 
 ${BASE_STYLE}`,
   },

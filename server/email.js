@@ -10,6 +10,7 @@
 
 import nodemailer from 'nodemailer';
 import { formatUsd } from './usage.js';
+import { describeUnsupportedClaims } from './claimCheck.js';
 
 function buildTransport() {
   if (!process.env.SMTP_HOST || !process.env.REPORT_EMAIL_TO) return null;
@@ -61,6 +62,11 @@ export function formatReportEmail(report) {
       `Ran in ${(report.durationMs / 1000).toFixed(1)}s · ${formatUsd(report.costUsd)} · ${report.usage.inputTokens.toLocaleString()} in / ${report.usage.outputTokens.toLocaleString()} out tokens`
     );
   }
+  // Before the report, not after it: a warning that the report may be wrong is
+  // not a footnote to the report.
+  const claims = describeUnsupportedClaims(report.unsupportedClaims);
+  if (claims) lines.push('', claims);
+
   lines.push(
     '',
     '=== Leadership Sync (Executive Team) ===',
@@ -182,4 +188,46 @@ export function formatOutreachAlertEmail(venture, { to, subject, triggeredBy }) 
 export async function sendOutreachAlertEmail(venture, details) {
   const { subject, text } = formatOutreachAlertEmail(venture, details);
   return sendEmail(subject, text); // to the founder — no override, unlike sendCustomerEmail
+}
+
+// A real person answered. That is the single most important thing that can
+// happen in this company's day, and before inbox.js existed it was invisible
+// — the founder was relaying replies by hand into WhatsApp.
+//
+// Same shape as formatOutreachAlertEmail: an audit trail, not an approval.
+// The reply has already arrived; nothing here can un-arrive it.
+export function formatReplyAlertEmail(venture, { from, subject, triggeredBy }) {
+  const alertSubject = `Reply received: ${from} -> "${venture.title}"`;
+  const text = [
+    `${from} replied to outreach sent on behalf of "${venture.title}".`,
+    '',
+    `Subject: ${subject || '(no subject)'}`,
+    `Picked up by: ${describeTrigger(triggeredBy)}`,
+    '',
+    'The Sales & Commercial Manager has it. Check the Ventures panel for the full thread.',
+  ].join('\n');
+  return { subject: alertSubject, text };
+}
+
+export async function sendReplyAlertEmail(venture, details) {
+  const { subject, text } = formatReplyAlertEmail(venture, details);
+  return sendEmail(subject, text); // to the founder
+}
+
+// Money arrived. The one email in this app that carries unambiguously good
+// news, and it goes out the moment the webhook lands rather than in tomorrow's
+// digest, because the founder has waited a long time for this one.
+export function formatPaymentEmail(venture, { amount, currency, customerEmail, kind }) {
+  const subject = `Payment received: ${currency} ${Number(amount).toFixed(2)} for "${venture.title}"`;
+  const text = [
+    `${customerEmail || 'A customer'} paid ${currency} ${Number(amount).toFixed(2)} (${kind === 'monthly' ? 'monthly plan' : 'one-time'}) for "${venture.title}".`,
+    '',
+    'It is on the ledger as revenue. Nothing to approve.',
+  ].join('\n');
+  return { subject, text };
+}
+
+export async function sendPaymentEmail(venture, details) {
+  const { subject, text } = formatPaymentEmail(venture, details);
+  return sendEmail(subject, text);
 }

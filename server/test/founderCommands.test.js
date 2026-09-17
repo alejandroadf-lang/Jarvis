@@ -497,3 +497,24 @@ test('VENTURES shows a missing service URL rather than leaving it to be inferred
   const after = await commands.runFounderCommand({ kind: 'ventures' });
   assert.match(after, /https:\/\/api\.example\.com/);
 });
+
+// --- READY ---------------------------------------------------------------------
+
+test('READY and BLOCKED both reach the readiness report', () => {
+  assert.deepEqual(commands.parseFounderCommand('READY'), { kind: 'ready', ventureId: null });
+  assert.deepEqual(commands.parseFounderCommand('blocked'), { kind: 'ready', ventureId: null });
+  assert.deepEqual(commands.parseFounderCommand('ready v_123_abc'), { kind: 'ready', ventureId: 'v_123_abc' });
+});
+
+test('a bare "why" is a message to the team, not a command', () => {
+  // The venture-id requirement is what keeps these commands from firing on
+  // ordinary prose, and "why" is prose far more often than it is a command.
+  // Hijacking it would swallow a real question to the company.
+  assert.equal(commands.parseFounderCommand('why'), null);
+  assert.equal(commands.parseFounderCommand('why did the deploy fail'), null);
+  assert.equal(commands.parseFounderCommand('ready to ship?'), null);
+});
+
+test('READY is in the help, since a control nobody knows about is not a control', () => {
+  assert.match(commands.__helpForTests, /READY/);
+});
