@@ -16,7 +16,7 @@ and is only paid for when it is actually used.
 
 ## What's in the library
 
-Fourteen, in two groups.
+Nineteen, in three groups.
 
 **Written from failures that happened here.** Most of these are a procedure
 for a mistake this company already made, fluently and confidently, at the
@@ -45,6 +45,19 @@ authenticate callers, price itself, and find someone to sell to:
 | `handling-regulated-claims` | Anything touching health, money or legal advice |
 | `finding-first-customers` | The first ten, who come from nowhere a later channel reaches |
 | `pricing-a-product` | The fastest revenue lever, usually left at its default |
+
+**Written for capabilities that just arrived.** A team that can open a pull
+request but has never reviewed one, or that can revert a commit and does not
+know to revert *first*, has a new verb and no grammar. These five landed with
+the wider GitHub hands and the inbound mailbox:
+
+| Skill | For |
+|---|---|
+| `reviewing-a-diff` | Work now arrives needing a review rather than a rewrite |
+| `when-the-service-is-down` | Undo first, understand second — the one case where the usual order is wrong |
+| `refactoring-without-breaking-it` | A multi-file commit makes restructuring practical, and dangerous |
+| `choosing-what-to-build-next` | More good ideas than hours, permanently |
+| `writing-docs-someone-can-follow` | Setup instructions read on a phone, with no terminal |
 
 ## Adding one
 
