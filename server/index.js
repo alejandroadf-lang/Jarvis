@@ -73,6 +73,9 @@ import { runEval } from './eval/run.js';
 import { listTasks } from './tasks.js';
 import { getDegradationToday } from './degradation.js';
 import { privacyPolicyHtml } from './privacy.js';
+import { graphPageHtml } from './graphPage.js';
+import { buildGraph } from './graph.js';
+import { verifyViewToken } from './viewToken.js';
 import { recordBoot, warnIfEphemeral } from './storage.js';
 import {
   enqueue as enqueueDeepDive,
@@ -83,7 +86,7 @@ import {
   listDeepDives,
   queueDepth,
 } from './deepDives.js';
-import { requireAccess, warnIfUnprotected } from './auth.js';
+import { requireAccess, warnIfUnprotected, isAccessProtected, hasAppToken } from './auth.js';
 import {
   getPlan,
   approvePlan,
@@ -1093,6 +1096,38 @@ app.post('/api/reports/weekly/run', async (_req, res) => {
     console.error('Weekly reflection run failed:', err);
     res.status(502).json({ error: 'Failed to run the weekly reflection' });
   }
+});
+
+// The company as a live graph — see graph.js for the model and graphPage.html
+// for the drawing.
+//
+// The page itself is public and deliberately so: it is an empty shell with no
+// company data in it. Everything that matters comes from /api/graph below,
+// which is authenticated. A browser following a WhatsApp link sends no custom
+// headers, so the founder's token rides in the URL *fragment* and the page
+// presents it as an Authorization header on its own fetch — a fragment never
+// reaches the server, so it lands in no access log. See viewToken.js.
+app.get('/graph', (_req, res) => {
+  res.type('html').send(graphPageHtml());
+});
+
+// Read-only, and authorised by either the app token (the client bundle) or a
+// short-lived view token (a link opened on a phone). requireAccess already
+// admits the former; this adds the latter without widening anything else —
+// a view token opens this one view until it expires and nothing more.
+app.get('/api/graph', (req, res) => {
+  if (isAccessProtected() && !hasAppToken(req)) {
+    const presented = (req.get('authorization') || '').replace(/^Bearer\s+/i, '').trim();
+    const verdict = verifyViewToken(presented);
+    if (!verdict.valid) {
+      return res.status(401).json({
+        error: 'This view link is not valid.',
+        reason: verdict.reason,
+        hint: 'Send GRAPH on WhatsApp for a fresh link.',
+      });
+    }
+  }
+  res.json(buildGraph());
 });
 
 // Public and unauthenticated by necessity: Meta requires a reachable privacy

@@ -61,6 +61,10 @@ const COMMANDS = [
   // rejectPlan already handled any status; it simply had no route to it.
   { kind: 'plan_clear', re: /^plan\s+clear(?:\s+(.+))?$|^(?:withdraw|unapprove)$/i, arg: 'reason' },
   { kind: 'report', re: /^(report|daily\s+report|latest\s+report)$/i },
+  // The company as a picture. A list sorts by name; a graph sorts by
+  // structure, and "who did the CEO actually talk to" is one look at a picture
+  // and a paragraph of text.
+  { kind: 'graph', re: /^(graph|map|org\s+chart|chart)$/i },
   // The Build tab, as text. The tab is the better view; this is the one that
   // works without leaving the conversation the founder is already in.
   { kind: 'build', re: /^build(?:\s+(v_\S+))?$/i, arg: 'ventureId' },
@@ -275,6 +279,7 @@ SPEND — today's model spend against the cap
 INTEGRATIONS — what's actually connected
 MODELS [search] — live OpenRouter models and their prices
 REPORT — the latest daily report
+GRAPH — the company as a live picture, as a link
 EVAL [scenario] — grade the agents' judgment against the eval scenarios
 PLAN — today's plan (APPROVE / REJECT <reason> to decide it)
 PLAN CLEAR <reason> — withdraw clearance you already gave
@@ -415,6 +420,25 @@ export async function runFounderCommand(command, deps = {}) {
       });
       const venture = setDeploymentEnabled(command.ventureId, true);
       return `"${venture.title}" is linked to ${command.owner}/${command.name} (branch main) and deployments are ON.\n\nThey may write: ${command.allowedPaths.join(', ')}\nCaps: ${venture.repo.maxPerDay}/day, ${venture.repo.maxPerWeek}/week.\n\nDEPLOY OFF ${command.ventureId} stops it.`;
+    }
+
+    case 'graph': {
+      const { graphLink, viewTokenTtlMs } = await import('../viewToken.js');
+      const link = graphLink();
+      if (!link.startsWith('http')) {
+        return (
+          'The graph is at /graph on this server, but I do not know the public URL to build you a link.\n\n' +
+          'Set PUBLIC_URL in Railway (or let RAILWAY_PUBLIC_DOMAIN be set) and send GRAPH again.'
+        );
+      }
+      const minutes = Math.round(viewTokenTtlMs() / 60000);
+      return (
+        `${link}\n\n` +
+        `Tap to open. Drag to pan, pinch to zoom, drag a node to pull it, tap a node for its model, ` +
+        `cost and whether it ran this morning.\n\n` +
+        `The link expires in ${minutes} minutes — a WhatsApp message gets forwarded and backed up, so ` +
+        `it is deliberately not a permanent key. Send GRAPH again for a fresh one.`
+      );
     }
 
     case 'service_url': {

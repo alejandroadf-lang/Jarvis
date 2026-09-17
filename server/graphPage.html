@@ -1,0 +1,678 @@
+<!doctype html>
+<html lang="en" data-palette="#3987e5,#d95926,#199e70,#c98500,#d55181">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Company Graph</title>
+<style>
+  /* Deliberately single-theme. This is an instrument panel read in a dark
+     room on a phone, not a document, so it commits to one visual world rather
+     than swapping with the OS. Every colour is stated explicitly so the page
+     never borrows a host background. */
+  :root {
+    color-scheme: dark;
+    --surface:        #1a1a19;
+    --surface-deep:   #0e0e0d;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #7c7b73;
+    --hairline:       rgba(255,255,255,0.10);
+
+    /* Categorical slots, one per department, in fixed order — never cycled.
+       Validated against this surface for lightness, chroma, CVD separation and
+       contrast before being used. */
+    --dept-executive:  #3987e5;
+    --dept-technology: #d95926;
+    --dept-finance:    #199e70;
+    --dept-marketing:  #c98500;
+    --dept-operations: #d55181;
+
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--surface-deep);
+    color: var(--text-primary);
+    font-family: var(--sans);
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+    /* The canvas handles its own gestures; stop the browser competing. */
+    touch-action: none;
+    overscroll-behavior: none;
+  }
+
+  #stage { position: fixed; inset: 0; display: block; }
+
+  /* --- Header ------------------------------------------------------------ */
+  header {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    padding: max(12px, env(safe-area-inset-top)) 16px 12px;
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    flex-wrap: wrap;
+    background: linear-gradient(to bottom, rgba(14,14,13,0.92), rgba(14,14,13,0));
+    pointer-events: none;
+    z-index: 3;
+  }
+  h1 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  .counts {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .counts b { color: var(--text-primary); font-weight: 600; }
+
+  /* --- Legend ------------------------------------------------------------ */
+  /* Always present: five hues is more than anyone holds in their head, and
+     identity must never rest on colour alone. Every node is directly labelled
+     as well, which is the secondary encoding the palette check asks for. */
+  #legend {
+    position: fixed;
+    left: 16px;
+    bottom: max(16px, env(safe-area-inset-bottom));
+    z-index: 3;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-secondary);
+    pointer-events: none;
+  }
+  .key { display: flex; align-items: center; gap: 7px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .key.idle .dot { opacity: 0.3; }
+  .key .ring {
+    width: 8px; height: 8px; border-radius: 50%; flex: none;
+    background: none; border: 1.5px solid var(--text-secondary);
+  }
+
+  /* --- Hints ------------------------------------------------------------- */
+  #hints {
+    position: fixed;
+    right: 16px;
+    bottom: max(16px, env(safe-area-inset-bottom));
+    z-index: 3;
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    text-align: right;
+    line-height: 1.7;
+    pointer-events: none;
+  }
+
+  /* --- Detail sheet ------------------------------------------------------ */
+  #sheet {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    z-index: 4;
+    background: rgba(26,26,25,0.96);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-top: 1px solid var(--hairline);
+    padding: 16px 16px max(16px, env(safe-area-inset-bottom));
+    transform: translateY(110%);
+    transition: transform 220ms cubic-bezier(0.2, 0, 0, 1);
+    max-height: 62vh;
+    overflow-y: auto;
+  }
+  #sheet.open { transform: translateY(0); }
+  @media (prefers-reduced-motion: reduce) { #sheet { transition: none; } }
+
+  .sheet-head { display: flex; align-items: flex-start; gap: 10px; }
+  .sheet-head .dot { width: 10px; height: 10px; margin-top: 5px; }
+  .sheet-title { margin: 0; font-size: 16px; font-weight: 600; flex: 1; }
+  .sheet-sub {
+    margin: 2px 0 0;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-secondary);
+  }
+  #close {
+    appearance: none;
+    background: none;
+    border: 1px solid var(--hairline);
+    color: var(--text-secondary);
+    border-radius: 6px;
+    width: 28px; height: 28px;
+    font-size: 15px;
+    line-height: 1;
+    cursor: pointer;
+    flex: none;
+  }
+  #close:focus-visible { outline: 2px solid var(--dept-executive); outline-offset: 2px; }
+
+  dl {
+    margin: 14px 0 0;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 7px 14px;
+    font-size: 12px;
+  }
+  dt { color: var(--text-muted); font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.04em; }
+  dd {
+    margin: 0;
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    color: var(--text-primary);
+    overflow-wrap: anywhere;
+  }
+  dd.quiet { color: var(--text-secondary); }
+
+  /* --- States ------------------------------------------------------------ */
+  #state {
+    position: fixed;
+    inset: 0;
+    z-index: 5;
+    display: none;
+    place-content: center;
+    padding: 24px;
+    text-align: center;
+    background: var(--surface-deep);
+  }
+  #state.show { display: grid; }
+  #state h2 { margin: 0 0 8px; font-size: 16px; font-weight: 600; }
+  #state p { margin: 0; color: var(--text-secondary); font-size: 13px; max-width: 34ch; line-height: 1.6; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+
+<header>
+  <h1>Company</h1>
+  <div class="counts" id="counts"></div>
+</header>
+
+<div id="legend"></div>
+
+<div id="hints">
+  DRAG SPACE · PAN<br>
+  PINCH / SCROLL · ZOOM<br>
+  DRAG NODE · PULL<br>
+  TAP NODE · DETAIL
+</div>
+
+<section id="sheet" aria-live="polite">
+  <div class="sheet-head">
+    <span class="dot" id="sheet-dot"></span>
+    <div style="flex:1">
+      <h2 class="sheet-title" id="sheet-title"></h2>
+      <p class="sheet-sub" id="sheet-sub"></p>
+    </div>
+    <button id="close" aria-label="Close">&times;</button>
+  </div>
+  <dl id="sheet-body"></dl>
+</section>
+
+<div id="state"><div><h2 id="state-title">Loading</h2><p id="state-body">Reading the company.</p></div></div>
+
+<script>
+(() => {
+  'use strict';
+
+  // The token rides in the fragment, never the query string: a fragment is
+  // never sent to the server, so it appears in no access log, no proxy log and
+  // no error tracker. See server/viewToken.js.
+  const token = (new URLSearchParams(location.hash.slice(1))).get('t') || '';
+
+  const DEPT_COLOR = {
+    Executive:  getVar('--dept-executive'),
+    Technology: getVar('--dept-technology'),
+    Finance:    getVar('--dept-finance'),
+    Marketing:  getVar('--dept-marketing'),
+    Operations: getVar('--dept-operations'),
+  };
+  const FALLBACK = getVar('--text-muted');
+  function getVar(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+  function colorFor(dept) { return DEPT_COLOR[dept] || FALLBACK; }
+
+  const canvas = document.getElementById('stage');
+  const ctx = canvas.getContext('2d');
+  const state = document.getElementById('state');
+
+  let nodes = [];
+  let edges = [];
+  let meta = null;
+  let selected = null;
+
+  // --- View transform -----------------------------------------------------
+  const view = { x: 0, y: 0, k: 1 };
+
+  function resize() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = Math.floor(innerWidth * dpr);
+    canvas.height = Math.floor(innerHeight * dpr);
+    canvas.style.width = innerWidth + 'px';
+    canvas.style.height = innerHeight + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  addEventListener('resize', () => { resize(); if (!fitted) fitToView(); });
+  resize();
+
+  function showState(title, body) {
+    document.getElementById('state-title').textContent = title;
+    document.getElementById('state-body').textContent = body;
+    state.classList.add('show');
+  }
+  function hideState() { state.classList.remove('show'); }
+
+  // --- Load ---------------------------------------------------------------
+  async function load() {
+    let res;
+    try {
+      res = await fetch('/api/graph', {
+        headers: token ? { Authorization: 'Bearer ' + token } : {},
+        cache: 'no-store',
+      });
+    } catch (err) {
+      showState('Cannot reach the server', String(err && err.message ? err.message : err));
+      return;
+    }
+
+    if (res.status === 401) {
+      showState('This link has expired', 'View links are short-lived on purpose — a WhatsApp message gets forwarded and backed up. Send GRAPH again for a fresh one.');
+      return;
+    }
+    if (!res.ok) {
+      showState('The server refused', 'HTTP ' + res.status);
+      return;
+    }
+
+    const data = await res.json();
+    meta = data.meta;
+    edges = data.edges;
+
+    // Seed positions on a ring per department so the simulation starts from
+    // something structured rather than a knot it has to untangle.
+    const depts = [...new Set(data.nodes.map((n) => n.department))];
+    nodes = data.nodes.map((n, i) => {
+      const band = depts.indexOf(n.department);
+      const angle = (band / depts.length) * Math.PI * 2 + (i % 5) * 0.28;
+      const radius = n.isRoot ? 0 : 120 + (i % 4) * 34;
+      return Object.assign({}, n, {
+        x: Math.cos(angle) * radius,
+        y: Math.sin(angle) * radius,
+        vx: 0, vy: 0,
+        r: 4 + Math.min(n.reportCount, 5) * 1.8 + (n.isRoot ? 3 : 0),
+      });
+    });
+
+    const byId = new Map(nodes.map((n) => [n.id, n]));
+    edges = edges
+      .map((e) => ({ a: byId.get(e.source), b: byId.get(e.target), active: e.active }))
+      .filter((e) => e.a && e.b);
+
+    renderChrome();
+    hideState();
+    requestAnimationFrame(tick);
+  }
+
+  function renderChrome() {
+    const counts = document.getElementById('counts');
+    const parts = [
+      '<span><b>' + meta.agentCount + '</b> agents</span>',
+      '<span><b>' + meta.ranCount + '</b> ran</span>',
+      '<span><b>' + meta.idleCount + '</b> idle</span>',
+      '<span><b>' + meta.frontierCount + '</b> frontier</span>',
+    ];
+    if (meta.reportDate) parts.push('<span>' + meta.reportDate + (meta.reportScope === 'narrow' ? ' · quiet' : '') + '</span>');
+    counts.innerHTML = parts.join('');
+
+    const present = [...new Set(nodes.map((n) => n.department))];
+    const legend = document.getElementById('legend');
+    const rows = present.map((d) =>
+      '<span class="key"><span class="dot" style="background:' + colorFor(d) + '"></span>' + escapeHtml(d) + '</span>'
+    );
+    rows.push('<span class="key idle"><span class="dot" style="background:' + FALLBACK + '"></span>never consulted</span>');
+    rows.push('<span class="key"><span class="ring"></span>pinned to Anthropic</span>');
+    legend.innerHTML = rows.join('');
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  // --- Simulation ---------------------------------------------------------
+  // A plain spring/repulsion model rather than a library: the whole graph is
+  // twenty-two nodes, and a dependency would be more bytes than the physics.
+  function step() {
+    const REPULSION = 2600;
+    const SPRING = 0.016;
+    const REST = 78;
+    const CENTERING = 0.0016;
+    const DAMPING = 0.86;
+
+    for (let i = 0; i < nodes.length; i++) {
+      const a = nodes[i];
+      for (let j = i + 1; j < nodes.length; j++) {
+        const b = nodes[j];
+        let dx = b.x - a.x, dy = b.y - a.y;
+        let d2 = dx * dx + dy * dy;
+        if (d2 < 1) { d2 = 1; dx = (Math.random() - 0.5); dy = (Math.random() - 0.5); }
+        const d = Math.sqrt(d2);
+        // Same department pushes apart less, which is what produces the
+        // clusters rather than an evenly spaced mesh.
+        const scale = a.department === b.department ? 0.55 : 1;
+        const force = (REPULSION * scale) / d2;
+        const fx = (dx / d) * force, fy = (dy / d) * force;
+        a.vx -= fx; a.vy -= fy;
+        b.vx += fx; b.vy += fy;
+      }
+    }
+
+    for (const e of edges) {
+      const dx = e.b.x - e.a.x, dy = e.b.y - e.a.y;
+      const d = Math.hypot(dx, dy) || 1;
+      const force = (d - REST) * SPRING;
+      const fx = (dx / d) * force, fy = (dy / d) * force;
+      e.a.vx += fx; e.a.vy += fy;
+      e.b.vx -= fx; e.b.vy -= fy;
+    }
+
+    for (const n of nodes) {
+      if (n === dragging) continue;
+      n.vx -= n.x * CENTERING;
+      n.vy -= n.y * CENTERING;
+      n.vx *= DAMPING; n.vy *= DAMPING;
+      n.x += n.vx; n.y += n.vy;
+    }
+  }
+
+  // --- Render -------------------------------------------------------------
+  function draw() {
+    const w = innerWidth, h = innerHeight;
+    ctx.clearRect(0, 0, w, h);
+
+    const g = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, Math.max(w, h) * 0.75);
+    g.addColorStop(0, '#1a1a19');
+    g.addColorStop(1, '#0e0e0d');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, w, h);
+
+    ctx.save();
+    ctx.translate(w / 2 + view.x, h / 2 + view.y);
+    ctx.scale(view.k, view.k);
+
+    for (const e of edges) {
+      const lit = e.active;
+      ctx.beginPath();
+      ctx.moveTo(e.a.x, e.a.y);
+      ctx.lineTo(e.b.x, e.b.y);
+      ctx.strokeStyle = lit ? hexToRgba(colorFor(e.b.department), 0.55) : 'rgba(255,255,255,0.07)';
+      ctx.lineWidth = (lit ? 1.4 : 0.8) / view.k;
+      ctx.stroke();
+    }
+
+    for (const n of nodes) {
+      const color = colorFor(n.department);
+      const ran = n.ranTimes > 0;
+      const isSel = selected && selected.id === n.id;
+
+      if (ran) {
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, n.r * 3.4, 0, Math.PI * 2);
+        ctx.fillStyle = hexToRgba(color, 0.13);
+        ctx.fill();
+      }
+
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
+      ctx.fillStyle = ran ? color : hexToRgba(color, 0.3);
+      ctx.fill();
+
+      // Secondary encoding, not another hue: a ring means this agent cannot
+      // leave Anthropic because it uses a server tool.
+      if (n.pinnedToAnthropic) {
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, n.r + 3 / view.k, 0, Math.PI * 2);
+        ctx.strokeStyle = hexToRgba('#ffffff', 0.55);
+        ctx.lineWidth = 1.2 / view.k;
+        ctx.stroke();
+      }
+
+      if (isSel) {
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, n.r + 7 / view.k, 0, Math.PI * 2);
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1.5 / view.k;
+        ctx.stroke();
+      }
+
+      // Identity never rests on hue, so nodes carry their names. But twenty-two
+      // labels at phone width collide into an unreadable mat, so the ones that
+      // carry the structure — anything that ran, anything with reports, the
+      // root — are always named, and the rest appear as you zoom in. That keeps
+      // the first look legible without ever hiding the agents under discussion.
+      const important = ran || n.reportCount > 0 || n.isRoot || isSel;
+      if (view.k > 0.95 || important) {
+        ctx.font = (10 / view.k) + 'px ' + getVar('--mono');
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.fillStyle = ran ? 'rgba(255,255,255,0.88)' : 'rgba(255,255,255,0.4)';
+        ctx.fillText(n.title, n.x, n.y + n.r + 5 / view.k);
+      }
+    }
+
+    ctx.restore();
+  }
+
+  function hexToRgba(hex, alpha) {
+    const h = hex.replace('#', '');
+    const v = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
+    const num = parseInt(v, 16);
+    return 'rgba(' + ((num >> 16) & 255) + ',' + ((num >> 8) & 255) + ',' + (num & 255) + ',' + alpha + ')';
+  }
+
+  // Frame the whole company, with room for the labels that hang below each
+  // node. Without this the graph is laid out in its own coordinates and simply
+  // runs off the side of a phone — half the roster present and unreadable.
+  let fitted = false;
+  function fitToView() {
+    if (!nodes.length) return;
+
+    // Fitting to node positions alone is not enough: labels are drawn at a
+    // fixed screen size and centred under their node, so "Sales & Commercial
+    // Manager" reaches a hundred-odd pixels past its dot and runs off the side
+    // of a phone while the dot itself sits comfortably inside.
+    //
+    // Label width in world units depends on the zoom, and the zoom depends on
+    // the bounds, so this settles it by iterating rather than by solving it:
+    // three passes converge well inside a pixel.
+    const LABEL_PX = 10;
+    const pad = 20;
+    let k = 1;
+
+    for (let pass = 0; pass < 3; pass++) {
+      ctx.font = LABEL_PX + 'px ' + getVar('--mono');
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+
+      for (const n of nodes) {
+        const labelled = n.ranTimes > 0 || n.reportCount > 0 || n.isRoot;
+        // Half the label's width, expressed in the world units the bounds use.
+        const half = labelled ? ctx.measureText(n.title).width / 2 / k : 0;
+        const reach = Math.max(n.r, half);
+        minX = Math.min(minX, n.x - reach); maxX = Math.max(maxX, n.x + reach);
+        // Labels hang below the node; nothing extends above it but its radius.
+        minY = Math.min(minY, n.y - n.r);
+        maxY = Math.max(maxY, n.y + n.r + (labelled ? (LABEL_PX + 6) / k : 0));
+      }
+
+      const w = Math.max(maxX - minX, 1) + pad * 2;
+      const h = Math.max(maxY - minY, 1) + pad * 2;
+      // Never past 1: a small company blown up to fill a desktop reads as a
+      // bug rather than as a small company.
+      k = clamp(Math.min(innerWidth / w, innerHeight / h), 0.3, 1);
+
+      view.k = k;
+      view.x = -((minX + maxX) / 2) * k;
+      view.y = -((minY + maxY) / 2) * k;
+    }
+  }
+
+  let frames = 0;
+  function tick() {
+    // The layout settles; after that only redraw, so a phone is not running a
+    // physics loop in the background for as long as the page is open.
+    if (frames < 900) {
+      step();
+      frames++;
+      // Re-frame while it settles, then stop so the founder's own panning and
+      // zooming is never yanked back.
+      if (!fitted && frames % 15 === 0) fitToView();
+      if (frames >= 900) fitted = true;
+    }
+    draw();
+    requestAnimationFrame(tick);
+  }
+
+  // --- Interaction --------------------------------------------------------
+  let dragging = null;
+  let panning = false;
+  let last = null;
+  let moved = 0;
+  const pointers = new Map();
+  let pinchStart = null;
+
+  function toWorld(cx, cy) {
+    return { x: (cx - innerWidth / 2 - view.x) / view.k, y: (cy - innerHeight / 2 - view.y) / view.k };
+  }
+
+  function nodeAt(cx, cy) {
+    const p = toWorld(cx, cy);
+    let best = null, bestD = Infinity;
+    for (const n of nodes) {
+      const d = Math.hypot(n.x - p.x, n.y - p.y);
+      // A generous hit target: a 6px dot is not a 6px tap target on a phone.
+      if (d < Math.max(n.r + 14, 20) && d < bestD) { best = n; bestD = d; }
+    }
+    return best;
+  }
+
+  canvas.addEventListener('pointerdown', (ev) => {
+    try { canvas.setPointerCapture(ev.pointerId); } catch { /* no active pointer */ }
+    pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+    moved = 0;
+
+    if (pointers.size === 2) {
+      const [p1, p2] = [...pointers.values()];
+      pinchStart = { dist: Math.hypot(p2.x - p1.x, p2.y - p1.y), k: view.k };
+      dragging = null; panning = false;
+      return;
+    }
+
+    const hit = nodeAt(ev.clientX, ev.clientY);
+    if (hit) { dragging = hit; hit.vx = 0; hit.vy = 0; }
+    else { panning = true; }
+    last = { x: ev.clientX, y: ev.clientY };
+  });
+
+  canvas.addEventListener('pointermove', (ev) => {
+    if (!pointers.has(ev.pointerId)) return;
+    pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+
+    if (pointers.size === 2 && pinchStart) {
+      const [p1, p2] = [...pointers.values()];
+      const dist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+      view.k = clamp(pinchStart.k * (dist / pinchStart.dist), 0.28, 3.2);
+      return;
+    }
+
+    if (!last) return;
+    const dx = ev.clientX - last.x, dy = ev.clientY - last.y;
+    moved += Math.abs(dx) + Math.abs(dy);
+    last = { x: ev.clientX, y: ev.clientY };
+
+    if (dragging) {
+      const p = toWorld(ev.clientX, ev.clientY);
+      dragging.x = p.x; dragging.y = p.y;
+      // Pulling a node re-energises the layout so the rest follows it.
+      frames = Math.min(frames, 820);
+    } else if (panning) {
+      view.x += dx; view.y += dy;
+    }
+  });
+
+  function endPointer(ev) {
+    pointers.delete(ev.pointerId);
+    if (pointers.size < 2) pinchStart = null;
+
+    // A tap, not a drag. The threshold is what separates "I meant this node"
+    // from "my thumb slid while panning".
+    if (moved < 8 && dragging) select(dragging);
+    else if (moved < 8 && !dragging && panning) select(null);
+
+    dragging = null; panning = false; last = null;
+  }
+  canvas.addEventListener('pointerup', endPointer);
+  canvas.addEventListener('pointercancel', endPointer);
+
+  canvas.addEventListener('wheel', (ev) => {
+    ev.preventDefault();
+    view.k = clamp(view.k * (ev.deltaY < 0 ? 1.12 : 0.89), 0.28, 3.2);
+  }, { passive: false });
+
+  function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+  // --- Detail sheet -------------------------------------------------------
+  const sheet = document.getElementById('sheet');
+  document.getElementById('close').addEventListener('click', () => select(null));
+
+  function select(node) {
+    selected = node;
+    if (!node) { sheet.classList.remove('open'); return; }
+
+    document.getElementById('sheet-dot').style.background = colorFor(node.department);
+    document.getElementById('sheet-title').textContent = node.title;
+    document.getElementById('sheet-sub').textContent = node.department + ' · ' + node.id;
+
+    const rows = [];
+    const add = (k, v, quiet) => rows.push('<dt>' + escapeHtml(k) + '</dt><dd' + (quiet ? ' class="quiet"' : '') + '>' + escapeHtml(v) + '</dd>');
+
+    add('model', node.model);
+    add('provider', node.provider + (node.pinnedToAnthropic ? ' · pinned (web search)' : ''));
+    add('reports to', node.reportsTo || '— (root)', !node.reportsTo);
+    add('reports', node.reportCount ? String(node.reportCount) : 'none — a leaf', !node.reportCount);
+    add('tools', node.toolCount ? String(node.toolCount) : 'none — advises only', !node.toolCount);
+
+    if (node.ranTimes > 0) {
+      add('last sync', node.ranTimes + (node.ranTimes === 1 ? ' consult' : ' consults'));
+      if (node.ranMs) add('time', (node.ranMs / 1000).toFixed(1) + 's');
+    } else {
+      // Worth saying plainly rather than leaving as an absent row: an agent
+      // that never runs is a finding, not a blank.
+      add('last sync', 'not consulted', true);
+    }
+
+    add('earned', '$' + Number(node.earnedUsd || 0).toFixed(2), !node.earnedUsd);
+    add('contributions', String(node.contributions || 0), !node.contributions);
+
+    document.getElementById('sheet-body').innerHTML = rows.join('');
+    sheet.classList.add('open');
+  }
+
+  addEventListener('keydown', (ev) => { if (ev.key === 'Escape') select(null); });
+
+  showState('Loading', 'Reading the company.');
+  load();
+})();
+</script>
+</body>
+</html>

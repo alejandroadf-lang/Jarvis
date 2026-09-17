@@ -25,6 +25,16 @@ import { readSecret, hasSecret } from './env.js';
 
 const PUBLIC_PATHS = new Set(['/api/health', '/api/whatsapp/webhook', '/privacy']);
 
+// Not public — these check their own credentials and need the middleware out of
+// the way to do it. /api/graph accepts the app token *or* a short-lived view
+// token, because a browser following a link from WhatsApp cannot send a custom
+// header and the founder reads this on a phone (see viewToken.js).
+//
+// Kept as a separate set from PUBLIC_PATHS rather than folded into it: a reader
+// scanning for what is unauthenticated must not find a path here that is in
+// fact authenticated by other means, and vice versa.
+const SELF_AUTHENTICATED_PATHS = new Set(['/api/graph']);
+
 export function isAccessProtected() {
   return hasSecret('APP_ACCESS_TOKEN');
 }
@@ -58,6 +68,7 @@ function matches(presented, expected) {
 export function requireAccess(req, res, next) {
   if (!isAccessProtected()) return next();
   if (PUBLIC_PATHS.has(req.path)) return next();
+  if (SELF_AUTHENTICATED_PATHS.has(req.path)) return next();
   // Everything that isn't the API is the client bundle; the token lives in
   // the browser, so the page has to load before it can present one.
   if (!req.path.startsWith('/api/')) return next();
@@ -68,6 +79,12 @@ export function requireAccess(req, res, next) {
     error: 'This app needs an access token.',
     hint: 'Send it as "Authorization: Bearer <token>" or the x-jarvis-token header.',
   });
+}
+
+/** Whether this request carries the full app token. */
+export function hasAppToken(req) {
+  if (!isAccessProtected()) return true;
+  return matches(presentedToken(req), readSecret('APP_ACCESS_TOKEN'));
 }
 
 export function accessStatus() {
