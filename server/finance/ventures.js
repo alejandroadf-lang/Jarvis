@@ -37,7 +37,7 @@ function save(data) {
 
 function findOrThrow(data, id) {
   const venture = data.ventures.find((v) => v.id === id);
-  if (!venture) throw new Error('Venture not found');
+  if (!venture) throw new Error('Venture not found. Check the id against the business context — every active venture is listed there with its id.');
   return venture;
 }
 
@@ -103,7 +103,7 @@ export function setMilestoneStatus(id, index, status, note) {
   const data = load();
   const venture = findOrThrow(data, id);
   const milestone = venture.milestones[index];
-  if (!milestone) throw new Error(`No milestone at index ${index} for "${venture.title}"`);
+  if (!milestone) throw new Error(`No milestone at index ${index} for "${venture.title}" — valid indexes are 0 to ${venture.milestones.length - 1}.`);
   milestone.status = status;
   milestone.note = note ? String(note) : milestone.note || '';
   milestone.updatedAt = new Date().toISOString();
@@ -255,7 +255,8 @@ function enforceRateLimits({ entries, timestampKey, scope, label }) {
 
   if (times.length > 0 && now - Math.max(...times) < MIN_MS_BETWEEN_ACTIONS) {
     throw new Error(
-      `Too soon after the last ${label} — this venture has a ${MIN_MS_BETWEEN_ACTIONS / 1000}s cooldown between real actions.`
+      `Too soon after the last ${label} — this venture has a ${MIN_MS_BETWEEN_ACTIONS / 1000}s cooldown between real actions. ` +
+        'Wait it out; this one clears on its own. Do the next piece of work meanwhile rather than retrying.'
     );
   }
 }
@@ -342,7 +343,7 @@ export function linkRepo(id, { owner, name, branch, allowedPaths, maxPerWeek, ma
 export function setDeploymentCaps(id, { maxPerDay, maxPerWeek }) {
   const data = load();
   const venture = findOrThrow(data, id);
-  if (!venture.repo) throw new Error('Link a repo before setting deployment caps for this venture');
+  if (!venture.repo) throw new Error(`Link a repo before setting deployment caps: the founder sends "LINK ${id} <owner/repo>".`);
 
   const weekly = Math.max(1, Number(maxPerWeek) || venture.repo.maxPerWeek || 3);
   venture.repo.maxPerWeek = weekly;
@@ -355,7 +356,7 @@ export function setDeploymentCaps(id, { maxPerDay, maxPerWeek }) {
 export function setDeploymentEnabled(id, enabled) {
   const data = load();
   const venture = findOrThrow(data, id);
-  if (!venture.repo) throw new Error('Link a repo before enabling deployments for this venture');
+  if (!venture.repo) throw new Error(`Link a repo before enabling deployments: the founder sends "LINK ${id} <owner/repo>".`);
   venture.repo.enabled = Boolean(enabled);
   save(data);
   return venture;
@@ -447,15 +448,17 @@ export function authorizeDeployment(id, { path }) {
   assertRealActionsAllowed();
   assertInApprovedPlan({ ventureId: id, action: 'deploy_code', target: path });
   const venture = getVenture(id);
-  if (!venture) throw new Error('Venture not found');
-  if (venture.status !== 'active') throw new Error(`Venture must be active to deploy (is ${venture.status})`);
+  if (!venture) throw new Error('Venture not found. Check the id against the business context — every active venture is listed there with its id.');
+  if (venture.status !== 'active') throw new Error(`Venture must be active to deploy (is ${venture.status}). Nothing will change this — a venture that is not active cannot act.`);
   if (!venture.repo) throw new Error('No repo linked to this venture yet — the founder needs to link one first.');
   if (!venture.repo.enabled) {
     throw new Error('Deployments are not enabled for this venture yet — the founder needs to turn them on.');
   }
   if (!isPathAllowed(venture.repo, path)) {
     throw new Error(
-      `"${path}" is outside the allowed scope (${venture.repo.allowedPaths.join(', ') || 'no paths allowed'}).`
+      `"${path}" is outside the allowed scope (${venture.repo.allowedPaths.join(', ') || 'no paths allowed'}). ` +
+        'Work inside the allowed paths, or ask the founder to widen them with ' +
+        `"LINK ${id} ${venture.repo.owner}/${venture.repo.name} <paths>" — naming this exact path.`
     );
   }
   enforceRateLimits({
@@ -487,8 +490,8 @@ export function authorizeDeploymentOfPaths(id, paths) {
   for (const path of list) assertInApprovedPlan({ ventureId: id, action: 'deploy_code', target: path });
 
   const venture = getVenture(id);
-  if (!venture) throw new Error('Venture not found');
-  if (venture.status !== 'active') throw new Error(`Venture must be active to deploy (is ${venture.status})`);
+  if (!venture) throw new Error('Venture not found. Check the id against the business context — every active venture is listed there with its id.');
+  if (venture.status !== 'active') throw new Error(`Venture must be active to deploy (is ${venture.status}). Nothing will change this — a venture that is not active cannot act.`);
   if (!venture.repo) throw new Error('No repo linked to this venture yet — the founder needs to link one first.');
   if (!venture.repo.enabled) {
     throw new Error('Deployments are not enabled for this venture yet — the founder needs to turn them on.');
@@ -496,7 +499,9 @@ export function authorizeDeploymentOfPaths(id, paths) {
   for (const path of list) {
     if (!isPathAllowed(venture.repo, path)) {
       throw new Error(
-        `"${path}" is outside the allowed scope (${venture.repo.allowedPaths.join(', ') || 'no paths allowed'}).`
+        `"${path}" is outside the allowed scope (${venture.repo.allowedPaths.join(', ') || 'no paths allowed'}). ` +
+          'Work inside the allowed paths, or ask the founder to widen them with ' +
+          `"LINK ${id} ${venture.repo.owner}/${venture.repo.name} <paths>" — naming this exact path.`
       );
     }
   }
@@ -528,8 +533,8 @@ export function authorizePullRequest(id, { paths }) {
   const list = [...new Set((paths || []).filter(Boolean).map(String))];
   if (!list.length) throw new Error('A pull request needs at least one file change.');
   const venture = getVenture(id);
-  if (!venture) throw new Error('Venture not found');
-  if (venture.status !== 'active') throw new Error(`Venture must be active to open a pull request (is ${venture.status})`);
+  if (!venture) throw new Error('Venture not found. Check the id against the business context — every active venture is listed there with its id.');
+  if (venture.status !== 'active') throw new Error(`Venture must be active to open a pull request (is ${venture.status}). Nothing will change this — a venture that is not active cannot act.`);
   if (!venture.repo) throw new Error('No repo linked to this venture yet — the founder needs to link one first.');
   if (!venture.repo.enabled) {
     throw new Error('Repo writes are not enabled for this venture yet — the founder needs to turn them on.');
@@ -537,7 +542,9 @@ export function authorizePullRequest(id, { paths }) {
   for (const path of list) {
     if (!isPathAllowed(venture.repo, path)) {
       throw new Error(
-        `"${path}" is outside the allowed scope (${venture.repo.allowedPaths.join(', ') || 'no paths allowed'}).`
+        `"${path}" is outside the allowed scope (${venture.repo.allowedPaths.join(', ') || 'no paths allowed'}). ` +
+          'Work inside the allowed paths, or ask the founder to widen them with ' +
+          `"LINK ${id} ${venture.repo.owner}/${venture.repo.name} <paths>" — naming this exact path.`
       );
     }
   }
@@ -594,8 +601,8 @@ export function authorizeRevert(id, { paths }) {
   const list = [...new Set((paths || []).filter(Boolean).map(String))];
   if (!list.length) throw new Error('That commit changed no files, so there is nothing to put back.');
   const venture = getVenture(id);
-  if (!venture) throw new Error('Venture not found');
-  if (venture.status !== 'active') throw new Error(`Venture must be active to revert (is ${venture.status})`);
+  if (!venture) throw new Error('Venture not found. Check the id against the business context — every active venture is listed there with its id.');
+  if (venture.status !== 'active') throw new Error(`Venture must be active to revert (is ${venture.status}). Nothing will change this — a venture that is not active cannot act.`);
   if (!venture.repo) throw new Error('No repo linked to this venture yet — the founder needs to link one first.');
   if (!venture.repo.enabled) {
     throw new Error('Repo writes are not enabled for this venture yet — the founder needs to turn them on.');
@@ -635,8 +642,8 @@ const MIN_MS_BETWEEN_RUNS = 30 * 1000;
 export function authorizeExecution(id) {
   assertRealActionsAllowed();
   const venture = getVenture(id);
-  if (!venture) throw new Error('Venture not found');
-  if (venture.status !== 'active') throw new Error(`Venture must be active to run checks (is ${venture.status})`);
+  if (!venture) throw new Error('Venture not found. Check the id against the business context — every active venture is listed there with its id.');
+  if (venture.status !== 'active') throw new Error(`Venture must be active to run checks (is ${venture.status}). Nothing will change this — a venture that is not active cannot act.`);
   if (!venture.repo) throw new Error('No repo linked to this venture yet — the founder needs to link one first.');
 
   const times = (venture.runs || [])
@@ -644,7 +651,9 @@ export function authorizeExecution(id) {
     .filter((time) => Number.isFinite(time));
   if (times.length > 0 && Date.now() - Math.max(...times) < MIN_MS_BETWEEN_RUNS) {
     const waitS = Math.ceil((MIN_MS_BETWEEN_RUNS - (Date.now() - Math.max(...times))) / 1000);
-    throw new Error(`Too soon after the last check run — ${waitS}s left on the cooldown.`);
+    throw new Error(
+      `Too soon after the last check run — ${waitS}s left on the cooldown. Wait it out; it clears on its own.`
+    );
   }
   return venture;
 }
@@ -731,7 +740,7 @@ export function linkOutreachScope(id, { allowedRecipients, maxPerWeek, maxPerDay
 export function setOutreachEnabled(id, enabled) {
   const data = load();
   const venture = findOrThrow(data, id);
-  if (!venture.outreach) throw new Error('Set up an outreach scope before enabling it for this venture');
+  if (!venture.outreach) throw new Error(`Set up an outreach scope first: the founder sends "OUTREACH ${id} <emails or @domains>".`);
   venture.outreach.enabled = Boolean(enabled);
   save(data);
   return venture;
@@ -752,8 +761,8 @@ export function authorizeOutreach(id, { to }) {
   assertRealActionsAllowed();
   assertInApprovedPlan({ ventureId: id, action: 'send_customer_email', target: to });
   const venture = getVenture(id);
-  if (!venture) throw new Error('Venture not found');
-  if (venture.status !== 'active') throw new Error(`Venture must be active to send outreach (is ${venture.status})`);
+  if (!venture) throw new Error('Venture not found. Check the id against the business context — every active venture is listed there with its id.');
+  if (venture.status !== 'active') throw new Error(`Venture must be active to send outreach (is ${venture.status}). Nothing will change this — a venture that is not active cannot act.`);
   if (!venture.outreach) {
     throw new Error('No outreach scope set up for this venture yet — the founder needs to set allowed recipients first.');
   }
@@ -1338,7 +1347,7 @@ const PROBES_KEPT = 10;
 export function authorizeProbe(id) {
   assertRealActionsAllowed();
   const venture = getVenture(id);
-  if (!venture) throw new Error('Venture not found');
+  if (!venture) throw new Error('Venture not found. Check the id against the business context — every active venture is listed there with its id.');
   if (!venture.service?.origin) {
     throw new Error(
       'No service URL is set for this venture, so there is nothing to check. Ask the founder for the deployed URL — ' +

@@ -16,6 +16,12 @@ import { readSecret, hasSecret } from '../env.js';
 //      that outlive the conversation. "I ran the tests and they passed" from
 //      an agent is a claim; a run id is a fact.
 //
+// Those logs were, for a long time, evidence the team could not read. A failed
+// run came back as the name of the step that failed — "Run tests" — and a link
+// to a web page no agent has a browser for. So every red build started a
+// guessing game, and each guess cost a commit against the venture's cap. See
+// jobLogTail below: the error text now comes back with the failure.
+//
 // What this is not: a general code interpreter. An agent cannot run arbitrary
 // commands here — only the workflows committed to the repo, which are
 // themselves reviewable code under the venture's allowedPaths. That
@@ -114,18 +120,81 @@ export async function waitForRun({ owner, repo, runId, timeoutMs = DEFAULT_TIMEO
  * conclusion of "failure" tells an agent nothing it can fix, while "the
  * 'test' job failed at step 'npm test'" points at the work.
  */
-export async function failureSummary({ owner, repo, runId }) {
+// Noise every Actions log ends with, after the thing that actually failed.
+// Trimmed so the tail the agent reads is the error rather than git plumbing.
+const TRAILING_NOISE = [
+  /^Post job cleanup/i,
+  /^\[command\]\/usr\/bin\/git/i,
+  /^Cleaning up orphan processes/i,
+  /^Temporarily overriding HOME/i,
+  /^Adding repository directory to the temporary git global config/i,
+  /^http\.https:\/\/github\.com\/\.extraheader/i,
+  /^git version /i,
+  // Both shapes the runner emits: a bare "Node 20 is being deprecated" and a
+  // "##[warning]Node.js 20 is deprecated".
+  /^(?:##\[warning\])?Node(?:\.js)? \d+ is .*deprecat/i,
+];
+
+/**
+ * The last lines of a job's log, cleaned up enough to read in a tool result.
+ *
+ * This is the one piece of evidence that separates diagnosing a build failure
+ * from guessing at one. GitHub answers /logs with a redirect to a plain-text
+ * blob, not JSON, so it cannot go through githubRequest.
+ *
+ * Failures here are swallowed deliberately: a log that will not download is a
+ * worse result than no log, but it is not a reason to turn a red build into an
+ * error the agent cannot act on at all. The conclusion and the failed step name
+ * still come back either way.
+ */
+export async function jobLogTail({ owner, repo, jobId, lines = 40 }) {
+  try {
+    const res = await fetch(`${GITHUB_API}/repos/${owner}/${repo}/actions/jobs/${jobId}/logs`, {
+      headers: {
+        Authorization: `Bearer ${readSecret('GITHUB_TOKEN')}`,
+        Accept: 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+      },
+      redirect: 'follow',
+    });
+    if (!res.ok) return null;
+    const text = await res.text();
+
+    const cleaned = text
+      .split('\n')
+      // Every line is prefixed with an ISO timestamp that costs tokens and
+      // tells the agent nothing it needs.
+      .map((line) => line.replace(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z\s?/, '').trimEnd())
+      .filter(Boolean);
+
+    // Walk back past the cleanup epilogue to the last line that is real output.
+    let end = cleaned.length;
+    while (end > 0 && TRAILING_NOISE.some((re) => re.test(cleaned[end - 1]))) end -= 1;
+
+    const tail = cleaned.slice(Math.max(0, end - lines), end);
+    return tail.length ? tail.join('\n') : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function failureSummary({ owner, repo, runId, logLines = 40 }) {
   const data = await githubRequest(`/repos/${owner}/${repo}/actions/runs/${runId}/jobs?per_page=30`);
   const failed = (data?.jobs || []).filter((job) => job.conclusion && job.conclusion !== 'success' && job.conclusion !== 'skipped');
 
-  return failed.map((job) => ({
-    job: job.name,
-    conclusion: job.conclusion,
-    failedSteps: (job.steps || [])
-      .filter((step) => step.conclusion && step.conclusion !== 'success' && step.conclusion !== 'skipped')
-      .map((step) => step.name),
-    url: job.html_url,
-  }));
+  return Promise.all(
+    failed.map(async (job) => ({
+      job: job.name,
+      conclusion: job.conclusion,
+      failedSteps: (job.steps || [])
+        .filter((step) => step.conclusion && step.conclusion !== 'success' && step.conclusion !== 'skipped')
+        .map((step) => step.name),
+      url: job.html_url,
+      // The part that matters. Without it the agent is told which step failed
+      // and nothing about why, which is not enough to fix anything.
+      logTail: await jobLogTail({ owner, repo, jobId: job.id, lines: logLines }),
+    })),
+  );
 }
 
 /** Every workflow the repo has, so an agent can be told what it may run. */

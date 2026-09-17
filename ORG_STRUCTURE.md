@@ -2543,3 +2543,104 @@ not vouch for a deploy.
 
 The warning goes at the *top* of the daily report email, before the report. A
 warning that the report may be wrong is not a footnote to the report.
+
+## The team could not read its own build logs
+
+`run_checks` reported a failed run as the name of the step that failed — "Run
+tests" — plus a conclusion and a link to a GitHub web page. No agent has a
+browser. The error itself never reached the reply.
+
+So a red build could only be answered with a theory. And in this company a
+theory is expensive: testing one costs a commit against the venture's cap,
+which is how five turns went into a guessing loop over a build failure whose
+cause was one line of log:
+
+```
+src/test_auth.py:23: from src.auth import (
+E   ModuleNotFoundError: No module named 'src'
+```
+
+That is not recoverable by reasoning. `pytest src/` under the bare console
+script does not put the working directory on `sys.path`; `python -m pytest`
+does. The tests passed locally and could not pass in CI, and nothing in the
+tool result said why.
+
+`jobLogTail()` now fetches the failing job's log and `failureSummary()`
+attaches it, so `run_checks` returns the error text with the failure. Three
+details earn their place:
+
+- **Timestamps are stripped.** Every Actions line carries an ISO prefix that
+  costs tokens and tells an agent nothing.
+- **The cleanup epilogue is trimmed.** A run ends with a dozen lines of git
+  plumbing and a Node deprecation warning, so an untrimmed 40-line tail is
+  mostly noise and the error scrolls off the top. The tail now ends at the
+  last line of real output.
+- **A log that will not download comes back as `null`, never as a throw.** A
+  missing log is worse than having one; it is not a reason to turn a red build
+  into an error the agent cannot act on at all.
+
+The reply also now says what to do with it: *that is the actual error, read it
+before proposing a cause.* The evidence and the instruction to prefer it over
+inference are the same fix — `diagnosing-a-blocker` has said so in prose since
+the beginning, and prose was not enough while the evidence was unreachable.
+
+This is the fifth capability in this codebase found sitting behind a door
+nobody could open, and the most expensive of them: it did not remove an
+ability the team had, it made every build failure cost a commit to diagnose.
+
+## Every refusal names a way forward
+
+The deployment cap refused with *"Weekly deployment cap reached (3/week)"* — a
+number, and nothing else. An agent that hits a wall with no door reads it as a
+fault in itself and tries again. Five turns went that way, and one of them
+ended in a claim of work that had not happened.
+
+That shape has now appeared five times in this codebase under five different
+names. Fixing the sixth instance when it arrives is not a strategy, so
+`refusalQuality.test.js` makes it a rule: **a refusal thrown by the gate layer
+must tell whoever reads it what would change the answer.** Four things count,
+and one of them is honesty about there being nothing:
+
+1. **Something the founder does** — a named WhatsApp command, an environment
+   variable, or "the founder needs to…". The agent can then ask for exactly
+   that instead of guessing.
+2. **Something the agent does** — "call `run_checks`", "submit a plan".
+3. **Nothing, said out loud** — "nothing will change this", "wait it out; it
+   clears on its own". A closed door is fine. A closed door with no sign is
+   not.
+4. **A description of malformed input** — "ventureId is required" already
+   tells the caller what to fix.
+
+The test scans `ventures.js`, `killSwitch.js`, `dailyPlan.js`, `spend.js` and
+`probe.js` for every `throw new Error(...)`, reading the raw expression rather
+than the evaluated string, because the question is whether the *wording*
+offers a remedy. Two of its own cases guard the guard: one proves the
+extractor captures whole multi-line throws rather than first lines, and one
+proves every listed file is actually being read — a path typo would otherwise
+make the whole thing a silent no-op.
+
+On its first run it found **25 dead ends**, every one a blocker waiting to
+happen. All 25 now say what to do:
+
+| Was | Now says |
+|---|---|
+| `Venture not found` | …check the id against the business context, where every venture is listed |
+| `must be active to deploy (is killed)` | …nothing will change this — a venture that is not active cannot act |
+| `"x" is outside the allowed scope` | …ask the founder to widen it with `LINK <id> <owner/repo> <paths>`, naming this exact path |
+| `Too soon after the last deployment` | …wait it out; it clears on its own. Do the next piece of work meanwhile |
+| `Link a repo before enabling deployments` | …the founder sends `LINK <id> <owner/repo>` |
+| `All real actions are halted. <reason>` | …the founder lifts it with `RESUME` |
+| `"host" is not a public address` | …the origin is founder-set, so this is not something to work around |
+
+Two of the original 25 turned out to be false positives — `spend.js` already
+said *"Raise DAILY_SPEND_CAP_USD"* and `probe.js` builds its messages through
+a `fail()` helper, so a bare `throw new Error(message)` is judged where the
+wording is actually written. The patterns were widened rather than the
+messages changed; a guard that flags good work teaches people to ignore it.
+
+### Why this rather than another skill
+
+`diagnosing-a-blocker` has asked agents to read the evidence since the first
+week, and the team still guessed — because the evidence was unreachable and
+the refusal was silent. A prompt is a request. This is the rule, and it fails
+the build.

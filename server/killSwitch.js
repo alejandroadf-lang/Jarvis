@@ -69,6 +69,8 @@ export function resumeRealActions() {
 export function assertRealActionsAllowed() {
   const state = getKillSwitch();
   if (state.halted) {
-    throw new Error(`All real actions are halted. ${state.reason}`.trim());
+    throw new Error(
+      `All real actions are halted. ${state.reason} The founder lifts it by sending "RESUME". Nothing real will run until they do.`.trim()
+    );
   }
 }
