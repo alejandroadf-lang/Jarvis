@@ -40,6 +40,7 @@ import { listAffordableModels } from '../agents/openrouter.js';
 import { listTasks } from '../tasks.js';
 import { describeDegradation } from '../degradation.js';
 import { isEvalRunning } from '../eval/run.js';
+import { deployReadiness, outreachReadiness, formatReadinessBrief } from '../readiness.js';
 
 const COMMANDS = [
   { kind: 'help', re: /^(help|commands|\?)$/i },
@@ -48,6 +49,21 @@ const COMMANDS = [
   { kind: 'spend', re: /^(spend|cost|budget)$/i },
   { kind: 'integrations', re: /^(integrations|connections|health)$/i },
   { kind: 'ventures', re: /^(ventures|portfolio|list\s+ventures)$/i },
+  // The founder's own version of the team's check_ready.
+  //
+  // The report that names every shut gate was built for agents and reachable
+  // only by them, which left the founder's actual question — "why is the team
+  // blocked and what can I do" — answerable by the company and not askable by
+  // the person who needed it. VENTURES says what a venture is allowed to do;
+  // this says what is stopping it right now, which is a different question and
+  // the one that gets typed at 7am.
+  //
+  // No venture id shows every active venture, because the founder asking this
+  // usually does not have an id to hand and should not need one.
+  // Not "why". A bare "why" is ordinary prose far more often than it is a
+  // command, and hijacking it would swallow a real message to the team — the
+  // exact failure the venture-id requirement above exists to prevent.
+  { kind: 'ready', re: /^(ready|blocked)(?:\s+(v_\S+))?$/i, arg: 'ventureId' },
   { kind: 'models', re: /^models(?:\s+(\S+))?$/i, arg: 'search' },
   // Withdrawing an approval the founder already gave.
   //
@@ -274,6 +290,7 @@ const HELP = `Founder controls — send any of these on their own:
 HALT <reason> — stop every real action now
 RESUME — lift the halt
 VENTURES — every venture, its id and what it's allowed to do
+READY [ventureId] — what is actually stopping the team, and what opens it
 BUILD [ventureId] — what the team is building right now
 SPEND — today's model spend against the cap
 INTEGRATIONS — what's actually connected
@@ -349,6 +366,37 @@ export async function runFounderCommand(command, deps = {}) {
       return `${ventures.length} active venture${ventures.length === 1 ? '' : 's'}:\n\n${ventures
         .map(describeVenture)
         .join('\n\n')}`;
+    }
+
+    case 'ready': {
+      const ventures = command.ventureId
+        ? [getVenture(command.ventureId)].filter(Boolean)
+        : listVentures().filter((v) => v.status === 'active');
+
+      if (!ventures.length) {
+        return command.ventureId
+          ? `No venture with id ${command.ventureId}.`
+          : 'No active ventures, so nothing is blocked. Ask the team to start one.';
+      }
+
+      const sections = ventures.map((venture) => {
+        const deploy = deployReadiness(venture.id);
+        // Outreach is only worth reporting once the founder has set a scope up.
+        // Before that the answer is always the same missing scope, and printing
+        // it next to every venture teaches the founder to skim the whole thing.
+        const outreach = venture.outreach ? outreachReadiness(venture.id) : null;
+
+        const parts = [`"${venture.title}" [${venture.id}]`, formatReadinessBrief(deploy)];
+        if (outreach && !outreach.ready) parts.push('', formatReadinessBrief(outreach));
+        return parts.join('\n');
+      });
+
+      const stuck = ventures.filter((v) => !deployReadiness(v.id).ready).length;
+      const headline = stuck
+        ? `${stuck} of ${ventures.length} venture${ventures.length === 1 ? '' : 's'} cannot commit right now.`
+        : `Nothing is blocking ${ventures.length === 1 ? 'the venture' : 'any venture'} from committing. If the team says it is blocked, the blocker is not a permission.`;
+
+      return `${headline}\n\n${sections.join('\n\n---\n\n')}`;
     }
 
     case 'eval': {

@@ -2318,3 +2318,45 @@ in that context — buried under a table of zeros, it gets skimmed past.
 `check_usage` on the CFO and the Engineering Lead gives the detail on demand.
 Zero calls comes back as a finding, in those words: *silence is a finding, not
 a gap in the data.*
+
+## READY: the founder's half of the same question
+
+`check_ready` answered "what is actually stopping you" for the agents. The
+founder — who had asked that exact question, in those words, about why the team
+was constantly blocked — could not reach it. `VENTURES` says what a venture is
+*allowed* to do; nothing said what was stopping it right now.
+
+`READY [ventureId]` on WhatsApp closes that. `BLOCKED` is the same command,
+because that is the other word someone types at 7am.
+
+Not `WHY`. A bare "why" is ordinary prose far more often than it is a command,
+and hijacking it would swallow a real question meant for the team — the exact
+failure that requiring a `v_` id in the other commands exists to prevent.
+
+### Two audiences, two shapes
+
+`formatReadiness` shows the open gates deliberately: an agent handed only
+failures reads "everything is broken" whatever the text says, and the
+difference between one shut door and eleven changes what it does next.
+
+None of that transfers to the founder. They are not going to conclude the
+company is broken — they asked one question, and a twelve-line audit with two
+lines of signal does not answer it on a phone, it gets scrolled. So
+`formatReadinessBrief` drops every gate that already passes and leads with
+what they can type.
+
+### What they can type, not what they must do
+
+Each gate now carries a `founderCommand` alongside its `fix`. "Turn it on in
+the Ventures panel" is a task; `DEPLOY ON v_123` is done before the phone goes
+back in a pocket.
+
+Only the gates a founder can genuinely open from a message carry one. A missing
+`GITHUB_TOKEN` is a Railway variable, and pretending otherwise would be worse
+than saying nothing — so those are still listed, under a heading that says they
+are not a message.
+
+A test asserts that every `founderCommand` the report suggests is one
+`parseFounderCommand` actually accepts. A report that tells the founder to send
+something the parser rejects is worse than one that stays quiet: they send it,
+nothing happens, and they stop trusting the report.

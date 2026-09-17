@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { deployReadiness, outreachReadiness, formatReadiness } from '../readiness.js';
+import { deployReadiness, outreachReadiness, formatReadiness, formatReadinessBrief } from '../readiness.js';
 import {
   createVenture,
   linkRepo,
@@ -231,4 +231,73 @@ test('the same agreement holds for outreach', () => {
   check('scope set, not enabled');
   setOutreachEnabled(venture.id, true);
   check('enabled');
+});
+
+// --- The founder's version ------------------------------------------------------
+//
+// The founder asked "why is the team constantly blocked, what can I do to
+// support". The report that answers it was built for agents and reachable only
+// by them — so the company could answer the question and the person who needed
+// it could not ask. These cover the other end of that.
+
+test('the brief drops everything that already works', () => {
+  // formatReadiness shows open gates on purpose, for an agent. None of that
+  // reasoning transfers: the founder is on a phone, and twelve lines with two
+  // lines of signal do not get read, they get scrolled.
+  const venture = freshVenture();
+  linkRepo(venture.id, { owner: 'acme', name: 'app', branch: 'main', allowedPaths: ['src/'], maxPerWeek: 5 });
+  const brief = formatReadinessBrief(deployReadiness(venture.id));
+
+  assert.doesNotMatch(brief, /\[ok\]/);
+  assert.match(brief, /Deployments enabled/);
+  assert.ok(brief.split('\n').length < 10, `the brief is ${brief.split('\n').length} lines — too long for a phone`);
+});
+
+test('the brief leads with what the founder can type', () => {
+  const venture = freshVenture();
+  linkRepo(venture.id, { owner: 'acme', name: 'app', branch: 'main', allowedPaths: ['src/'], maxPerWeek: 5 });
+  const brief = formatReadinessBrief(deployReadiness(venture.id));
+  // "Turn it on in the Ventures panel" is a task. "DEPLOY ON v_123" is done
+  // before they have put the phone down.
+  assert.match(brief, new RegExp(`DEPLOY ON ${venture.id}`));
+});
+
+test('gates the founder cannot open from a message are still named', () => {
+  // Silently omitting them would leave the founder believing the typed
+  // commands are the whole story.
+  const venture = freshVenture();
+  linkOutreachScope(venture.id, { allowedRecipients: ['ada@acme.com'], maxPerWeek: 5 });
+  const brief = formatReadinessBrief(outreachReadiness(venture.id));
+  assert.match(brief, /Railway settings/);
+  assert.match(brief, /SMTP_HOST/);
+});
+
+test('a clear venture says so in one line', () => {
+  const venture = freshVenture();
+  linkRepo(venture.id, { owner: 'acme', name: 'app', branch: 'main', allowedPaths: ['src/'], maxPerWeek: 5 });
+  setDeploymentEnabled(venture.id, true);
+  assert.equal(formatReadinessBrief(deployReadiness(venture.id)), 'Nothing is blocking deploy.');
+});
+
+test('every founderCommand is one the command parser actually accepts', async () => {
+  // A report that tells the founder to send something the parser rejects is
+  // worse than one that stays quiet: they send it, nothing happens, and they
+  // stop trusting the report.
+  const { parseFounderCommand } = await import('../channels/founderCommands.js');
+  const venture = freshVenture();
+  linkRepo(venture.id, { owner: 'acme', name: 'app', branch: 'main', allowedPaths: ['src/'], maxPerWeek: 5 });
+  linkOutreachScope(venture.id, { allowedRecipients: ['ada@acme.com'], maxPerWeek: 5 });
+
+  const gates = [
+    ...deployReadiness(venture.id, { path: 'nope/outside.txt' }).gates,
+    ...outreachReadiness(venture.id, { to: 'stranger@elsewhere.com' }).gates,
+  ];
+  const commands = gates.map((g) => g.founderCommand).filter(Boolean);
+  assert.ok(commands.length >= 2, 'expected several typable fixes to check');
+
+  for (const command of commands) {
+    // Placeholders are for the founder to fill in, not for the parser.
+    if (command.includes('<')) continue;
+    assert.ok(parseFounderCommand(command), `the report suggests "${command}", which the parser does not accept`);
+  }
 });

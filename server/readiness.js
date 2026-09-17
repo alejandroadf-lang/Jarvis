@@ -37,9 +37,16 @@ import { getVenture, rateLimitState, pathAllowed, assertChecksNotOverdue } from 
  * enabled" tells an agent it is stuck; "the founder turns this on in the
  * Ventures panel" tells it what to ask for, which is the difference between a
  * blocked day and a one-line message to the founder.
+ *
+ * `founderCommand` is the same instruction for the founder rather than the
+ * agent, and it exists because the founder reads this on a phone. "Turn it on
+ * in the Ventures panel" is a task; "send DEPLOY ON v_123" is done before they
+ * have put the phone down. Only the gates a founder can actually open from a
+ * message carry one — a missing GITHUB_TOKEN is a Railway variable, and
+ * pretending otherwise would be worse than saying nothing.
  */
-function gate(name, open, detail, fix = '') {
-  return { name, open, detail, fix };
+function gate(name, open, detail, fix = '', founderCommand = '') {
+  return { name, open, detail, fix, founderCommand };
 }
 
 function haltGate() {
@@ -51,6 +58,7 @@ function haltGate() {
     state.envLocked
       ? 'REAL_ACTIONS_DISABLED is set on the server — only the founder can unset it.'
       : 'The founder resumes real actions from the Ventures panel or by WhatsApp.',
+    state.envLocked ? '' : 'RESUME',
   );
 }
 
@@ -116,12 +124,14 @@ function capGates(entries, timestampKey, scope, label) {
       state.weekOk,
       `${state.inWeek} of ${state.maxPerWeek} this week.`,
       state.weekOk ? '' : `The founder raises the weekly cap for this venture, or this waits.`,
+      state.weekOk ? '' : 'CAPS <ventureId> <per day> <per week>',
     ),
     gate(
       `Daily ${label} cap`,
       state.dayOk,
       `${state.inDay} of ${state.maxPerDay} today.`,
       state.dayOk ? '' : 'The founder raises the daily cap, or this waits for tomorrow.',
+      state.dayOk ? '' : 'CAPS <ventureId> <per day> <per week>',
     ),
     gate(
       'Cooldown',
@@ -180,6 +190,7 @@ export function deployReadiness(ventureId, { path } = {}) {
       Boolean(venture.repo.enabled),
       venture.repo.enabled ? 'On.' : 'Off — the repo is linked but writes are not turned on.',
       venture.repo.enabled ? '' : 'The founder turns this on in the Ventures panel. One switch.',
+      venture.repo.enabled ? '' : `DEPLOY ON ${ventureId}`,
     ),
     gate(
       'Path in scope',
@@ -188,6 +199,9 @@ export function deployReadiness(ventureId, { path } = {}) {
         ? `"${path}" is ${pathAllowed(venture.repo, path) ? 'inside' : 'outside'} ${venture.repo.allowedPaths.join(', ') || 'no allowed paths'}.`
         : `Allowed: ${venture.repo.allowedPaths.join(', ') || 'nothing'}.`,
       path && !pathAllowed(venture.repo, path) ? 'Work inside the allowed paths, or ask the founder to widen the scope — naming the exact path.' : '',
+      path && !pathAllowed(venture.repo, path)
+        ? `LINK ${ventureId} ${venture.repo.owner}/${venture.repo.name} <paths including this one>`
+        : '',
     ),
     ...capGates(venture.deployments, 'deployedAt', venture.repo, 'deployment'),
     checksGate(venture),
@@ -230,6 +244,7 @@ export function outreachReadiness(ventureId, { to } = {}) {
       Boolean(venture.outreach),
       venture.outreach ? `Allowed: ${venture.outreach.allowedRecipients.join(', ') || 'nobody'}.` : 'No outreach scope.',
       venture.outreach ? '' : 'The founder sets an allowlist of recipients in the Ventures panel.',
+      venture.outreach ? '' : `OUTREACH ${ventureId} <emails or @domains>`,
     ),
   );
   if (!venture.outreach) return summarize(gates, 'outreach');
@@ -248,12 +263,14 @@ export function outreachReadiness(ventureId, { to } = {}) {
       Boolean(venture.outreach.enabled),
       venture.outreach.enabled ? 'On.' : 'Off.',
       venture.outreach.enabled ? '' : 'The founder turns this on in the Ventures panel.',
+      venture.outreach.enabled ? '' : `OUTREACH ON ${ventureId}`,
     ),
     gate(
       'Recipient allowed',
       allowed,
       to ? `"${to}" is ${allowed ? 'inside' : 'outside'} the allowlist.` : `Allowed: ${venture.outreach.allowedRecipients.join(', ') || 'nobody'}.`,
       to && !allowed ? 'Ask the founder to add this address, naming who they are and why.' : '',
+      to && !allowed ? `OUTREACH ${ventureId} ${to}` : '',
     ),
     ...capGates(venture.sentEmails, 'sentAt', venture.outreach, 'outreach'),
     planGate(ventureId, 'send_customer_email', to),
@@ -297,5 +314,39 @@ export function formatReadiness(report) {
     '',
     `First thing an attempt would hit: ${report.blockedBy.name} — ${report.blockedBy.detail}`,
     ...(asks.length ? ['', 'What opens them:', ...asks] : []),
+  ].join('\n');
+}
+
+/**
+ * The same report for the founder, who is reading it on a phone.
+ *
+ * formatReadiness shows the open gates on purpose: an agent handed only
+ * failures reads "everything is broken" whatever the text says, and the
+ * difference between one shut door and eleven changes what it does next.
+ *
+ * None of that transfers to the founder. They are not going to conclude the
+ * company is broken — they asked one question, "what is stopping it", and a
+ * twelve-line audit with two lines of signal in it does not answer that on a
+ * phone, it just gets scrolled. So this drops everything that already works
+ * and leads with what they can type.
+ */
+export function formatReadinessBrief(report) {
+  if (report.ready) return `Nothing is blocking ${report.action}.`;
+
+  const lines = report.shut.map((g) => `  · ${g.name}: ${g.detail}`);
+  const commands = [...new Set(report.shut.map((g) => g.founderCommand).filter(Boolean))];
+
+  // Gates the founder cannot open from a message still get named — a missing
+  // SMTP_HOST is a Railway variable, and silently omitting it would leave them
+  // believing the two commands below are the whole story.
+  const elsewhere = report.shut
+    .filter((g) => !g.founderCommand && g.fix)
+    .map((g) => `  · ${g.name} — ${g.fix}`);
+
+  return [
+    `Blocked on ${report.action} — ${report.shut.length} of ${report.gates.length}:`,
+    ...lines,
+    ...(commands.length ? ['', 'Send any of these to fix it:', ...commands.map((c) => `  ${c}`)] : []),
+    ...(elsewhere.length ? ['', 'These are not a message — they need the Railway settings:', ...elsewhere] : []),
   ].join('\n');
 }
