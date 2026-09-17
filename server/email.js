@@ -190,6 +190,32 @@ export async function sendOutreachAlertEmail(venture, details) {
   return sendEmail(subject, text); // to the founder — no override, unlike sendCustomerEmail
 }
 
+// The rehearsal's result, and the one email in this file that deliberately
+// carries a different address in its body than in its envelope: it describes
+// what would have gone to a prospect, and goes to the founder.
+//
+// No recipient parameter, by design. sendCustomerEmail takes one because it
+// must; this one must not, and the way to guarantee that is to give the
+// function nowhere to put it.
+export function formatOutreachDryRunEmail(venture, { to, subject, text }) {
+  const name = venture?.title || 'a venture';
+  return {
+    subject: `Dry run: "${name}" -> ${to} (not sent)`,
+    text: [
+      'This is a rehearsal of the outreach pipeline. No message was sent to anyone but you.',
+      '',
+      text,
+      '',
+      `Subject line rehearsed: ${subject}`,
+    ].join('\n'),
+  };
+}
+
+export async function sendOutreachDryRunEmail(venture, details) {
+  const { subject, text } = formatOutreachDryRunEmail(venture, details);
+  return sendEmail(subject, text); // to the founder — no override, and no parameter for one
+}
+
 // A real person answered. That is the single most important thing that can
 // happen in this company's day, and before inbox.js existed it was invisible
 // — the founder was relaying replies by hand into WhatsApp.

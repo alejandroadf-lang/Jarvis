@@ -757,47 +757,179 @@ function isRecipientAllowed(outreach, to) {
   });
 }
 
-export function authorizeOutreach(id, { to }) {
-  assertRealActionsAllowed();
-  assertInApprovedPlan({ ventureId: id, action: 'send_customer_email', target: to });
-  const venture = getVenture(id);
-  if (!venture) throw new Error('Venture not found. Check the id against the business context — every active venture is listed there with its id.');
-  if (venture.status !== 'active') throw new Error(`Venture must be active to send outreach (is ${venture.status}). Nothing will change this — a venture that is not active cannot act.`);
-  if (!venture.outreach) {
-    throw new Error('No outreach scope set up for this venture yet — the founder needs to set allowed recipients first.');
-  }
-  if (!venture.outreach.enabled) {
-    throw new Error('Outreach is not enabled for this venture yet — the founder needs to turn it on.');
-  }
-  if (!isRecipientAllowed(venture.outreach, to)) {
-    throw new Error(
-      `"${to}" is outside the allowed recipients (${venture.outreach.allowedRecipients.join(', ') || 'none allowed'}).`
-    );
-  }
+// Every gate a real outbound email passes, as a list rather than as control
+// flow.
+//
+// It was a straight-line function that threw on the first problem, which is
+// exactly right for a send — fail closed, say one thing, stop. It is exactly
+// wrong for the founder asking "would this actually go out?", who would need
+// six attempts to find six shut gates.
+//
+// So the gates become data and the two readings share them. authorizeOutreach
+// runs the list and throws the first reason; the dry run (outreachDryRun.js)
+// runs the same list and reports all of them. A second implementation for the
+// rehearsal would have been a rehearsal of the wrong code.
+const OUTREACH_GATES = [
+  {
+    name: 'Real actions are not halted',
+    run: () => assertRealActionsAllowed(),
+  },
+  {
+    name: "Today's approved plan covers this",
+    run: (venture, { id, to }) => assertInApprovedPlan({ ventureId: id, action: 'send_customer_email', target: to }),
+  },
+  {
+    name: 'The venture exists',
+    run: (venture) => {
+      if (!venture) {
+        throw new Error('Venture not found. Check the id against the business context — every active venture is listed there with its id.');
+      }
+    },
+  },
+  {
+    name: 'The venture is active',
+    needsVenture: true,
+    run: (venture) => {
+      if (venture.status !== 'active') {
+        throw new Error(`Venture must be active to send outreach (is ${venture.status}). Nothing will change this — a venture that is not active cannot act.`);
+      }
+    },
+  },
+  {
+    name: 'An outreach scope exists',
+    needsVenture: true,
+    run: (venture) => {
+      if (!venture.outreach) {
+        throw new Error('No outreach scope set up for this venture yet — the founder needs to set allowed recipients first.');
+      }
+    },
+  },
+  {
+    name: 'Outreach is switched on',
+    needsScope: true,
+    run: (venture) => {
+      if (!venture.outreach.enabled) {
+        throw new Error('Outreach is not enabled for this venture yet — the founder needs to turn it on.');
+      }
+    },
+  },
+  {
+    name: 'The recipient is inside the allowlist',
+    needsScope: true,
+    run: (venture, { to }) => {
+      if (!isRecipientAllowed(venture.outreach, to)) {
+        throw new Error(
+          `"${to}" is outside the allowed recipients (${venture.outreach.allowedRecipients.join(', ') || 'none allowed'}).`
+        );
+      }
+    },
+  },
   // The allowlist says who may be written to. These two say who may not, and
   // they win: an unsubscribe is a legal instruction, not a preference, and a
   // German or Italian address without recorded consent is a fine waiting to
   // be triggered. Neither can be argued past by an agent.
-  if (isBlocked(venture, to)) {
-    const entry = blockEntry(venture, to);
-    throw new Error(
-      `"${to}" asked not to be contacted (${entry?.reason || 'blocked'}${entry?.at ? `, ${entry.at.slice(0, 10)}` : ''}). ` +
-        'That is final unless the founder lifts it.'
-    );
-  }
-  if (requiresConsent(to) && !hasConsent(venture, to)) {
-    throw new Error(
-      `"${to}" is in a jurisdiction that requires prior consent for B2B email. The founder records it with ` +
-        `CONSENT ${venture.id} ${to} once they have it — there is no other way through.`
-    );
-  }
-  enforceRateLimits({
-    entries: venture.sentEmails,
-    timestampKey: 'sentAt',
-    scope: venture.outreach,
-    label: 'outreach',
+  {
+    name: 'The recipient has not opted out',
+    needsScope: true,
+    run: (venture, { to }) => {
+      if (isBlocked(venture, to)) {
+        const entry = blockEntry(venture, to);
+        throw new Error(
+          `"${to}" asked not to be contacted (${entry?.reason || 'blocked'}${entry?.at ? `, ${entry.at.slice(0, 10)}` : ''}). ` +
+            'That is final unless the founder lifts it.'
+        );
+      }
+    },
+  },
+  {
+    name: 'Consent is on file where the law requires it',
+    needsScope: true,
+    run: (venture, { to }) => {
+      if (requiresConsent(to) && !hasConsent(venture, to)) {
+        throw new Error(
+          `"${to}" is in a jurisdiction that requires prior consent for B2B email. The founder records it with ` +
+            `CONSENT ${venture.id} ${to} once they have it — there is no other way through.`
+        );
+      }
+    },
+  },
+  {
+    name: 'The daily and weekly caps have room',
+    needsScope: true,
+    run: (venture) => {
+      enforceRateLimits({
+        entries: venture.sentEmails,
+        timestampKey: 'sentAt',
+        scope: venture.outreach,
+        label: 'outreach',
+      });
+    },
+  },
+];
+
+/**
+ * Every gate, evaluated, in the order a real send would hit them.
+ *
+ * A gate whose precondition is missing — no venture, no outreach scope —
+ * reports `reached: false` rather than a made-up verdict. "Not checked" and
+ * "checked and fine" are different answers and the founder deserves the
+ * difference.
+ *
+ * @returns {Array<{name: string, open: boolean, reached: boolean, reason: string}>}
+ */
+export function outreachGates(id, { to }) {
+  const venture = getVenture(id);
+  const hasScope = Boolean(venture?.outreach);
+
+  return OUTREACH_GATES.map((gate) => {
+    const unreachable =
+      (gate.needsVenture || gate.needsScope) && !venture
+        ? 'the venture itself is missing'
+        : gate.needsScope && !hasScope
+          ? 'there is no outreach scope to check it against'
+          : '';
+    if (unreachable) {
+      return { name: gate.name, open: false, reached: false, reason: `Not checked — ${unreachable}.` };
+    }
+    try {
+      gate.run(venture, { id, to });
+      return { name: gate.name, open: true, reached: true, reason: '' };
+    } catch (err) {
+      return { name: gate.name, open: false, reached: true, reason: err.message };
+    }
   });
-  return venture;
+}
+
+/**
+ * The enforcement point every real send passes through: the first shut gate
+ * is the whole answer, and nothing past it is worth saying.
+ */
+export function authorizeOutreach(id, { to }) {
+  const shut = outreachGates(id, { to }).find((gate) => !gate.open);
+  if (shut) throw new Error(shut.reason);
+  return getVenture(id);
+}
+
+/**
+ * How much room is left under the caps, without spending any of it.
+ *
+ * enforceRateLimits only speaks when it refuses, which means "you have one
+ * send left today" and "you have four" read identically until the moment one
+ * of them stops being true.
+ */
+export function outreachHeadroom(venture) {
+  const scope = venture?.outreach;
+  if (!scope) return null;
+  const now = Date.now();
+  const times = countableTimes(venture.sentEmails, 'sentAt');
+  const maxPerDay = scope.maxPerDay || DEFAULT_MAX_PER_DAY;
+  return {
+    today: times.filter((time) => time >= now - DAILY_CAP_WINDOW_MS).length,
+    maxPerDay,
+    thisWeek: times.filter((time) => time >= now - WEEKLY_CAP_WINDOW_MS).length,
+    maxPerWeek: scope.maxPerWeek,
+    lastSentAt: times.length ? new Date(Math.max(...times)).toISOString() : null,
+  };
 }
 
 // The outreach log answers "what did we send"; this answers "who is this

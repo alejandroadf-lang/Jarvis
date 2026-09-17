@@ -58,10 +58,13 @@ const VALIDATION = /required|missing|needs? (?:at least|to|a |an |something)|mus
  */
 function refusals(source) {
   return [...extract(source, 'throw new Error('), ...extract(source, 'fail(')]
-    // `throw new Error(message)` where message is a bare identifier is a
-    // helper re-throwing text built at its call sites — probe.js does this —
-    // so the wording is judged where it is written, not here.
-    .filter(({ text }) => !/^\s*[A-Za-z_$][\w$]*\s*$/.test(text));
+    // `throw new Error(message)` where the argument is only a name — a bare
+    // identifier, or a property read off one — is a re-throw of text written
+    // somewhere else. probe.js builds its messages through a fail() helper;
+    // authorizeOutreach re-throws the first shut gate's `reason`. Both are
+    // judged where the wording actually lives, which for the gates is a few
+    // lines above in the same file, so nothing escapes by taking this route.
+    .filter(({ text }) => !/^\s*[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\s*$/.test(text));
 }
 
 function extract(source, marker) {
@@ -97,6 +100,19 @@ test('the extractor finds whole multi-line refusals, not fragments', () => {
   assert.equal(found.length, 2);
   assert.match(found[1].text, /two/);
   assert.match(found[1].text, /and more/, 'the whole expression, not the first line');
+});
+
+test('a pass-through re-throw is skipped, but a real message never is', () => {
+  // The exemption above is narrow on purpose. It must cover a name being
+  // re-thrown and nothing else — an exemption that swallowed a literal would
+  // quietly turn this whole file off.
+  const found = refusals(`
+    throw new Error(message);
+    throw new Error(shut.reason);
+    throw new Error(\`Weekly cap reached (\${n}).\`);
+  `);
+  assert.equal(found.length, 1, 'only the written message is judged');
+  assert.match(found[0].text, /Weekly cap/);
 });
 
 test('every gate module actually gets scanned', () => {

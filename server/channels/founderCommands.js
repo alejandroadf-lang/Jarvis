@@ -129,6 +129,9 @@ const COMMANDS = [
   // Where an agent — someone else's, not ours — can reach the product.
   { kind: 'mcp_clear', re: /^mcp\s+clear\s+(v_\S+)$/i, arg: 'ventureId' },
   { kind: 'mcp', re: /^mcp\s+(v_\S+)\s+(https:\/\/\S+)$/i },
+  // The rehearsal. Everything after the address is optional: "| subject |
+  // body" to rehearse the founder's own words instead of the sample.
+  { kind: 'dryrun', re: /^dry\s*run\s+(v_\S+)\s+(\S+@\S+)\s*(?:\|([^|]*)(?:\|([\s\S]*))?)?$/i },
 ];
 
 // "outreach v_123 @acme.com, someone@corp.com" — the grant itself, which
@@ -200,6 +203,15 @@ export function parseFounderCommand(text) {
       if (kind === 'unblock') return { kind, ventureId: match[1], email: match[2] };
       if (kind === 'discount') return { kind, ventureId: match[1], floor: Number(match[2]) };
       if (kind === 'mcp') return { kind, ventureId: match[1], url: match[2] };
+      if (kind === 'dryrun') {
+        return {
+          kind,
+          ventureId: match[1],
+          to: match[2],
+          subject: (match[3] || '').trim(),
+          body: (match[4] || '').trim(),
+        };
+      }
       // The argument is always the last capture group: some patterns group
       // the verb's synonyms first ("halt|stop|freeze") and some don't, so a
       // fixed index silently reads the wrong group for half the table.
@@ -367,6 +379,8 @@ DISCOUNT <ventureId> <floor> — authorise quoting below list, until you clear i
 DISCOUNT CLEAR <ventureId> — back to list price
 MCP <ventureId> <https://...> — where other people's agents can reach the product
 MCP CLEAR <ventureId> — remove it
+DRYRUN <ventureId> <email> — rehearse the whole outreach path; the message comes to you, never to them
+DRYRUN <ventureId> <email> | subject | body — same, with your own words
 DEPLOY OFF <ventureId> — stop commits for one venture
 DEPLOY ON <ventureId> — allow them again
 
@@ -513,6 +527,33 @@ export async function runFounderCommand(command, deps = {}) {
     case 'unblock': {
       const venture = unblockContact(command.ventureId, command.email);
       return `${command.email.toLowerCase()} is no longer blocked on "${venture.title}".`;
+    }
+
+    case 'dryrun': {
+      if (!deps.dryRunOutreach) return 'The outreach dry run is not available on this build.';
+      const { wouldSend, delivered, text } = await deps.dryRunOutreach({
+        ventureId: command.ventureId,
+        to: command.to,
+        subject: command.subject,
+        body: command.body,
+      });
+      // The full report is long for a phone. The verdict and anything shut
+      // go here; the rendered message goes to the inbox.
+      const shut = text
+        .split('\n')
+        .filter((line) => line.includes('SHUT') || line.includes('VETOED'))
+        .map((line) => line.trim());
+      return [
+        wouldSend
+          ? `Dry run passed: this would have gone to ${command.to}. Nothing was sent.`
+          : `Dry run stopped: this would NOT have reached ${command.to}. Nothing was sent.`,
+        shut.length ? `\n${shut.join('\n')}` : '',
+        delivered
+          ? '\nThe full report, with the message exactly as a prospect would have read it, is in your inbox.'
+          : '\nNo email configured, so there is no inbox copy — set SMTP_HOST and REPORT_EMAIL_TO to get one.',
+      ]
+        .filter(Boolean)
+        .join('\n');
     }
 
     case 'mcp': {
