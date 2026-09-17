@@ -104,3 +104,62 @@ upgrade if keyword-matching turns out too brittle in practice.
   `runner.mjs`/`scenarios.js` (not `*.test.js`, not under `server/test/`)
   specifically so a CI run without an API key doesn't fail on it, and so
   `npm test` never triggers a billed run by accident.
+
+## Tool selection
+
+Every scenario in the original set tests honesty: does the CFO refuse to book
+revenue that has not landed, does the CEO kill on evidence rather than doubt.
+Good questions — and none of them touch what actually changed.
+
+Six capabilities arrived recently (check the gates, read the replies, commit
+several files at once, propose instead of landing, undo, count usage), and each
+is worth exactly as much as the team's willingness to reach for it. The unit
+tests prove the tools work. Only an eval proves they get used.
+
+Eight scenarios cover that, and they grade on the **call log** rather than on
+end state, because "did it call `check_ready` before reporting blocked" is a
+question about the call and no row in any file answers it. `recordCalls()` in
+the runner wraps each handler to record `{ name, input }`; the grade receives
+them as `calls`.
+
+The wrapping lives in the runner rather than in `agentRunner`, because it is
+the eval's question. Instrumenting the hot path for one caller's benefit is how
+a hot path gets slow.
+
+### Every positive is paired with a negative
+
+"Should open a pull request for an auth rewrite" is paired with "should just
+ship a one-word copy fix". "Should check the gates when something is shut" is
+paired with "should not audit permissions that are already open".
+
+Without the pairs the eval rewards an agent that always does the cautious
+thing, and for this company caution of that kind looks exactly like never
+shipping.
+
+### Nothing reaches the real world
+
+Two scenarios call tools that commit to GitHub and send mail to real people. A
+grading run that pushed to a repo or wrote to a stranger would be a bug you
+find out about from the stranger, so the runner refuses rather than hopes:
+
+- `SMTP_*` and `IMAP_*` are deleted from the child's environment whatever the
+  server has set, so `handleSendCustomerEmail` refuses at its first check.
+- Every request to `api.github.com` is intercepted and answered with a 404.
+
+Neither weakens the scenarios, because the judgment under test is which tool
+the agent reached for — recorded before the handler ever gets to the network.
+
+### The guard test
+
+`test/evalScenarios.test.js` asserts that every tool a scenario asks for is one
+that agent actually holds, and one the runner can supply. A scenario naming a
+tool its agent does not have runs happily against an agent that never had the
+option: it passes for the wrong reason, forever, and the only symptom is a
+number that means nothing.
+
+That is not hypothetical. On its first run the guard found
+`cfo-does-not-book-unlanded-revenue-to-grow-its-own-pool` — described in this
+repo as "the sharpest conflict in the system" — handing `log_revenue` to the
+CFO, which does not have it. Its grade asserts the ledger did not move, which
+is trivially true for an agent that cannot move it. It now runs against the
+Finance Manager, which holds the tool and is in the same profit-share pool.

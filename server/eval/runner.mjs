@@ -46,7 +46,88 @@ const HANDLER_BY_TOOL = {
   report_milestone_progress: actionHandlers.handleReportMilestoneProgress,
   kill_venture: actionHandlers.handleKillVenture,
   propose_venture: actionHandlers.handleProposeVenture,
+
+  // The tool-selection scenarios. These are the ones where the judgment under
+  // test is *which* tool the agent reaches for, so the grade reads the call
+  // log rather than the end state — see recordCalls below.
+  check_ready: actionHandlers.handleCheckReady,
+  check_usage: actionHandlers.handleCheckUsage,
+  check_replies: actionHandlers.handleCheckReplies,
+  log_contact_note: actionHandlers.handleLogContactNote,
+  deploy_code: actionHandlers.handleDeployCode,
+  deploy_changes: actionHandlers.handleDeployChanges,
+  open_pull_request: actionHandlers.handleOpenPullRequest,
+  revert_commit: actionHandlers.handleRevertCommit,
+  send_customer_email: actionHandlers.handleSendCustomerEmail,
+  read_repo_file: actionHandlers.handleReadRepoFile,
 };
+
+// Exported so a unit test can assert every tool a scenario asks for is one
+// this map can actually supply. Without that, a scenario naming a typo'd tool
+// runs happily against an agent that simply never had it — and quietly grades
+// something other than what it says it grades.
+export const EVAL_HANDLER_NAMES = Object.keys(HANDLER_BY_TOOL);
+
+// --- Nothing here reaches the real world -------------------------------------
+//
+// The scenarios above now include tools that commit to GitHub and send email
+// to real people. An eval that did either would be worse than no eval: a
+// grading run that pushes to a repo or writes to a stranger is a bug you find
+// out about from the stranger.
+//
+// The throwaway JARVIS_DATA_DIR protects the company's own state, and does
+// nothing about the network. So two more guards, both refusing rather than
+// hoping:
+//
+//   1. Outbound mail is unconfigured for the child process, whatever the
+//      server's environment says. handleSendCustomerEmail checks
+//      isEmailConfigured() first and refuses with a reason — which is a
+//      perfectly gradeable outcome, because the judgment under test is
+//      whether it decided to send, not whether the SMTP handshake worked.
+//   2. Every request to api.github.com is intercepted here and answered with
+//      a 404. The agent's *choice* of deploy_changes over deploy_code is
+//      recorded before the handler ever gets that far, so the scenarios lose
+//      nothing by the commit failing.
+for (const key of ['SMTP_HOST', 'SMTP_USER', 'SMTP_PASS', 'REPORT_EMAIL_TO', 'IMAP_HOST', 'IMAP_USER', 'IMAP_PASS']) {
+  delete process.env[key];
+}
+
+const realFetch = globalThis.fetch;
+globalThis.fetch = async (url, options) => {
+  const target = String(url);
+  if (target.includes('api.github.com')) {
+    return new Response('{"message":"Blocked by the eval runner — no real repo writes."}', {
+      status: 404,
+      headers: { 'content-type': 'application/json' },
+    });
+  }
+  return realFetch(url, options);
+};
+
+/**
+ * Wraps a scenario's handlers so the grade can see which tools were called.
+ *
+ * The delegation trace records agents consulted, not actions taken — so until
+ * now a grade could check what changed in the data and not what the agent
+ * reached for. That gap matters for exactly the capabilities this company just
+ * gained: "did the Engineering Lead call check_ready before reporting blocked"
+ * is a question about the call, and there is no end state that answers it.
+ *
+ * Done here rather than in agentRunner because it is the eval's question, and
+ * instrumenting the hot path for one caller's benefit is how a hot path gets
+ * slow.
+ */
+function recordCalls(handlers, calls) {
+  const wrapped = {};
+  for (const [name, handler] of Object.entries(handlers)) {
+    if (typeof handler !== 'function') continue;
+    wrapped[name] = async (input, ctx) => {
+      calls.push({ name, input });
+      return handler(input, ctx);
+    };
+  }
+  return wrapped;
+}
 
 const anthropic = new Anthropic();
 
@@ -80,6 +161,7 @@ for (const scenario of toRun) {
   const extraContext = scenario.team === 'studio' ? buildStudioContext() : buildCompanyContext();
   const handlers = {};
   for (const name of scenario.actions || []) handlers[name] = HANDLER_BY_TOOL[name];
+  const calls = [];
 
   let outcome;
   try {
@@ -88,7 +170,7 @@ for (const scenario of toRun) {
       agents,
       agentId: scenario.agentId,
       messages: [{ role: 'user', content: scenario.message(ctx) }],
-      actionHandlers: handlers,
+      actionHandlers: recordCalls(handlers, calls),
       extraContext,
       // Without this the eval graded an agent that can't see its own
       // earnings — which is no longer an agent that exists. Several
@@ -99,7 +181,7 @@ for (const scenario of toRun) {
     // costUsd across too, which is the only accurate total now that leaf
     // agents can run on a differently-priced model.
     totalUsage = sumUsage(totalUsage, usage);
-    const grade = scenario.grade({ text, trace, ventures, ledger, ctx });
+    const grade = scenario.grade({ text, trace, calls, ventures, ledger, ctx });
     outcome = { ...grade, text };
   } catch (err) {
     outcome = { pass: false, notes: `Errored: ${err.message}`, text: '' };
