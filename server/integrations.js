@@ -18,6 +18,7 @@ import { isDeepSeekConfigured, deepSeekModel } from './agents/deepseek.js';
 import { isHonchoConfigured, FOUNDER_PEER_ID } from './memory/honcho.js';
 import { isEmailConfigured } from './email.js';
 import { isInboxConfigured } from './inbox.js';
+import { isTelemetryConfigured } from './telemetry.js';
 import { isGithubConfigured } from './deploy/github.js';
 import { isWorkspaceConfigured, workspaceConfig } from './workspace/vault.js';
 import { isWhatsAppConfigured, allowedNumbers, GRAPH_API } from './channels/whatsapp.js';
@@ -399,6 +400,13 @@ export async function getIntegrationStatus() {
     // Separate from `email` because sending and receiving are separate
     // credentials, and for most of this company's life only the first half
     // existed: every outreach was a broadcast into a room nobody could hear.
+    telemetry: {
+      configured: isTelemetryConfigured(),
+      ok: null,
+      detail: isTelemetryConfigured()
+        ? 'Agent turns and tool calls are exported as OpenTelemetry spans.'
+        : 'Not set — turns are traced inside the app only, and nothing leaves it. Set OTEL_EXPORTER_OTLP_ENDPOINT to change that.',
+    },
     inbox: {
       configured: isInboxConfigured(),
       ok: null,

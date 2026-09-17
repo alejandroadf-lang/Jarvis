@@ -41,6 +41,10 @@ import {
   unblockContact,
   pipelineSummary,
   listObjectives,
+  setDiscountFloor,
+  setMcpEndpoint,
+  clearDiscountFloor,
+  describePricing as describeVenturePricing,
 } from '../finance/ventures.js';
 import { getLatestDailyReport } from '../dailyReports.js';
 import { withdrawPlan, getApprovedPlan } from '../dailyPlan.js';
@@ -118,6 +122,13 @@ const COMMANDS = [
   { kind: 'unblock', re: /^unblock\s+(v_\S+)\s+(\S+@\S+)$/i },
   // The deal board and the objectives, as a message.
   { kind: 'pipeline', re: /^(pipeline|deals)(?:\s+(v_\S+))?$/i, arg: 'ventureId' },
+  // Discounting is the founder's call, never the team's — see review.js. The
+  // floor is arithmetic an agent cannot argue with; moving it is a message.
+  { kind: 'discount_clear', re: /^discount\s+clear\s+(v_\S+)$/i, arg: 'ventureId' },
+  { kind: 'discount', re: /^discount\s+(v_\S+)\s+([\d.]+)$/i },
+  // Where an agent — someone else's, not ours — can reach the product.
+  { kind: 'mcp_clear', re: /^mcp\s+clear\s+(v_\S+)$/i, arg: 'ventureId' },
+  { kind: 'mcp', re: /^mcp\s+(v_\S+)\s+(https:\/\/\S+)$/i },
 ];
 
 // "outreach v_123 @acme.com, someone@corp.com" — the grant itself, which
@@ -187,6 +198,8 @@ export function parseFounderCommand(text) {
       if (kind === 'consent') return { kind, ventureId: match[1], email: match[2] };
       if (kind === 'block') return { kind, ventureId: match[1], email: match[2], reason: (match[3] || 'blocked by founder').trim() };
       if (kind === 'unblock') return { kind, ventureId: match[1], email: match[2] };
+      if (kind === 'discount') return { kind, ventureId: match[1], floor: Number(match[2]) };
+      if (kind === 'mcp') return { kind, ventureId: match[1], url: match[2] };
       // The argument is always the last capture group: some patterns group
       // the verb's synonyms first ("halt|stop|freeze") and some don't, so a
       // fixed index silently reads the wrong group for half the table.
@@ -350,6 +363,10 @@ CONSENT <ventureId> <email> — record consent from a .de/.it address
 BLOCK <ventureId> <email> — never contact this person again
 UNBLOCK <ventureId> <email> — lift that
 PIPELINE [ventureId] — every deal, its stage and value, and open objectives
+DISCOUNT <ventureId> <floor> — authorise quoting below list, until you clear it
+DISCOUNT CLEAR <ventureId> — back to list price
+MCP <ventureId> <https://...> — where other people's agents can reach the product
+MCP CLEAR <ventureId> — remove it
 DEPLOY OFF <ventureId> — stop commits for one venture
 DEPLOY ON <ventureId> — allow them again
 
@@ -496,6 +513,26 @@ export async function runFounderCommand(command, deps = {}) {
     case 'unblock': {
       const venture = unblockContact(command.ventureId, command.email);
       return `${command.email.toLowerCase()} is no longer blocked on "${venture.title}".`;
+    }
+
+    case 'mcp': {
+      const venture = setMcpEndpoint(command.ventureId, command.url);
+      return `MCP endpoint recorded for "${venture.title}". The team will cite it when a prospect asks how their own tools can reach the product.`;
+    }
+
+    case 'mcp_clear': {
+      const venture = setMcpEndpoint(command.ventureId, '');
+      return `MCP endpoint cleared from "${venture.title}".`;
+    }
+
+    case 'discount': {
+      const venture = setDiscountFloor(command.ventureId, command.floor);
+      return `Discount floor set on "${venture.title}": the team may now quote down to ${venture.pricing?.currency || 'EUR'} ${command.floor.toFixed(2)} (list price is ${describeVenturePricing(venture)}). It applies until you send "DISCOUNT CLEAR ${command.ventureId}".`;
+    }
+
+    case 'discount_clear': {
+      const venture = clearDiscountFloor(command.ventureId);
+      return `Discount cleared on "${venture.title}". Back to list price: ${describeVenturePricing(venture)}.`;
     }
 
     case 'pipeline': {

@@ -22,6 +22,7 @@
 // into the same response — no tool_result round trip needed from us, so
 // the dispatch loop below doesn't need to know these tools exist.
 
+import { agentSpan, toolSpan, newTraceId } from '../telemetry.js';
 import { getAgent } from './registry.js';
 import { assertUnderDailyCap, recordSpend } from '../spend.js';
 import { priceUsage, emptyUsage } from '../usage.js';
@@ -364,7 +365,9 @@ async function failOverToBackup(anthropic, modelSpec, params, err) {
   throw err;
 }
 
-async function createMessage(anthropic, modelSpec, params) {
+// Exported for review.js, which needs one cheap call outside the agent loop
+// and should not carry its own copy of the provider dispatch.
+export async function createMessage(anthropic, modelSpec, params) {
   assertUnderDailyCap();
 
   // Both providers are called through here so neither can slip past the
@@ -571,6 +574,9 @@ export async function runAgent({
   // nothing useful, while stopping it from consulting three more people
   // produces a shorter answer to the same question.
   deadlineAt = null,
+  // One id per turn, shared by every span it produces, so a fan-out reads as
+  // one trace rather than twenty unrelated ones.
+  otelTraceId = newTraceId(),
 }) {
   const agent = getAgent(agents, agentId);
   const tools = buildTools(agents, agent);
@@ -682,6 +688,7 @@ export async function runAgent({
           agentId: reportId,
           messages: [{ role: 'user', content: brief }],
           trace,
+          otelTraceId,
           depth: depth + 1,
           actionHandlers,
           extraContext,
@@ -738,7 +745,10 @@ export async function runAgent({
           // attribute what just happened (see finance/profitShare.js). It's
           // the runner that knows this, not the agent — which is precisely
           // why credit can't be self-reported.
-          resultText = await actionHandlers[toolUse.name](toolUse.input || {}, { agentId: agent.id });
+          // `anthropic` rides along because one handler — the outbound review in
+          // review.js — needs a model call of its own, and the runner is what
+          // holds the client. Handlers that do not need it ignore it.
+          resultText = await actionHandlers[toolUse.name](toolUse.input || {}, { agentId: agent.id, anthropic });
           // A handler that refuses returns text rather than throwing, so the
           // trace reads the reply the way the agent does.
           ok = !/^(Could not|Not started|Nothing to check)/.test(String(resultText || ''));
@@ -758,6 +768,16 @@ export async function runAgent({
           ok,
           depth,
           ms: Date.now() - actionStarted,
+        });
+        // The same fact in the shape an observability backend expects. Inert
+        // unless the founder has one — see telemetry.js.
+        toolSpan({
+          tool: toolUse.name,
+          agentId: agent.id,
+          ok,
+          traceId: otelTraceId,
+          startedAt: actionStarted,
+          endedAt: Date.now(),
         });
       } else {
         resultText = `(Unknown tool: ${toolUse.name})`;
@@ -805,6 +825,17 @@ export async function runAgent({
       "I ran out of room working through that one. Ask me for a smaller piece of it " +
       'and I can answer properly.';
   }
+
+  agentSpan({
+    agentId: agent.id,
+    title: agent.title,
+    model: modelSpec.model,
+    provider: modelSpec.provider,
+    traceId: otelTraceId,
+    startedAt,
+    endedAt: Date.now(),
+    usage,
+  });
 
   return { text: finalText, trace, usage, ranOutOfTime, durationMs: Date.now() - startedAt };
 }

@@ -2644,3 +2644,85 @@ messages changed; a guard that flags good work teaches people to ignore it.
 week, and the team still guessed — because the evidence was unreachable and
 the refusal was silent. A prompt is a request. This is the rule, and it fails
 the build.
+
+## The veto, the trace, and the door agents come through
+
+Three things the €1M report asked for that were still outstanding after the
+first two batches. One of them was a gap I had left in my own work: the
+supervisor got the objectives tool and never got the veto.
+
+### A rule the CEO can enforce, and one that needs no CEO at all
+
+Project Vend's shop went from losing money every week to profitable, and the
+change with the clearest causal link was a CEO agent who **vetoed** improper
+discounts. This company had the CEO, the objectives and no veto. The only
+thing that could say no was the founder, once a day, at plan-approval time —
+which catches *"the plan does not cover emailing Ada"* and cannot catch *"the
+plan said email Ada, and the email being sent offers her 60% off"*.
+
+`server/review.js` adds two layers, deliberately different in cost:
+
+**The price floor is arithmetic.** A payment link below what the venture
+charges is the company giving its product away, and arithmetic does not need a
+model. `priceFloorRefusal()` runs inside `create_payment_link` before anything
+reaches Stripe. Free, always on, and there is no wording a customer can use to
+get past it. Per the rule above, the refusal names the door: discounting is
+the founder's decision, and `DISCOUNT v_123 99` is how they make one. It holds
+until `DISCOUNT CLEAR v_123`, and a link below even the approved floor is
+refused too.
+
+**The review is judgment, so it costs a call.** `reviewOutbound()` asks the
+CEO, on the cheap tier, whether one outbound message serves the open
+objectives — after every other gate has passed and before the message leaves,
+the last moment where saying no is free. It is opt-in (`CEO_REVIEW=true`) for
+two reasons: a company with no revenue is protecting nothing, and a review
+that fires on every draft becomes a rubber stamp.
+
+Two properties are tested harder than the happy path. **A veto has to be the
+easy answer**: the model is asked for one word, and anything that is not a
+clear `VETO` passes, because a reviewer that has to argue its way to *yes*
+blocks good work. And **the reviewer can never take the company down**: a
+review that errors approves, logs, and reports `reviewed: false` rather than
+claiming it looked. An unreachable supervisor must not become an outage — the
+deterministic floor is still standing underneath it.
+
+### Spans the rest of the world can read
+
+The internal action trace answers *what did this company do today*. It cannot
+answer *why was this turn slow* or *which agent burns the tokens*, and it
+speaks a vocabulary only this repo knows.
+
+`server/telemetry.js` emits the OpenTelemetry GenAI spans — `invoke_agent` per
+agent turn, `execute_tool` per action — named exactly as the semantic
+conventions name them, so an off-the-shelf backend groups them with no mapping
+layer. A trace id is minted at the top of a run and threaded down through the
+delegations, so a CEO turn and the four specialist turns it spawned are one
+tree rather than five unrelated spans.
+
+OTLP/HTTP JSON over plain `fetch`, no SDK — the same reasoning as the GitHub
+and Stripe clients. Inert unless `OTEL_EXPORTER_OTLP_ENDPOINT` is set, which
+matters more than usual: there is no observability backend today, and
+telemetry that had to be configured before the app would run would be a vendor
+decision smuggled in as a feature. Spans are batched, sent fire-and-forget,
+and **dropped rather than retried** on failure — a queue that grows when the
+collector is down is a memory leak in exactly the conditions where the server
+is already unwell.
+
+### The product a buyer's agent can call
+
+In 2026 a prospect's first contact with an API is increasingly their own
+assistant trying to use it. This repo has known that from the inside for
+months — `server/agents/mcp.js` is how *these* agents reach other people's
+services. The inverse was missing: nothing said how someone else's agent
+reaches ours.
+
+`MCP v_123 https://api.example/mcp` records the endpoint on the venture, and
+the outreach context puts it in front of the team next to the price and the
+booking link — so when a prospect asks how their tooling would call the thing,
+the answer is in context rather than in a chat log. `https` only: an endpoint
+quoted to a customer over an unencrypted connection is not one worth having,
+and nothing in this app should ever guess a URL.
+
+The 20th skill, `exposing-an-api-to-agents`, is the other half — what to
+expose, how to name it, and why a tool description is now sales copy read by a
+machine.
