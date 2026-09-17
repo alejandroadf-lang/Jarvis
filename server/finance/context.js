@@ -4,7 +4,7 @@
 // real numbers instead of drifting on stale context.
 
 import { getLedger } from './ledger.js';
-import { listVentures, listContacts } from './ventures.js';
+import { listVentures, listContacts, listReplies } from './ventures.js';
 import { getLatestWeeklyReflection } from '../weeklyReflections.js';
 import { getAgentEarnings, sharePct } from './profitShare.js';
 import { buildOperationsContext } from '../agents/operations.js';
@@ -78,7 +78,15 @@ export function buildOutreachContext() {
   const sections = withOutreach.map((venture) => {
     const contacts = listContacts(venture.id);
     const body = contacts.length ? contacts.map(describeContact).join('\n') : '  (no contacts on record yet)';
-    return `"${venture.title}" [id: ${venture.id}]:\n${body}`;
+    const unread = listReplies(venture.id, { unreadOnly: true });
+    // The count, not the mail. The bodies come through check_replies, which
+    // marks them read as it hands them over; putting them here too would mean
+    // every agent on every turn carries the same inbox, and nobody would ever
+    // be sure whether a reply had actually been dealt with.
+    const waiting = unread.length
+      ? `\n  ** ${unread.length} unread repl${unread.length === 1 ? 'y' : 'ies'} waiting — call check_replies **`
+      : '';
+    return `"${venture.title}" [id: ${venture.id}]:\n${body}${waiting}`;
   });
 
   return `Contact history for ventures with an outreach scope — check this before

@@ -32,6 +32,7 @@ import {
   handleKillVenture,
   handleDeployCode,
   handleSendCustomerEmail,
+  handleCheckReplies,
   handleLogContactNote,
   handleRunChecks,
   handleListChecks,
@@ -332,6 +333,10 @@ async function runCompanyTurn(sessionId, message, { deadlineAt = null, image = n
       // the agent supplies only a path.
       check_service: (input, ctx) => handleCheckService(input, ctx),
       send_customer_email: (input) => handleSendCustomerEmail(input, 'interactive'),
+      // Reading the answers. Not gated like sending, because it reaches
+      // nobody — and inbox.js will only surface mail from an address this
+      // company already wrote to, so the founder's own inbox stays shut.
+      check_replies: (input, ctx) => handleCheckReplies(input, 'interactive', ctx),
       // Internal memory only — no scope grant or cap, since nothing leaves
       // the building (see actionHandlers.js).
       log_contact_note: handleLogContactNote,

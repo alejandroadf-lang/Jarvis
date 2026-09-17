@@ -1975,3 +1975,97 @@ all, so it needs no scope grant, no cap, and no kill-switch check. It only
 writes into the memory the next draft will read. The Ventures panel shows
 the latest note per contact under "What Sales knows", so the founder can see
 the same thing the agent will.
+
+## Hearing the answer
+
+`server/email.js` had six ways to send and zero ways to receive. The Sales &
+Commercial Manager could write to a real prospect and never learn what they
+said back. Every outreach was a broadcast into a room the company could not
+hear, which is not a small gap: it is the difference between a mailing list
+and a conversation, and a company that cannot hear "yes, tell me more" cannot
+close anything.
+
+The tell was that the loop was already closing — through a human. The founder
+was reading replies in their own mail client and relaying them into WhatsApp
+by hand. That is a person doing an integration's job.
+
+`server/inbox.js` reads the mailbox over IMAP, and `check_replies` on the
+Sales & Commercial Manager hands what it finds to the agent. It is wired into
+both the interactive chat and the unattended daily cycle, and it belongs in
+the cycle more than most things do: a reply that arrives at 9pm should be in
+front of the team at 8am, not waiting for someone to notice it.
+
+### The allowlist works in both directions
+
+IMAP credentials open the founder's entire mailbox — bank mail, family,
+everything. No agent has any business in most of it, and a system prompt
+saying "only read customer replies" is not a control, it is a hope.
+
+So `fetchReplies()` never returns a message from an address this company has
+not already emailed. The set of known senders comes from `outreachRecipients()`,
+which walks the `sentEmails` log across every venture. The founder's outreach
+allowlist — the thing that already decides who the company may write to — is
+therefore also the only door to who it may hear from, set once, in one place,
+and not widenable by anything an agent says.
+
+One detail there is load-bearing. Known senders are derived from what was
+*sent*, not from the allowlist itself. An allowlist entry of `@acme.com`
+permits writing to anyone at Acme, but it makes nobody at Acme readable: only
+the specific people this company actually wrote to can be heard. The set grows
+when the company acts, never when a scope is granted.
+
+The filter also runs inside `fetchReplies()` rather than at the call site. A
+function that returns everything and trusts its caller to discard the private
+mail is one careless caller away from putting the founder's inbox into a model
+context. The narrow return type is the control.
+
+### Unread, not new
+
+A reply is filed against its venture the moment it is seen, and marked read
+only when an agent has actually been handed the text. Three consequences:
+
+- A turn that dies halfway through reading its mail does not lose the mail.
+- The daily report can say "two replies nobody has read" rather than
+  re-listing everything that ever arrived.
+- A reply filed by yesterday's cycle and never acted on stays just as loud as
+  one that landed a minute ago, which is correct: both are open loops.
+
+Messages are deduped on `messageId`, because the daily cycle runs every
+morning over the same lookback window. Filing twice would have the Sales
+Manager answer the same prospect twice — precisely the failure the contact log
+exists to prevent.
+
+`buildOutreachContext()` shows the unread *count* per venture, not the
+bodies. The bodies come through `check_replies`, which marks them read as it
+hands them over. Putting them in the shared context too would mean every agent
+on every turn carried the same inbox, and nobody would ever be sure whether a
+reply had been dealt with.
+
+### Reading what actually arrives
+
+Real replies are not clean text. They arrive base64'd inside a multipart
+body, or as HTML only, or quoted-printable — and an agent handed
+`PGRpdj5IaSE8L2Rpdj4=` learns nothing. `extractPlainText()` is just enough
+MIME to get the text out: prefer `text/plain`, fall back to HTML with tags
+stripped, decode both common transfer encodings.
+
+The quoted-printable decoder goes through a `Buffer` rather than
+`String.fromCharCode`, because `=C3=A9` is two bytes of UTF-8 and not two
+characters. Decoding per character turns `Café` into `CafÃ©` — which is how a
+prospect's name ends up mangled in the reply an agent then quotes back at
+them. The test caught that; nothing else would have until a customer saw it.
+
+Quoted history is cut before the agent sees it. It is most of a reply by
+volume and none of it by information — the agent already knows what it sent —
+and leaving it in makes a thread grow quadratically in the context window as
+it goes back and forth.
+
+### Configuring it
+
+`IMAP_HOST`, `IMAP_USER`, `IMAP_PASS`, optionally `IMAP_PORT`, `IMAP_SECURE`
+and `IMAP_MAILBOX`. Usually the same account as `SMTP_*`; for Gmail it is the
+same app password. Leave them blank and the module is inert — `check_replies`
+returns the reason rather than failing, and the integration status panel shows
+inbound as unconfigured next to outbound, separately, because they are
+separate credentials and for most of this company's life only one of them
+existed.

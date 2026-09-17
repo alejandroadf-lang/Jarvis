@@ -183,3 +183,27 @@ export async function sendOutreachAlertEmail(venture, details) {
   const { subject, text } = formatOutreachAlertEmail(venture, details);
   return sendEmail(subject, text); // to the founder — no override, unlike sendCustomerEmail
 }
+
+// A real person answered. That is the single most important thing that can
+// happen in this company's day, and before inbox.js existed it was invisible
+// — the founder was relaying replies by hand into WhatsApp.
+//
+// Same shape as formatOutreachAlertEmail: an audit trail, not an approval.
+// The reply has already arrived; nothing here can un-arrive it.
+export function formatReplyAlertEmail(venture, { from, subject, triggeredBy }) {
+  const alertSubject = `Reply received: ${from} -> "${venture.title}"`;
+  const text = [
+    `${from} replied to outreach sent on behalf of "${venture.title}".`,
+    '',
+    `Subject: ${subject || '(no subject)'}`,
+    `Picked up by: ${describeTrigger(triggeredBy)}`,
+    '',
+    'The Sales & Commercial Manager has it. Check the Ventures panel for the full thread.',
+  ].join('\n');
+  return { subject: alertSubject, text };
+}
+
+export async function sendReplyAlertEmail(venture, details) {
+  const { subject, text } = formatReplyAlertEmail(venture, details);
+  return sendEmail(subject, text); // to the founder
+}

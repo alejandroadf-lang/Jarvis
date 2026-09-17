@@ -17,6 +17,7 @@ import { isOpenRouterConfigured } from './agents/openrouter.js';
 import { isDeepSeekConfigured, deepSeekModel } from './agents/deepseek.js';
 import { isHonchoConfigured, FOUNDER_PEER_ID } from './memory/honcho.js';
 import { isEmailConfigured } from './email.js';
+import { isInboxConfigured } from './inbox.js';
 import { isGithubConfigured } from './deploy/github.js';
 import { isWorkspaceConfigured, workspaceConfig } from './workspace/vault.js';
 import { isWhatsAppConfigured, allowedNumbers, GRAPH_API } from './channels/whatsapp.js';
@@ -394,6 +395,16 @@ export async function getIntegrationStatus() {
       detail: isEmailConfigured()
         ? 'Daily reports, alerts and real customer outreach can send.'
         : 'Not set — no report emails, and customer outreach is unavailable.',
+    },
+    // Separate from `email` because sending and receiving are separate
+    // credentials, and for most of this company's life only the first half
+    // existed: every outreach was a broadcast into a room nobody could hear.
+    inbox: {
+      configured: isInboxConfigured(),
+      ok: null,
+      detail: isInboxConfigured()
+        ? 'The Sales Manager can read replies from people this company has emailed.'
+        : 'Not set — replies to customer outreach are invisible to the team.',
     },
     // Reported rather than probed: a bad repo name surfaces loudly at the
     // point of use (the publish logs the GitHub error), and probing would

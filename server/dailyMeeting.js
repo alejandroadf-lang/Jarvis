@@ -35,6 +35,7 @@ import {
   handleProposeVenture,
   handleDeployCode,
   handleSendCustomerEmail,
+  handleCheckReplies,
   handleLogContactNote,
   handleSubmitDailyPlan,
   handleCheckDailyPlan,
@@ -191,6 +192,12 @@ export function dailyCycleActionHandlers() {
     // during a live conversation — see index.js's 'interactive' counterpart.
     deploy_code: (input) => handleDeployCode(input, 'daily_cycle'),
     send_customer_email: (input) => handleSendCustomerEmail(input, 'daily_cycle'),
+
+    // Sending is a real action and sits behind the plan. Reading what came
+    // back is not, and it belongs in the unattended cycle more than anywhere
+    // else: a reply that arrives at 9pm should be in front of the team at 8am,
+    // not waiting for the founder to notice it and paste it into WhatsApp.
+    check_replies: (input, ctx) => handleCheckReplies(input, 'daily_cycle', ctx),
 
     // The cycle's way of asking. Without it the sync is refused on every real
     // action and cannot even put a plan up.

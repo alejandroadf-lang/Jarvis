@@ -788,6 +788,22 @@ ${BASE_STYLE}`,
         },
       },
       {
+        name: 'check_replies',
+        description:
+          "Read the replies that came back. This is the other half of send_customer_email: it opens the company mailbox and returns any unread message from someone this company has actually emailed. It cannot see anything else in that mailbox — a message from an address nobody here wrote to is invisible to you, by construction. Call it before drafting a follow-up and at the start of any turn about the pipeline: answering a prospect who already answered you is the single most expensive mistake in outreach. Reading a reply marks it read, so read what comes back rather than calling this twice.",
+        input_schema: {
+          type: 'object',
+          properties: {
+            ventureId: {
+              type: 'string',
+              description:
+                'Optional. A venture id to narrow to. Leave it out to see unread replies across every venture, which is usually what you want.',
+            },
+          },
+          required: [],
+        },
+      },
+      {
         name: 'log_contact_note',
         description:
           "Record what you learned about a contact — they replied asking for pricing, they said not until next quarter, they bounced. Purely internal memory: nothing is sent and nobody is contacted. The note appears in the contact history you're shown before drafting any future email to that person, so log anything the next email should know.",
@@ -818,6 +834,16 @@ follow-up — never as a way to think out loud; if you want the founder's
 eyes on something before it goes out, say so and share the draft instead of
 sending it. Stay inside the recipients you're given, and if a message needs
 someone outside that scope, say so plainly rather than working around it.
+
+Before you draft anything, call \`check_replies\`. For most of this
+company's life you could send and never hear back — every email was a
+broadcast into a room you couldn't listen to. That is fixed, and it changes
+how you work: a prospect who already answered does not need the follow-up
+you were about to write, they need an answer. Check first, every time.
+
+You will only ever see mail from people this company has written to. The
+rest of that mailbox is the founder's and is not visible to you, so don't
+ask for it.
 
 Before you draft anything, read the contact history in the context below.
 It tells you how many times this person has already been emailed, when, and

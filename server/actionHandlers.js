@@ -26,6 +26,11 @@ import {
   setDeploymentEnabled,
   authorizeProbe,
   recordProbe,
+  outreachRecipients,
+  ventureForRecipient,
+  recordReply,
+  listReplies,
+  markRepliesRead,
 } from './finance/ventures.js';
 import { recordContribution, distributeRevenue } from './finance/profitShare.js';
 import { submitPlan, getPlan, formatPlanForWhatsApp } from './dailyPlan.js';
@@ -43,10 +48,12 @@ import {
   sendDeploymentEmail,
   sendCustomerEmail,
   sendOutreachAlertEmail,
+  sendReplyAlertEmail,
   isEmailConfigured,
 } from './email.js';
 import { commitFile, readFile as readRepoFile, listFiles as listRepoFiles, isGithubConfigured } from './deploy/github.js';
 import { probeEndpoint } from './execute/probe.js';
+import { fetchReplies, isInboxConfigured } from './inbox.js';
 import {
   isExecutionConfigured,
   dispatchWorkflow,
@@ -250,6 +257,99 @@ export async function handleSendCustomerEmail(input, triggeredBy = 'interactive'
   } catch (err) {
     return `Could not send: ${err.message}`;
   }
+}
+
+// The other half of send_customer_email, and the reason that tool stopped
+// being a broadcast.
+//
+// No scope grant of its own, and that is deliberate rather than an oversight.
+// Sending is gated because it reaches a real person; reading a reply from
+// someone this company already wrote to reaches nobody. Putting it behind the
+// same door as sending would be the mistake this codebase has now made four
+// times: a capability the team holds and cannot open (see the READY check).
+//
+// It is still not unguarded. inbox.js will not return a message from an
+// address the company never emailed, so the founder's private mail is
+// unreachable from here no matter what an agent asks for.
+export async function handleCheckReplies(input, triggeredBy = 'interactive', ctx = {}) {
+  if (!isInboxConfigured()) {
+    return (
+      'Could not check: this server has no inbound mailbox configured, so replies are invisible to the company. ' +
+      'The founder needs to set IMAP_HOST, IMAP_USER and IMAP_PASS.'
+    );
+  }
+
+  const known = outreachRecipients();
+  if (!known.size) {
+    return 'Nothing to check: this company has not sent a customer email yet, so there is nobody who could be replying.';
+  }
+
+  let result;
+  try {
+    result = await fetchReplies({ isKnownSender: (address) => known.has(address) });
+  } catch (err) {
+    return `Could not check the mailbox: ${err.message}`;
+  }
+
+  // Filing happens before reading. A reply is recorded against its venture on
+  // arrival so that a turn which runs out of room halfway through still leaves
+  // the mail where the next turn will find it.
+  const filed = [];
+  for (const message of result.messages) {
+    const venture = ventureForRecipient(message.from);
+    if (!venture) continue; // sent from a venture that has since been deleted
+    const { entry, duplicate } = recordReply(venture.id, message);
+    if (duplicate || !entry) continue;
+    filed.push({ venture, entry });
+    recordContribution({
+      agentId: ctx.agentId,
+      kind: 'check_replies',
+      ventureId: venture.id,
+      detail: `reply from ${message.from}`,
+    });
+    await notify(sendReplyAlertEmail, venture, { from: message.from, subject: entry.subject, triggeredBy });
+  }
+
+  // Unread, not new: a reply filed by yesterday's daily cycle and never acted
+  // on is exactly as much of an open loop as one that arrived this minute.
+  const ventureId = typeof input?.ventureId === 'string' ? input.ventureId : null;
+  const ventureIds = ventureId ? [ventureId] : [...new Set(filed.map((f) => f.venture.id))];
+  const unread = [];
+  for (const id of ventureIds) {
+    for (const reply of listReplies(id, { unreadOnly: true })) unread.push({ id, reply });
+  }
+
+  if (!unread.length) {
+    const checked = result.scanned ? ` Checked ${result.scanned} message${result.scanned === 1 ? '' : 's'}.` : '';
+    return `No unread replies.${checked} Silence is data too — if a prospect has been quiet for a week, that is worth a note rather than another email.`;
+  }
+
+  const lines = unread.map(({ id, reply }) => {
+    const who = reply.fromName ? `${reply.fromName} <${reply.from}>` : reply.from;
+    return [
+      `From: ${who}`,
+      `Subject: ${reply.subject || '(no subject)'}`,
+      `Received: ${reply.receivedAt}`,
+      `Venture: ${id}`,
+      '',
+      reply.body || '(empty body)',
+    ].join('\n');
+  });
+
+  // Marked read only now — after the text is in hand and about to be returned
+  // into the turn. Marking earlier would lose a reply to a crash in between.
+  for (const id of ventureIds) {
+    markRepliesRead(id, unread.filter((u) => u.id === id).map((u) => u.reply.messageId));
+  }
+
+  return [
+    `${unread.length} unread repl${unread.length === 1 ? 'y' : 'ies'}:`,
+    '',
+    lines.join('\n\n---\n\n'),
+    '',
+    'Log what you learned with log_contact_note before you answer — the note is what the next draft reads, ' +
+      'and this reply is not going to be in your context next week.',
+  ].join('\n');
 }
 
 // Purely internal memory — no scope grant, no kill switch, no cap, because

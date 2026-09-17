@@ -645,6 +645,119 @@ export function recordOutreach(id, { to, subject, body, triggeredBy, agentId }) 
   return { venture, entry };
 }
 
+// --- The other half of a conversation ----------------------------------------
+//
+// Sending was six functions; receiving was zero. See server/inbox.js for the
+// privacy argument — the short version is that the company may only hear from
+// someone it has already written to, so the founder's outreach allowlist is
+// also the only door into the founder's mailbox.
+//
+// These three functions are what makes that enforceable from the ventures
+// side: who counts as a known sender, where a reply goes, and what came back.
+
+// Every address this company has actually emailed, across every venture.
+//
+// Derived from the send log rather than from the allowlist itself, and that
+// distinction matters: an allowlist of "@acme.com" would make every person at
+// Acme a known sender the moment the founder granted the scope, including the
+// ones the company never contacted. Deriving from what was sent means the set
+// only grows when the company itself acts.
+export function outreachRecipients() {
+  const addresses = new Set();
+  for (const venture of load().ventures) {
+    for (const sent of venture.sentEmails || []) {
+      const address = String(sent.to || '').trim().toLowerCase();
+      if (address) addresses.add(address);
+    }
+  }
+  return addresses;
+}
+
+// Which venture was this person written to from? Most recent send wins, so a
+// contact who was approached about two ventures answers into the one that
+// actually asked them something lately.
+export function ventureForRecipient(address) {
+  const wanted = String(address || '').trim().toLowerCase();
+  if (!wanted) return null;
+  let best = null;
+  let bestAt = '';
+  for (const venture of load().ventures) {
+    for (const sent of venture.sentEmails || []) {
+      if (String(sent.to || '').trim().toLowerCase() !== wanted) continue;
+      if (!best || sent.sentAt >= bestAt) {
+        best = venture;
+        bestAt = sent.sentAt;
+      }
+    }
+  }
+  return best;
+}
+
+// Replies are deduped on messageId because a check is not a one-shot: the
+// daily cycle runs every morning and the Sales Manager can call check_replies
+// mid-turn, so the same message will be seen repeatedly. Recording it twice
+// would have the agent answer the same prospect twice, which is exactly the
+// failure the contact log exists to prevent.
+export function recordReply(id, { from, fromName, subject, body, receivedAt, messageId }) {
+  const data = load();
+  const venture = findOrThrow(data, id);
+  venture.replies = venture.replies || [];
+  const key = String(messageId || '');
+  if (key && venture.replies.some((r) => r.messageId === key)) {
+    return { venture, entry: null, duplicate: true };
+  }
+  const entry = {
+    messageId: key || null,
+    from: String(from || '').toLowerCase(),
+    fromName: String(fromName || ''),
+    subject: String(subject || ''),
+    body: String(body || ''),
+    receivedAt: receivedAt || new Date().toISOString(),
+    // Unread until an agent has actually been handed it in a turn. This is
+    // what lets the daily report say "two replies nobody has read" instead of
+    // silently re-listing everything that ever arrived.
+    readAt: null,
+  };
+  venture.replies.push(entry);
+  save(data);
+  return { venture, entry, duplicate: false };
+}
+
+export function listReplies(id, { unreadOnly = false } = {}) {
+  const replies = getVenture(id)?.replies || [];
+  const filtered = unreadOnly ? replies.filter((r) => !r.readAt) : replies;
+  return [...filtered].sort((a, b) => (a.receivedAt < b.receivedAt ? 1 : -1));
+}
+
+// Marking read is a separate step from listing, so a turn that dies halfway
+// through reading its mail doesn't lose the mail.
+export function markRepliesRead(id, messageIds) {
+  const wanted = new Set((messageIds || []).filter(Boolean).map(String));
+  if (!wanted.size) return 0;
+  const data = load();
+  const venture = findOrThrow(data, id);
+  const at = new Date().toISOString();
+  let marked = 0;
+  for (const reply of venture.replies || []) {
+    if (!reply.readAt && wanted.has(String(reply.messageId))) {
+      reply.readAt = at;
+      marked += 1;
+    }
+  }
+  if (marked) save(data);
+  return marked;
+}
+
+// Across the whole portfolio — what the daily report needs to know without
+// walking every venture itself.
+export function unreadReplyCount() {
+  let total = 0;
+  for (const venture of load().ventures) {
+    total += (venture.replies || []).filter((r) => !r.readAt).length;
+  }
+  return total;
+}
+
 // Where the venture is actually deployed, so the team can check its own work.
 //
 // Founder-set, because the alternative — an agent naming the host — is a
