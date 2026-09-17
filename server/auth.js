@@ -35,6 +35,19 @@ const PUBLIC_PATHS = new Set(['/api/health', '/api/whatsapp/webhook', '/privacy'
 // fact authenticated by other means, and vice versa.
 const SELF_AUTHENTICATED_PATHS = new Set(['/api/graph']);
 
+// Usage ingest is the first endpoint a machine outside this company calls.
+// It carries a per-venture key rather than the app token, and the distinction
+// is the whole point: a venture's deployed code holds a credential that can
+// increment that venture's counters and do nothing else. Handing it the app
+// token would mean a compromised product could disable the kill switch.
+//
+// Matched by prefix rather than exact path because the venture id is in it.
+const SELF_AUTHENTICATED_PREFIXES = ['/api/ventures/', '/api/usage/'];
+
+function isUsageIngest(path) {
+  return SELF_AUTHENTICATED_PREFIXES.some((prefix) => path.startsWith(prefix)) && path.endsWith('/usage/report');
+}
+
 export function isAccessProtected() {
   return hasSecret('APP_ACCESS_TOKEN');
 }
@@ -69,6 +82,9 @@ export function requireAccess(req, res, next) {
   if (!isAccessProtected()) return next();
   if (PUBLIC_PATHS.has(req.path)) return next();
   if (SELF_AUTHENTICATED_PATHS.has(req.path)) return next();
+  // Checks its own per-venture key inside the handler. The app token is
+  // accepted there too, so the founder can test the endpoint from the panel.
+  if (isUsageIngest(req.path)) return next();
   // Everything that isn't the API is the client bundle; the token lives in
   // the browser, so the page has to load before it can present one.
   if (!req.path.startsWith('/api/')) return next();

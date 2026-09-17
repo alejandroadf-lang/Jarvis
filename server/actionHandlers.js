@@ -68,6 +68,7 @@ import {
 import { probeEndpoint } from './execute/probe.js';
 import { fetchReplies, isInboxConfigured } from './inbox.js';
 import { deployReadiness, outreachReadiness, formatReadiness } from './readiness.js';
+import { usageSummary, hasIngestKey } from './ventureUsage.js';
 import {
   isExecutionConfigured,
   dispatchWorkflow,
@@ -1065,4 +1066,56 @@ export function handleCheckReady(input) {
   } catch (err) {
     return `Could not check: ${err.message}`;
   }
+}
+
+// --- Did anyone use it? -------------------------------------------------------
+//
+// This company measures its own cost to the cent and its product's use not at
+// all, which is the wrong half of the equation to know exactly. A venture with
+// a linked repo, a green deploy and zero calls looks identical in every other
+// view of this app to one that is working — and those are the two most
+// different states a venture can be in.
+export function handleCheckUsage(input) {
+  const ventureId = typeof input?.ventureId === 'string' ? input.ventureId : '';
+  if (!ventureId) return 'Could not check: ventureId is required.';
+  const venture = getVenture(ventureId);
+  if (!venture) return 'Could not check: venture not found.';
+
+  const days = Math.min(90, Math.max(1, Number(input?.days) || 7));
+  const summary = usageSummary(ventureId, { days });
+
+  if (!summary.known) {
+    return hasIngestKey(ventureId)
+      ? `"${venture.title}" has a usage key but has never reported. Either it is not deployed, or the reporting call is not wired into it yet — those are different problems and worth telling apart before drawing any conclusion about demand.`
+      : `"${venture.title}" is not reporting usage. Nothing is counting, so nothing can be said about whether anyone is using it. The founder mints a key from the Ventures panel and puts it in the venture's own environment as JARVIS_USAGE_KEY; the code reads it from there and posts to /api/ventures/${ventureId}/usage/report.`;
+  }
+
+  const lines = summary.days.map(
+    (row) => `  ${row.date}: ${row.calls} call${row.calls === 1 ? '' : 's'}, ${row.errors} error${row.errors === 1 ? '' : 's'}, ${row.callers} caller${row.callers === 1 ? '' : 's'}`,
+  );
+
+  if (summary.silent) {
+    return [
+      `"${venture.title}" reported nothing in the last ${days} day${days === 1 ? '' : 's'}.`,
+      summary.lastSeenAt ? `Last reported usage: ${summary.lastSeenAt}.` : '',
+      '',
+      'Silence is a finding, not a gap in the data. Something is running and counting, and nobody is calling it. ' +
+        'That is a demand question or a distribution question — not an engineering one, and not one more feature will answer it.',
+    ]
+      .filter(Boolean)
+      .join('\n');
+  }
+
+  const errorNote =
+    summary.errorRate > 0.05
+      ? `\n\n${Math.round(summary.errorRate * 100)}% of requests are failing. That is high enough to be the reason for anything else you were about to investigate — look here first.`
+      : '';
+
+  return [
+    `"${venture.title}" over ${days} day${days === 1 ? '' : 's'}: ${summary.calls} calls, ${summary.errors} errors, ${summary.callers} distinct caller${summary.callers === 1 ? '' : 's'}.`,
+    ...lines,
+    errorNote,
+  ]
+    .filter(Boolean)
+    .join('\n');
 }

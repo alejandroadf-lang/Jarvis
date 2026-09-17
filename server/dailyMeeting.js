@@ -36,6 +36,7 @@ import {
   handleDeployCode,
   handleDeployChanges,
   handleCheckReady,
+  handleCheckUsage,
   handleOpenPullRequest,
   handleRevertCommit,
   handleSendCustomerEmail,
@@ -200,6 +201,10 @@ export function dailyCycleActionHandlers() {
     // Reads the gates that already exist and reports every one at once,
     // rather than letting the team discover them one refusal per turn. Grants
     // nothing and reaches nothing.
+    // Whether anyone is actually calling the product. Reads counters the
+    // venture reports itself; shipped and used are different facts and this
+    // is the only place the second one exists.
+    check_usage: (input) => handleCheckUsage(input),
     check_ready: (input) => handleCheckReady(input),
     deploy_changes: (input, ctx) => handleDeployChanges(input, 'daily_cycle', ctx),
     // Finished work that has not landed. Not behind the plan — see

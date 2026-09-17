@@ -4,6 +4,7 @@
 // real numbers instead of drifting on stale context.
 
 import { getLedger } from './ledger.js';
+import { usageSummary } from '../ventureUsage.js';
 import { listVentures, listContacts, listReplies } from './ventures.js';
 import { getLatestWeeklyReflection } from '../weeklyReflections.js';
 import { getAgentEarnings, sharePct } from './profitShare.js';
@@ -122,6 +123,47 @@ ${sections.join('\n')}`;
 // been contacted. The Venture Studio deliberately doesn't get the
 // contact history — it's an execution concern, and ideation doesn't send
 // email.
+// Whether anybody is actually calling the product.
+//
+// Shipped and used are different facts, and until now only the first one
+// existed anywhere in this app — so a venture with a green deploy and no users
+// read as a success in every view the team had. This puts the second fact in
+// the shared context rather than behind a tool call, because the agent most
+// likely to need it is the one least likely to think of asking.
+//
+// One line per venture, and the silent ones are named first. A week of silence
+// on a deployed product is the most important sentence in this context, and
+// burying it under a table of zeros is how it gets skimmed past.
+export function buildUsageContext() {
+  const deployed = listVentures().filter((v) => v.status === 'active' && v.repo);
+  if (!deployed.length) return '';
+
+  const rows = [];
+  for (const venture of deployed) {
+    const usage = usageSummary(venture.id, { days: 7 });
+    if (!usage.known) {
+      rows.push(`  · "${venture.title}" — not reporting usage. Nothing is counting, so nothing is known about demand.`);
+      continue;
+    }
+    if (usage.silent) {
+      rows.push(`  · "${venture.title}" — SILENT. Zero calls in 7 days from a product that is deployed and counting.`);
+      continue;
+    }
+    const errors = usage.errorRate > 0.05 ? `, ${Math.round(usage.errorRate * 100)}% failing` : '';
+    rows.push(
+      `  · "${venture.title}" — ${usage.calls} calls from ${usage.callers} caller${usage.callers === 1 ? '' : 's'} in 7 days${errors}.`,
+    );
+  }
+
+  // Silent and unmeasured first. Those are the two states that should change
+  // what someone does today.
+  rows.sort((a, b) => Number(b.includes('SILENT') || b.includes('not reporting')) - Number(a.includes('SILENT') || a.includes('not reporting')));
+
+  return `Real product usage over the last 7 days — what the deployed code reports, not
+what anyone thinks. Zero is an answer, not missing data:
+${rows.join('\n')}`;
+}
+
 export function buildCompanyContext() {
   // The plan goes first when there is one. An agent that reads it last has
   // already decided what it intends to do, and the plan then reads as an
@@ -142,6 +184,9 @@ export function buildCompanyContext() {
     buildBusinessContext(),
     buildVentureNotesContext(),
     buildOutreachContext(),
+    // Last of the business facts and deliberately not buried: the only place
+    // this app says whether the product is used, as opposed to shipped.
+    buildUsageContext(),
   ]
     .filter((part) => part && part.trim())
     .join('\n\n');

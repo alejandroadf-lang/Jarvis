@@ -2243,3 +2243,78 @@ plan, so `check_ready` leaves that gate out when asked about them. That is not
 cosmetic: the report is what an agent reads before deciding whether to propose
 or to land, and one that hid the difference would send it back to asking
 permission for the one thing that does not need it.
+
+## Did anyone use it?
+
+This company measures its own cost to the cent — every model call, every
+token, priced and capped — and measured its product's use not at all. That is
+the wrong half of the equation to know exactly. A venture with a linked repo, a
+green deploy and zero users looked identical, in every view this app had, to
+one that was working.
+
+`server/ventureUsage.js` is the receiving end, and it was built deliberately
+*before* the venture launches. Usage is the one number that cannot be
+backfilled: a request that was not counted when it happened is gone, and "we
+had customers that first week but no idea how many" is a permanent hole in the
+only evidence that matters.
+
+### Three states, not two
+
+The distinction the whole module exists to preserve:
+
+| State | What it means | What to do |
+|---|---|---|
+| **Not reporting** | Nothing is counting | Wire it up, or find out why the deployed code isn't calling home |
+| **Silent** | Counting, and nobody is calling | A demand or distribution question. Not one more feature |
+| **Used** | Real calls from real callers | Now the numbers mean something |
+
+"Not reporting" and "silent" look the same from outside and lead to opposite
+next actions — one is an engineering problem, the other is a business one.
+Collapsing them sends the team to fix the wrong thing.
+
+That distinction was almost lost to a one-line bug: minting a key creates the
+venture's record, so `usageSummary` checking for the object's existence made an
+un-instrumented venture read as "counting, and silent". The test caught it.
+
+### A key that can do one thing
+
+Ingest is the first endpoint in this app a machine outside the company calls,
+and the only one not authenticated by the founder's app token. A venture's
+deployed product holds a per-venture key that can increment that venture's
+counters and nothing else. Handing it the app token instead would mean a
+compromised product could disable the kill switch.
+
+No agent tool can read the key. The founder mints it from the Ventures panel
+and puts it in the venture's own deployment environment; the agent writing that
+venture's code writes `os.environ["JARVIS_USAGE_KEY"]`, which needs the
+variable's *name* and not its value. An agent that can read a credential is an
+agent that can commit one.
+
+### Counters, batched
+
+Per-day counters rather than an event log: a product that succeeds would
+outgrow this server's disk in a month, and nothing anyone asks — how many
+calls, from how many customers, failing how often — needs the individual rows.
+Ninety days kept, so the file stays small forever.
+
+Reports are batched rather than per-request. A product calling this server once
+per inbound request would make this server its latency floor and its
+availability ceiling, which is an absurd thing to do to a product for the sake
+of a counter. The venture accumulates and flushes on its own schedule, and a
+flush that fails is dropped without the customer noticing.
+
+The distinct-caller set is capped at 500 per day. It is the one unbounded thing
+here, and past the cap the count keeps rising while the identities stop being
+recorded — the right thing to lose first.
+
+### In the context, not behind a tool
+
+`buildUsageContext()` puts one line per deployed venture into the shared
+business context, with the silent and unmeasured ones sorted first. The agent
+most likely to need this number is the one least likely to think of asking for
+it, and a week of silence on a deployed product is the most important sentence
+in that context — buried under a table of zeros, it gets skimmed past.
+
+`check_usage` on the CFO and the Engineering Lead gives the detail on demand.
+Zero calls comes back as a finding, in those words: *silence is a finding, not
+a gap in the data.*

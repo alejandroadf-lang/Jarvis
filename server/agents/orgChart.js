@@ -290,6 +290,19 @@ ${BASE_STYLE}`,
       'Consult the CFO for pricing decisions, unit economics, margin analysis, or whether a venture is genuinely earning rather than merely projecting revenue.',
     actions: [
       {
+        name: 'check_usage',
+        description:
+          "Find out whether anybody is actually using a venture's product. Returns real call counts, error counts and distinct callers per day, reported by the deployed product itself — not an estimate and not the team's impression. Call it before claiming a venture is going well or badly, before deciding what to build next, and whenever a status report is about to describe progress: shipped and used are different facts, and this is the only place the second one exists. Zero calls is an answer, not a missing one.",
+        input_schema: {
+          type: 'object',
+          properties: {
+            ventureId: { type: 'string', description: 'The venture id, from the business context below.' },
+            days: { type: 'number', description: 'How many days back to look. Defaults to 7.' },
+          },
+          required: ['ventureId'],
+        },
+      },
+      {
         name: 'report_milestone_progress',
         description:
           "Record whether a venture's milestone was actually hit or missed. Only call this when the founder reports a real outcome for a specific milestone — not a plan or an estimate.",
@@ -403,6 +416,19 @@ ${BASE_STYLE}`,
     toolDescription:
       'Consult the Engineering Lead for concrete implementation questions: how to build something, technical design detail, effort estimates, or code-level tradeoffs.',
     actions: [
+      {
+        name: 'check_usage',
+        description:
+          "Find out whether anybody is actually using a venture's product. Returns real call counts, error counts and distinct callers per day, reported by the deployed product itself — not an estimate and not the team's impression. Call it before claiming a venture is going well or badly, before deciding what to build next, and whenever a status report is about to describe progress: shipped and used are different facts, and this is the only place the second one exists. Zero calls is an answer, not a missing one.",
+        input_schema: {
+          type: 'object',
+          properties: {
+            ventureId: { type: 'string', description: 'The venture id, from the business context below.' },
+            days: { type: 'number', description: 'How many days back to look. Defaults to 7.' },
+          },
+          required: ['ventureId'],
+        },
+      },
       {
         name: 'check_ready',
         description:

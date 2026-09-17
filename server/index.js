@@ -33,6 +33,7 @@ import {
   handleDeployCode,
   handleDeployChanges,
   handleCheckReady,
+  handleCheckUsage,
   handleOpenPullRequest,
   handleRevertCommit,
   handleSendCustomerEmail,
@@ -91,6 +92,7 @@ import {
   listDeepDives,
   queueDepth,
 } from './deepDives.js';
+import { recordUsage, mintIngestKey, verifyIngestKey, hasIngestKey, usageSummary } from './ventureUsage.js';
 import { requireAccess, warnIfUnprotected, isAccessProtected, hasAppToken } from './auth.js';
 import {
   getPlan,
@@ -302,6 +304,10 @@ async function runCompanyTurn(sessionId, message, { deadlineAt = null, image = n
       // Reads the gates that already exist and reports every one at once,
       // rather than letting the team discover them one refusal per turn. Grants
       // nothing and reaches nothing.
+      // Whether anyone is actually calling the product. Reads counters the
+      // venture reports itself; shipped and used are different facts and this
+      // is the only place the second one exists.
+      check_usage: (input) => handleCheckUsage(input),
       check_ready: (input) => handleCheckReady(input),
       deploy_changes: (input, ctx) => handleDeployChanges(input, 'interactive', ctx),
       // Finished work that has not landed. Not behind the plan — see
@@ -565,6 +571,55 @@ app.post('/api/ventures/:id/repo', (req, res) => {
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
+});
+
+// --- Usage ingest -------------------------------------------------------------
+//
+// The first endpoint in this app a machine outside the company calls, and the
+// only one authenticated by something other than the founder's app token. A
+// venture's deployed product holds a key that can increment that venture's
+// counters and do nothing else — handing it the app token instead would mean
+// a compromised product could disable the kill switch.
+//
+// Deliberately forgiving. A counter that 500s and takes a customer's request
+// down with it would be a product outage caused by bookkeeping, which is an
+// absurd trade; anything malformed is rejected with a 400 and a reason, and
+// nothing here can throw its way into the venture's own latency.
+app.post('/api/ventures/:id/usage/report', (req, res) => {
+  const { id } = req.params;
+  const key = (req.get('x-venture-key') || '').trim();
+  if (!verifyIngestKey(id, key) && !hasAppToken(req)) {
+    return res.status(401).json({ error: 'Bad or missing venture key.' });
+  }
+  try {
+    const recorded = recordUsage(id, req.body || {});
+    res.json({ recorded });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Mints the key and returns it once. Founder-only, and it is the founder who
+// puts it into the venture's own deployment environment — no agent tool reads
+// it, because an agent that can read a credential is an agent that can commit
+// one.
+app.post('/api/ventures/:id/usage/key', (req, res) => {
+  try {
+    const key = mintIngestKey(req.params.id);
+    res.json({
+      key,
+      variable: 'JARVIS_USAGE_KEY',
+      endpoint: `/api/ventures/${req.params.id}/usage/report`,
+      note: 'Put this in the venture\'s own deployment environment. It will not be shown again.',
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/ventures/:id/usage', (req, res) => {
+  const days = Math.min(90, Math.max(1, Number(req.query.days) || 7));
+  res.json({ usage: usageSummary(req.params.id, { days }), configured: hasIngestKey(req.params.id) });
 });
 
 app.post('/api/ventures/:id/deployment/enable', (req, res) => {
