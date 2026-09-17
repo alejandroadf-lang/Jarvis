@@ -1166,8 +1166,9 @@ export function handleCheckUsage(input) {
       ? `\n\n${Math.round(summary.errorRate * 100)}% of requests are failing. That is high enough to be the reason for anything else you were about to investigate — look here first.`
       : '';
 
+  const unit = venture.pricing?.unit || 'outcome';
   return [
-    `"${venture.title}" over ${days} day${days === 1 ? '' : 's'}: ${summary.calls} calls, ${summary.errors} errors, ${summary.callers} distinct caller${summary.callers === 1 ? '' : 's'}.`,
+    `"${venture.title}" over ${days} day${days === 1 ? '' : 's'}: ${summary.calls} calls, ${summary.errors} errors, ${summary.callers} distinct caller${summary.callers === 1 ? '' : 's'}, ${summary.outcomes} ${unit}${summary.outcomes === 1 ? '' : 's'} delivered.`,
     ...lines,
     errorNote,
   ]

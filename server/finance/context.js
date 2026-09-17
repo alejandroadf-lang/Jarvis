@@ -5,6 +5,8 @@
 
 import { getLedger } from './ledger.js';
 import { usageSummary } from '../ventureUsage.js';
+import { economicsLast30 } from '../spend.js';
+import { buildKnowledgeContext } from '../workspace/knowledge.js';
 import { listVentures, listContacts, listReplies, describePricing, pipelineSummary, listObjectives } from './ventures.js';
 import { getLatestWeeklyReflection } from '../weeklyReflections.js';
 import { getAgentEarnings, sharePct } from './profitShare.js';
@@ -169,6 +171,26 @@ move one of these is work to question:
 ${sections.join('\n')}`;
 }
 
+// What a customer costs the company to serve, and what a unit of revenue
+// costs to earn. Nothing until there is revenue; then the one line that says
+// whether the model works.
+export function buildEconomicsContext() {
+  const { transactions } = getLedger();
+  const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  const revenue = transactions
+    .filter((t) => t.type === 'revenue' && new Date(t.createdAt).getTime() >= cutoff)
+    .reduce((sum, t) => sum + t.amount, 0);
+  const paying = new Set();
+  for (const v of listVentures()) {
+    for (const [email, d] of Object.entries(v.pipeline || {})) if (d.stage === 'paying') paying.add(email);
+  }
+  const e = economicsLast30({ revenue, payingCustomers: paying.size });
+  if (!e.revenue && !e.payingCustomers) return '';
+  const perUnit = e.spendPerRevenueUnit != null ? `${e.spendPerRevenueUnit.toFixed(2)} of model spend per unit of revenue` : 'no revenue yet';
+  const perCustomer = e.spendPerPayingCustomer != null ? `${e.spendPerPayingCustomer.toFixed(2)} per paying customer` : 'no paying customers yet';
+  return `Economics, last 30 days: model spend ${e.spentUsd.toFixed(2)} against revenue ${e.revenue.toFixed(2)} from ${e.payingCustomers} paying customer${e.payingCustomers === 1 ? '' : 's'} — ${perUnit}, ${perCustomer}. Above 1.0 per unit the company loses money on every sale.`;
+}
+
 export function buildUsageContext() {
   const deployed = listVentures().filter((v) => v.status === 'active' && v.repo);
   if (!deployed.length) return '';
@@ -185,8 +207,10 @@ export function buildUsageContext() {
       continue;
     }
     const errors = usage.errorRate > 0.05 ? `, ${Math.round(usage.errorRate * 100)}% failing` : '';
+    const unit = venture.pricing?.unit ? ` ${venture.pricing.unit}s` : ' outcomes';
+    const outcomes = usage.outcomes ? `, ${usage.outcomes}${unit} delivered` : '';
     rows.push(
-      `  · "${venture.title}" — ${usage.calls} calls from ${usage.callers} caller${usage.callers === 1 ? '' : 's'} in 7 days${errors}.`,
+      `  · "${venture.title}" — ${usage.calls} calls from ${usage.callers} caller${usage.callers === 1 ? '' : 's'} in 7 days${outcomes}${errors}.`,
     );
   }
 
@@ -219,6 +243,10 @@ export function buildCompanyContext() {
     // agent that reads it after deciding what to do has already duplicated it.
     describeTasksForAgents(),
     buildBusinessContext(),
+    buildEconomicsContext(),
+    // The compiled pages before the raw notes: what we concluded, then what
+    // we observed lately.
+    buildKnowledgeContext(),
     buildVentureNotesContext(),
     buildOutreachContext(),
     // Last of the business facts and deliberately not buried: the only place

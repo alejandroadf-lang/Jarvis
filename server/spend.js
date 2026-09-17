@@ -104,3 +104,24 @@ export function assertUnderDailyCap() {
     );
   }
 }
+
+// Cost per unit of revenue and per paying customer, over the last thirty
+// days. The company measured cost per day precisely and had no number that
+// related it to anything a customer did — KPMG's respondents name exactly this
+// visibility as the thing they are now building. Meaningless at zero revenue;
+// the first number that matters once there is any.
+export function economicsLast30({ revenue = 0, payingCustomers = 0 } = {}) {
+  const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const days = load().days;
+  let spentUsd = 0;
+  for (const [day, usd] of Object.entries(days)) {
+    if (day >= cutoff) spentUsd += Number(usd) || 0;
+  }
+  return {
+    spentUsd,
+    revenue,
+    payingCustomers,
+    spendPerRevenueUnit: revenue > 0 ? spentUsd / revenue : null,
+    spendPerPayingCustomer: payingCustomers > 0 ? spentUsd / payingCustomers : null,
+  };
+}

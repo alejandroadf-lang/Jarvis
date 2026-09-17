@@ -11,6 +11,7 @@
 // can't move money or kill a venture — it can only write the reflection
 // text.
 
+import { describeLatestEvalForReflection } from './evalRuns.js';
 import { runAgent } from './agents/agentRunner.js';
 import { AGENTS as COMPANY_AGENTS, ROOT_AGENT_ID as COMPANY_ROOT } from './agents/orgChart.js';
 import { buildBusinessContext } from './finance/context.js';
@@ -67,7 +68,13 @@ ${ventureList}
 Real money moved this week:
 ${transactionList}
 
-Write a short Weekly Reflection: which flagged opportunities actually got
+The behavioural eval — what the agents did when tested, not what they said:
+${describeLatestEvalForReflection()}
+
+Write a short Weekly Reflection. Start with the eval: for each failed scenario,
+say in one line what the agent did instead and what would make it do the right
+thing — a prompt line, a tool, a piece of context. That is the error analysis
+nothing else in this company performs. Then: which flagged opportunities actually got
 followed up on this week versus quietly dropped, how the ventures proposed
 or discussed this week are actually doing, and one concrete lesson for next
 week's leadership sync and ideation to carry forward. Be concrete and

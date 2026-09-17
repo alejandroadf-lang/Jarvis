@@ -20,6 +20,7 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { recordEvalRun } from '../evalRuns.js';
 
 const RUNNER = path.join(path.dirname(fileURLToPath(import.meta.url)), 'runner.mjs');
 const TIMEOUT_MS = Math.max(60_000, Number(process.env.EVAL_TIMEOUT_MS) || 15 * 60 * 1000);
@@ -42,6 +43,7 @@ export function isEvalRunning() {
 export async function runEval({ scenarioId } = {}) {
   if (running) throw new Error('An eval is already running — wait for it to finish.');
   running = true;
+  const startedAt = new Date().toISOString();
 
   try {
     const output = await new Promise((resolve, reject) => {
@@ -81,6 +83,9 @@ export async function runEval({ scenarioId } = {}) {
       });
     });
 
+    // Kept, so the reflection and the register can read it after the message
+    // has scrolled away.
+    recordEvalRun({ output, scenarioId: scenarioId || null, startedAt, ok: !/\[FAIL\]/.test(output) });
     return { ok: true, output, summary: summarise(output) };
   } finally {
     running = false;

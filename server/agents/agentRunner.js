@@ -731,15 +731,34 @@ export async function runAgent({
           ? skill.body
           : `No skill called "${toolUse.input?.name}" is available to you. Work from what you know rather than guessing at another name.`;
       } else if (actionHandlers[toolUse.name]) {
+        const actionStarted = Date.now();
+        let ok = true;
         try {
           // The acting agent is passed alongside the input so a handler can
           // attribute what just happened (see finance/profitShare.js). It's
           // the runner that knows this, not the agent — which is precisely
           // why credit can't be self-reported.
           resultText = await actionHandlers[toolUse.name](toolUse.input || {}, { agentId: agent.id });
+          // A handler that refuses returns text rather than throwing, so the
+          // trace reads the reply the way the agent does.
+          ok = !/^(Could not|Not started|Nothing to check)/.test(String(resultText || ''));
         } catch (err) {
           resultText = `(Action ${toolUse.name} failed: ${err.message})`;
+          ok = false;
         }
+        // Recorded beside the delegations, so "why did the team do that" has an
+        // answer after the fact. `title` because the report views render trace
+        // entries by title; no `id` so the graph's activity map, which counts
+        // agents consulted, ignores it.
+        trace.push({
+          kind: 'action',
+          title: `${ok ? '⚙' : '⚠'} ${toolUse.name}`,
+          agentId: agent.id,
+          tool: toolUse.name,
+          ok,
+          depth,
+          ms: Date.now() - actionStarted,
+        });
       } else {
         resultText = `(Unknown tool: ${toolUse.name})`;
       }

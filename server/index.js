@@ -113,6 +113,7 @@ import {
 import { isOpenAIConfigured, transcribeAudio } from './agents/openai.js';
 import { listWeeklyReflections, getWeeklyReflection, getLatestWeeklyReflection } from './weeklyReflections.js';
 import { startWeeklyReflectionScheduler, runWeeklyReflectionNow, isWeeklyReflectionRunning } from './weeklyScheduler.js';
+import { startInboxWatcher } from './inboxWatch.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3001;
@@ -1303,4 +1304,5 @@ app.listen(PORT, () => {
   warnIfUnprotected();
   startDailyMeetingScheduler({ anthropic });
   startWeeklyReflectionScheduler({ anthropic });
+  startInboxWatcher({ anthropic });
 });

@@ -35,6 +35,7 @@
 // works: the Studio proposes ventures, the Executive Team builds them, and they
 // never consult each other mid-turn.
 
+import { agentPassRates, latestEvalRun } from './evalRuns.js';
 import { AGENTS as COMPANY_AGENTS, ROOT_AGENT_ID as COMPANY_ROOT } from './agents/orgChart.js';
 import { AGENTS as STUDIO_AGENTS, ROOT_AGENT_ID as STUDIO_ROOT } from './agents/ideationTeam.js';
 import { resolveModelForAgent } from './agents/models.js';
@@ -44,6 +45,20 @@ import { getProfitShare } from './finance/profitShare.js';
 import { listTasks } from './tasks.js';
 import { getSpendSummary } from './spend.js';
 import { listVentures } from './finance/ventures.js';
+
+// Tools whose effect leaves this server: a commit, an email, a checkout link,
+// a workflow run. The register lists these per agent because "who can touch
+// the outside world" is the governance question, and a count of tools is not.
+const REAL_WORLD_ACTIONS = new Set([
+  'deploy_code',
+  'deploy_changes',
+  'open_pull_request',
+  'revert_commit',
+  'send_customer_email',
+  'create_payment_link',
+  'run_checks',
+  'link_venture_repo',
+]);
 
 /**
  * @returns {{nodes: Array, edges: Array, meta: object}}
@@ -76,6 +91,7 @@ export function buildGraph() {
   }
 
   const alternativeAvailable = isOpenRouterConfigured();
+  const rates = agentPassRates();
 
   const nodes = TEAMS.flatMap(({ key, agents, root }) => Object.values(agents).map((agent) => {
     const spec = resolveModelForAgent(agent, alternativeAvailable);
@@ -93,6 +109,12 @@ export function buildGraph() {
       // weight of what it actually carries rather than by name length.
       reportCount: (agent.reports || []).length,
       toolCount: (agent.actions || []).length,
+      // The register: which of its tools reach outside the company, and how
+      // its judgment scored when last measured. EY's and BCG's governance
+      // asks reduce to these two columns.
+      realActions: (agent.actions || []).map((a) => a.name).filter((n) => REAL_WORLD_ACTIONS.has(n)),
+      evalPassRate: rates[agent.id]?.rate ?? null,
+      evalScenarios: rates[agent.id]?.total ?? 0,
       provider: spec.provider,
       model: spec.model,
       // The distinction that matters for the bill: frontier or not.
@@ -149,6 +171,10 @@ export function buildGraph() {
       // consulted" is the finding, and a viewer should not have to count dots.
       idleCount: nodes.length - ranCount,
       frontierCount: nodes.filter((n) => n.frontier).length,
+      eval: (() => {
+        const run = latestEvalRun();
+        return run ? { at: run.at, passCount: run.passCount, total: run.total } : null;
+      })(),
       tasks: {
         done: tasks.filter((t) => t.status === 'done').length,
         running: tasks.filter((t) => t.status === 'running').length,

@@ -50,6 +50,29 @@ export function nextWeeklyTargetUTC(from = new Date()) {
   return candidate;
 }
 
+// The two passes that turn a weekly reflection from a diary into a loop.
+export async function runWeeklyFollowUps({ anthropic }) {
+  if (process.env.EVAL_WEEKLY !== 'false') {
+    try {
+      const { runEval } = await import('./eval/run.js');
+      console.log('Running the weekly behavioural eval...');
+      const { summary } = await runEval({});
+      console.log(`Weekly eval finished.\n${summary}`);
+    } catch (err) {
+      console.error('Weekly eval failed:', err.message);
+    }
+  }
+  if (process.env.KNOWLEDGE_WEEKLY !== 'false') {
+    try {
+      const { compileKnowledge } = await import('./workspace/knowledge.js');
+      const written = await compileKnowledge({ anthropic });
+      console.log(`Knowledge pages compiled: ${written.length}.`);
+    } catch (err) {
+      console.error('Knowledge compile failed:', err.message);
+    }
+  }
+}
+
 export function startWeeklyReflectionScheduler({ anthropic }) {
   if (!process.env.ANTHROPIC_API_KEY) {
     console.log('Weekly reflection scheduler disabled: no ANTHROPIC_API_KEY configured.');
@@ -71,6 +94,11 @@ export function startWeeklyReflectionScheduler({ anthropic }) {
       } catch (err) {
         console.error('Weekly reflection cycle failed:', err);
       }
+      // After the reflection, not before: the reflection reads the *previous*
+      // eval, and next week's reads this one. Then the knowledge pages, which
+      // read the reflection. Both are the founder's to switch off, and both
+      // are bounded by the same daily spend cap as everything else.
+      await runWeeklyFollowUps({ anthropic });
     }
     scheduleNext(tick);
   };

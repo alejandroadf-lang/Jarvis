@@ -2360,3 +2360,117 @@ A test asserts that every `founderCommand` the report suggests is one
 `parseFounderCommand` actually accepts. A report that tells the founder to send
 something the parser rejects is worse than one that stays quiet: they send it,
 nothing happens, and they stop trusting the report.
+
+## The €1M gap, applied
+
+The deep-research assessment (September 2026) found the company ahead of most
+enterprise agent programmes on governance and behind every startup that ever
+reached a million on everything commercial: no way to take money, no price in
+code, no lawful basis for the emails it was built to send, no loop that fed
+what it measured back into what it did. This section is what closed.
+
+### Money in
+
+`server/payments.js` speaks to Stripe over plain fetch — the same reason the
+GitHub client does. `create_payment_link` on the Sales Manager makes a Checkout
+Session from the price on record and the customer's expected volume; an amount
+the agent made up is Project Vend's discount problem with extra steps, so the
+amount is derived unless the founder agreed a specific figure.
+
+`POST /api/payments/webhook` is the first endpoint here whose caller is a
+payment processor. It verifies Stripe's signature over the raw body (stronger
+than the bearer check, not weaker), books the payment to the ledger, moves the
+payer to the `paying` stage, credits the agent that created the link, and tells
+the founder. Idempotent on event id: Stripe retries, and booking a payment
+twice is worse than missing it once.
+
+### Price, in code
+
+`PRICE v_123 149 0.02 page` puts a hybrid price on the venture record — a
+monthly floor plus a per-unit rate, which is what the vertical-AI cohort
+converged on while accuracy was still being proven. `monthlyValue()` is the
+number the CFO could not compute before: the prospect who asked about 50,000
+pages is worth €1,149 a month, and a million is 73 of her.
+
+### The law around the emails
+
+`server/outreachCompliance.js`. Every outbound message now ends with an
+AI-authorship disclosure (EU AI Act Article 50, in force since 2 August 2026)
+and an opt-out line, appended by the handler after the draft so no message
+leaves without them however it was written.
+
+An "unsubscribe" in any reply blocks the address before an agent reads it. A
+blocked address cannot be emailed by any agent; only the founder lifts it. The
+allowlist says who may be written to. The block says who refused. The person
+wins.
+
+German and Italian addresses — jurisdictions where B2B cold email needs prior
+consent in practice — are refused unless `CONSENT v_123 email` has recorded
+it. Matched on top-level domain, which is a known limit and why `BLOCK` exists
+by hand. `LEGITIMATE_INTEREST_ASSESSMENT.md` at the repo root is the document
+the founder completes and signs; the code cannot do that part and says so.
+
+### The supervisor's tool
+
+In Project Vend the change that made the shop profitable was a CEO agent with
+an objectives tool that vetoed bad discounts. This company had the CEO and not
+the tool. `set_objective` writes one measurable objective per venture, in the
+outcome the customer pays for, and every agent sees the open ones in context
+before the task list. `PIPELINE` shows them to the founder next to the deals.
+
+### The loops
+
+**The eval is kept.** `server/evalRuns.js` stores every run; the runner now
+prints the agent beside each scenario so a failure has a role. The weekly
+reflection opens with the latest failures and is asked, per failure, what the
+agent did instead and what would fix it — Ng's error analysis, which nothing
+else in the company performed. The eval runs itself every Sunday after the
+reflection (`EVAL_WEEKLY=false` to stop), and the knowledge pages compile
+after that.
+
+**A reply wakes one agent.** `server/inboxWatch.js` polls the mailbox every
+fifteen minutes (`INBOX_POLL_MINUTES`) and, when a known contact writes, runs
+one narrow Sales turn — the Sales Manager alone, with only the tools a reply
+needs, on a four-minute deadline. An unsubscribe wakes nobody and blocks the
+address. A same-day reply is most of what closes a first deal, and the daily
+cycle left prospects unread for 23 hours.
+
+**Knowledge that compiles.** `server/workspace/knowledge.js` has the CEO
+rewrite one page per active venture each week — what it is, where it stands,
+what was learned and on what evidence, what is believed but untested, what
+contradicts what. Published to the vault under `Company/Knowledge/` and kept
+locally so the shared context actually contains it. A wiki nobody reads is a
+diary.
+
+### The register and the trace
+
+Every graph node now carries `realActions` — the tools whose effect leaves
+this server — and `evalPassRate` from the latest run, null for an agent no
+scenario exercises. That null is the finding: an agent with no eval is an
+agent whose judgment nobody has measured.
+
+The runner records every action-tool call in the trace beside the delegations,
+with the tool, the agent, whether the handler refused, and how long it took.
+"Why did the team do that" now has an answer after the fact.
+
+### Outcomes and economics
+
+Usage reports carry `outcomes` — pages processed, documents extracted — the
+unit the customer pays for and the number objectives are written in. Calls are
+activity; outcomes are what the activity was for. `buildEconomicsContext()`
+relates thirty days of model spend to revenue and paying customers, and says
+nothing until there is revenue, then one line: above 1.0 per unit, the company
+loses money on every sale.
+
+### The studio gate
+
+`propose_venture` refuses while an active venture exists and recurring revenue
+is under `STUDIO_MIN_MRR_USD` (default 1000). One expensive thing, completely.
+The studio was the right tool for choosing a venture and the wrong tool for
+the next eighteen months.
+
+### Held
+
+Exposing the venture's API as an MCP server waits for the API to exist. The
+model tiers, the design partners, and sending `EVAL` for the first time are the
+founder's, and no code changes that.

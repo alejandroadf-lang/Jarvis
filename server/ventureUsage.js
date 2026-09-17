@@ -90,10 +90,14 @@ export function verifyIngestKey(ventureId, presented) {
  * hundred requests, whatever suits it — and a flush that fails is retried or
  * dropped without the customer ever noticing.
  */
-export function recordUsage(ventureId, { calls = 0, errors = 0, callers = [], endpoint = '' } = {}) {
+export function recordUsage(ventureId, { calls = 0, errors = 0, callers = [], endpoint = '', outcomes = 0 } = {}) {
   const countedCalls = Math.max(0, Math.floor(Number(calls) || 0));
   const countedErrors = Math.max(0, Math.floor(Number(errors) || 0));
-  if (!countedCalls && !countedErrors) {
+  // The outcome is the unit the customer pays for — pages processed, documents
+  // extracted — and the number the CEO's objective is written in. Calls are
+  // activity; this is the thing the activity was for.
+  const countedOutcomes = Math.max(0, Math.floor(Number(outcomes) || 0));
+  if (!countedCalls && !countedErrors && !countedOutcomes) {
     throw new Error('A usage report needs at least one call or error to record.');
   }
 
@@ -102,9 +106,10 @@ export function recordUsage(ventureId, { calls = 0, errors = 0, callers = [], en
   venture.days = venture.days || {};
 
   const date = today();
-  const day = venture.days[date] || { calls: 0, errors: 0, callers: [], endpoints: {} };
+  const day = venture.days[date] || { calls: 0, errors: 0, callers: [], endpoints: {}, outcomes: 0 };
   day.calls += countedCalls;
   day.errors += countedErrors;
+  day.outcomes = (day.outcomes || 0) + countedOutcomes;
 
   const seen = new Set(day.callers);
   for (const caller of Array.isArray(callers) ? callers : []) {
@@ -152,7 +157,7 @@ export function usageSummary(ventureId, { days = 7 } = {}) {
   // engineering problem, the other is a demand problem, and confusing them
   // sends the team to fix the wrong one.
   if (!venture || !Object.keys(venture.days || {}).length) {
-    return { known: false, silent: true, days: [], calls: 0, errors: 0, callers: 0, errorRate: 0, lastSeenAt: null };
+    return { known: false, silent: true, days: [], calls: 0, errors: 0, callers: 0, outcomes: 0, errorRate: 0, lastSeenAt: null };
   }
 
   const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
@@ -164,10 +169,12 @@ export function usageSummary(ventureId, { days = 7 } = {}) {
       calls: day.calls,
       errors: day.errors,
       callers: (day.callers || []).length,
+      outcomes: day.outcomes || 0,
     }));
 
   const calls = rows.reduce((sum, row) => sum + row.calls, 0);
   const errors = rows.reduce((sum, row) => sum + row.errors, 0);
+  const outcomes = rows.reduce((sum, row) => sum + row.outcomes, 0);
   // Distinct across the window, not the sum of the daily distincts — the same
   // customer calling every day is one customer, and summing would report seven.
   const callers = new Set();
@@ -178,10 +185,11 @@ export function usageSummary(ventureId, { days = 7 } = {}) {
 
   return {
     known: true,
-    silent: calls === 0,
+    silent: calls === 0 && outcomes === 0,
     days: rows,
     calls,
     errors,
+    outcomes,
     callers: callers.size,
     errorRate: calls ? errors / (calls + errors) : 0,
     lastSeenAt: venture.lastSeenAt || null,

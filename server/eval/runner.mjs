@@ -189,7 +189,9 @@ for (const scenario of toRun) {
 
   if (outcome.pass) passCount++;
   const icon = outcome.pass ? 'PASS' : 'FAIL';
-  console.log(`[${icon}] ${scenario.id}`);
+  // The agent is printed so evalRuns.js can attribute a failure to a role,
+  // which is what the agent register on the graph page reads.
+  console.log(`[${icon}] ${scenario.id} · agent=${scenario.agentId}`);
   console.log(`       ${scenario.description}`);
   console.log(`       ${outcome.notes}`);
   if (!outcome.pass && outcome.text) {

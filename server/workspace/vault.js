@@ -32,6 +32,9 @@ const FOLDERS = {
   reports: 'Company/Daily Reports',
   reflections: 'Company/Weekly Reflections',
   ventures: 'Company/Ventures',
+  // Compiled understanding, one page per venture, rewritten weekly. See
+  // workspace/knowledge.js — this is the wiki layer over the reports above.
+  knowledge: 'Company/Knowledge',
 };
 
 // The one file the founder writes and the company reads. Sitting at the top
@@ -211,6 +214,14 @@ export function publishWeeklyReflection(reflection) {
     `${FOLDERS.reflections}/${reflection.weekEnding}.md`,
     formatWeeklyReflection(reflection),
     `Weekly reflection — week ending ${reflection.weekEnding}`
+  );
+}
+
+export function publishKnowledge(venture, markdown) {
+  return publish(
+    `${FOLDERS.knowledge}/${noteName(venture.title)}.md`,
+    `# ${venture.title} — what we know\n\n_Compiled ${new Date().toISOString().slice(0, 10)} by the company from its reports and notes. Rewritten weekly._\n\n${markdown}\n`,
+    `Knowledge — ${venture.title}`
   );
 }
 
