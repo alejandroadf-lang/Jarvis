@@ -34,6 +34,9 @@ import { planSyncScope } from './movement.js';
 import {
   handleProposeVenture,
   handleDeployCode,
+  handleDeployChanges,
+  handleOpenPullRequest,
+  handleRevertCommit,
   handleSendCustomerEmail,
   handleCheckReplies,
   handleLogContactNote,
@@ -191,6 +194,17 @@ export function dailyCycleActionHandlers() {
     // founder can tell an unattended real action apart from one that happened
     // during a live conversation — see index.js's 'interactive' counterpart.
     deploy_code: (input) => handleDeployCode(input, 'daily_cycle'),
+    // One commit for a change that spans several files, because four commits
+    // for one change is how the deploy branch ends up holding half a refactor.
+    deploy_changes: (input, ctx) => handleDeployChanges(input, 'daily_cycle', ctx),
+    // Finished work that has not landed. Not behind the plan — see
+    // authorizePullRequest for why gating a proposal on pre-approval is a
+    // deadlock rather than a review.
+    open_pull_request: (input, ctx) => handleOpenPullRequest(input, 'daily_cycle', ctx),
+    // The undo button. Also not behind the plan: the paths belong to the
+    // commit being undone, so no plan could have named them, and a bad
+    // commit waiting until tomorrow is worse than the revert.
+    revert_commit: (input, ctx) => handleRevertCommit(input, 'daily_cycle', ctx),
     send_customer_email: (input) => handleSendCustomerEmail(input, 'daily_cycle'),
 
     // Sending is a real action and sits behind the plan. Reading what came

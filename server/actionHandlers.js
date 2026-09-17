@@ -26,6 +26,10 @@ import {
   setDeploymentEnabled,
   authorizeProbe,
   recordProbe,
+  authorizeDeploymentOfPaths,
+  authorizePullRequest,
+  recordPullRequest,
+  authorizeRevert,
   outreachRecipients,
   ventureForRecipient,
   recordReply,
@@ -51,7 +55,16 @@ import {
   sendReplyAlertEmail,
   isEmailConfigured,
 } from './email.js';
-import { commitFile, readFile as readRepoFile, listFiles as listRepoFiles, isGithubConfigured } from './deploy/github.js';
+import {
+  commitFile,
+  commitFiles,
+  createBranch,
+  openPullRequest,
+  planRevert,
+  readFile as readRepoFile,
+  listFiles as listRepoFiles,
+  isGithubConfigured,
+} from './deploy/github.js';
 import { probeEndpoint } from './execute/probe.js';
 import { fetchReplies, isInboxConfigured } from './inbox.js';
 import {
@@ -224,6 +237,224 @@ export async function handleDeployCode(input, triggeredBy = 'interactive', ctx =
     return `Deployed a real commit to "${venture.title}"'s repo (${venture.repo.owner}/${venture.repo.name}, branch ${venture.repo.branch}): ${path}. Commit: ${commitUrl || commitSha}.`;
   } catch (err) {
     return `Could not deploy: ${err.message}`;
+  }
+}
+
+// Normalizes the `changes` array the three tools below all take. Tolerant of
+// what a model actually emits — a missing `deleted` flag, a numeric path, an
+// empty-string body that is a legitimate "make this file empty" — and strict
+// about the one thing that is genuinely ambiguous: a change with no path.
+function readChanges(input) {
+  const raw = Array.isArray(input?.changes) ? input.changes : [];
+  const changes = [];
+  for (const item of raw) {
+    const path = typeof item?.path === 'string' ? item.path.trim() : '';
+    if (!path) continue;
+    if (item.deleted === true) {
+      changes.push({ path, deleted: true });
+    } else {
+      changes.push({ path, content: typeof item.content === 'string' ? item.content : '' });
+    }
+  }
+  return changes;
+}
+
+function describeChanges(changes) {
+  return changes
+    .map((c) => (c.deleted ? `  - deleted ${c.path}` : `  - ${c.path}`))
+    .join('\n');
+}
+
+// One commit, several files, all of it or none of it.
+//
+// deploy_code writes one file per commit, which quietly decided how this
+// company could work: a change spanning seven files became seven commits, and
+// a turn that ran out of room at the fourth left the deploy branch holding
+// half a refactor. Every gate deploy_code passes, this passes — once per path,
+// so six files cannot ride in on the seventh's approval.
+export async function handleDeployChanges(input, triggeredBy = 'interactive', ctx = {}) {
+  if (!isGithubConfigured()) {
+    return 'Could not deploy: this server has no GITHUB_TOKEN configured, so real deployments are unavailable.';
+  }
+  const changes = readChanges(input);
+  if (!changes.length) {
+    return 'Could not deploy: changes is required — a list of { path, content } to write, or { path, deleted: true } to remove.';
+  }
+  const { ventureId, message, rationale } = input;
+  try {
+    const venture = authorizeDeploymentOfPaths(ventureId, changes.map((c) => c.path));
+    const { commitSha, commitUrl, files } = await commitFiles({
+      owner: venture.repo.owner,
+      repo: venture.repo.name,
+      branch: venture.repo.branch,
+      changes,
+      message: message?.trim() || `Update ${changeLabel(changes)} for ${venture.title}`,
+    });
+    // One ledger entry per path, so the deploy caps and the founder's log both
+    // count what actually changed rather than counting a seven-file commit as
+    // one small thing.
+    for (const change of changes) {
+      recordDeployment(ventureId, {
+        path: change.path,
+        message,
+        commitSha,
+        commitUrl,
+        rationale,
+        triggeredBy,
+        agentId: ctx.agentId,
+      });
+    }
+    recordContribution({
+      agentId: ctx.agentId,
+      kind: 'deploy_code',
+      ventureId,
+      detail: `${files} files in one commit`,
+    });
+    await notify(sendDeploymentEmail, venture, { path: `${files} files`, commitUrl, triggeredBy });
+    return `Deployed one commit touching ${files} file${files === 1 ? '' : 's'} to "${venture.title}"'s repo (${venture.repo.owner}/${venture.repo.name}, branch ${venture.repo.branch}):\n${describeChanges(changes)}\nCommit: ${commitUrl || commitSha}.`;
+  } catch (err) {
+    return `Could not deploy: ${err.message}`;
+  }
+}
+
+function changeLabel(changes) {
+  if (changes.length === 1) return changes[0].path;
+  return `${changes.length} files`;
+}
+
+// Real work, finished, on a branch, not landed.
+//
+// Until now every option was binary: commit to the branch a deploy watches, or
+// write a paragraph describing what you would have committed. This is the
+// third thing, and it is the one a real engineering team uses by default.
+//
+// Deliberately not gated on the approved daily plan (see authorizePullRequest):
+// a PR is how work gets proposed, and requiring pre-approval to propose
+// something means the only way to propose is to have already been approved.
+export async function handleOpenPullRequest(input, triggeredBy = 'interactive', ctx = {}) {
+  if (!isGithubConfigured()) {
+    return 'Could not open a pull request: this server has no GITHUB_TOKEN configured.';
+  }
+  const changes = readChanges(input);
+  if (!changes.length) {
+    return 'Could not open a pull request: changes is required — a list of { path, content }, or { path, deleted: true }.';
+  }
+  const title = typeof input?.title === 'string' ? input.title.trim() : '';
+  if (!title) return 'Could not open a pull request: title is required.';
+
+  const { ventureId, body } = input;
+  // A branch name the founder can read at a glance in the repo's branch list,
+  // and one that cannot collide with a second PR the same day.
+  const branch =
+    (typeof input?.branch === 'string' && input.branch.trim()) ||
+    `agents/${slugify(title)}-${Date.now().toString(36)}`;
+
+  try {
+    const venture = authorizePullRequest(ventureId, { paths: changes.map((c) => c.path) });
+    const base = venture.repo.branch;
+    await createBranch({ owner: venture.repo.owner, repo: venture.repo.name, branch, fromBranch: base });
+    await commitFiles({
+      owner: venture.repo.owner,
+      repo: venture.repo.name,
+      branch,
+      changes,
+      message: title,
+    });
+    const pr = await openPullRequest({
+      owner: venture.repo.owner,
+      repo: venture.repo.name,
+      head: branch,
+      base,
+      title,
+      body: typeof body === 'string' ? body : '',
+    });
+    recordPullRequest(ventureId, {
+      number: pr.number,
+      url: pr.url,
+      title,
+      branch,
+      paths: changes.map((c) => c.path),
+      triggeredBy,
+      agentId: ctx.agentId,
+    });
+    recordContribution({ agentId: ctx.agentId, kind: 'open_pull_request', ventureId, detail: title });
+    return `Opened pull request #${pr.number} on ${venture.repo.owner}/${venture.repo.name}: "${title}".\nBranch ${branch} -> ${base}, ${changes.length} file${changes.length === 1 ? '' : 's'}:\n${describeChanges(changes)}\n${pr.url}\n\nNothing has landed. The founder reviews and merges, or closes it and nothing happened.`;
+  } catch (err) {
+    return `Could not open a pull request: ${err.message}`;
+  }
+}
+
+function slugify(text) {
+  return String(text)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40) || 'change';
+}
+
+// The undo button.
+//
+// This company could commit and could not un-commit, which made a bad change
+// the founder's problem on a laptop the founder does not always have. The
+// asymmetry was more dangerous than any individual commit: a team that can
+// only move forward gets more cautious over time, not less, and caution here
+// looks like never shipping.
+export async function handleRevertCommit(input, triggeredBy = 'interactive', ctx = {}) {
+  if (!isGithubConfigured()) {
+    return 'Could not revert: this server has no GITHUB_TOKEN configured.';
+  }
+  const sha = typeof input?.sha === 'string' ? input.sha.trim() : '';
+  if (!sha) return 'Could not revert: sha is required — the commit to undo.';
+
+  const { ventureId } = input;
+  const venture = getVenture(ventureId);
+  if (!venture) return 'Could not revert: venture not found.';
+  if (!venture.repo) return 'Could not revert: no repo is linked to this venture.';
+
+  try {
+    // Read what that commit did before deciding whether it may be undone. The
+    // paths are not the agent's to supply — they are whatever the commit
+    // touched — so the allowlist gets checked against the truth rather than
+    // against a claim.
+    const plan = await planRevert({ owner: venture.repo.owner, repo: venture.repo.name, sha });
+    authorizeRevert(ventureId, { paths: plan.paths });
+
+    const { commitSha, commitUrl, files } = await commitFiles({
+      owner: venture.repo.owner,
+      repo: venture.repo.name,
+      branch: venture.repo.branch,
+      changes: plan.changes,
+      message: `Revert "${plan.subject}"\n\nThis reverts commit ${sha}.`,
+    });
+
+    for (const change of plan.changes) {
+      recordDeployment(ventureId, {
+        path: change.path,
+        message: `Revert ${sha.slice(0, 7)}`,
+        commitSha,
+        commitUrl,
+        rationale: typeof input?.rationale === 'string' ? input.rationale : '',
+        triggeredBy,
+        agentId: ctx.agentId,
+      });
+    }
+    recordContribution({ agentId: ctx.agentId, kind: 'revert_commit', ventureId, detail: sha.slice(0, 7) });
+    await notify(sendDeploymentEmail, venture, { path: `revert of ${sha.slice(0, 7)}`, commitUrl, triggeredBy });
+
+    // The caveat is stated every time rather than buried in a doc. A revert is
+    // scoped to the paths that commit touched, so if something later also
+    // edited one of them, this just overwrote that later edit — and the agent
+    // is the only one positioned to notice before the founder does.
+    return [
+      `Reverted ${sha.slice(0, 7)} ("${plan.subject}") on "${venture.title}" — one commit putting ${files} file${files === 1 ? '' : 's'} back:`,
+      describeChanges(plan.changes),
+      `Commit: ${commitUrl || commitSha}.`,
+      '',
+      'This put those specific paths back to their state before that commit. If anything landed on them since, ' +
+        'that work is now overwritten — check before moving on.',
+    ].join('\n');
+  } catch (err) {
+    return `Could not revert: ${err.message}`;
   }
 }
 

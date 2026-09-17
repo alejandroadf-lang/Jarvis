@@ -31,6 +31,9 @@ import {
   handleReportMilestoneProgress,
   handleKillVenture,
   handleDeployCode,
+  handleDeployChanges,
+  handleOpenPullRequest,
+  handleRevertCommit,
   handleSendCustomerEmail,
   handleCheckReplies,
   handleLogContactNote,
@@ -293,6 +296,17 @@ async function runCompanyTurn(sessionId, message, { deadlineAt = null, image = n
       // deployment/outreach log — see dailyMeeting.js for the 'daily_cycle'
       // counterpart.
       deploy_code: (input) => handleDeployCode(input, 'interactive'),
+      // One commit for a change that spans several files, because four commits
+      // for one change is how the deploy branch ends up holding half a refactor.
+      deploy_changes: (input, ctx) => handleDeployChanges(input, 'interactive', ctx),
+      // Finished work that has not landed. Not behind the plan — see
+      // authorizePullRequest for why gating a proposal on pre-approval is a
+      // deadlock rather than a review.
+      open_pull_request: (input, ctx) => handleOpenPullRequest(input, 'interactive', ctx),
+      // The undo button. Also not behind the plan: the paths belong to the
+      // commit being undone, so no plan could have named them, and a bad
+      // commit waiting until tomorrow is worse than the revert.
+      revert_commit: (input, ctx) => handleRevertCommit(input, 'interactive', ctx),
       // Execution is wired the same way as deploy_code: available in a live
       // conversation, where the founder is present to see a red run.
       // Self-service deployment, bounded by AUTONOMOUS_DEPLOY_REPOS. Wired

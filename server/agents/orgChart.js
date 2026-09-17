@@ -420,6 +420,81 @@ ${BASE_STYLE}`,
         },
       },
       {
+        name: 'deploy_changes',
+        description:
+          "Commit several real file changes at once — one commit, all of it or none of it. Use this instead of calling deploy_code repeatedly whenever a change spans more than one file, which is most real changes: a new module and the thing that imports it, a rename across three files, a file added and another deleted. Committing them separately means a turn that runs out of room halfway leaves the branch holding half a refactor, and a reviewer reading the history sees four unexplained commits instead of one change. Same permissions as deploy_code, checked once per path. This can also DELETE files, which deploy_code cannot.",
+        input_schema: {
+          type: 'object',
+          properties: {
+            ventureId: { type: 'string', description: 'The venture id, from the business context below.' },
+            changes: {
+              type: 'array',
+              description:
+                'Every file this change touches, together. One commit, all of it or none of it.',
+              items: {
+                type: 'object',
+                properties: {
+                  path: { type: 'string', description: "File path within the repo. Must fall inside the venture's allowed paths." },
+                  content: { type: 'string', description: 'The full new content of the file. This replaces the file — it is not a diff. Omit when deleting.' },
+                  deleted: { type: 'boolean', description: 'Set true to remove the file instead of writing it. Leave content out.' },
+                },
+                required: ['path'],
+              },
+            },
+            message: { type: 'string', description: 'A real commit message describing the whole change.' },
+            rationale: { type: 'string', description: 'Why this change, right now — for the audit log the founder sees.' },
+          },
+          required: ['ventureId', 'changes', 'message'],
+        },
+      },
+      {
+        name: 'open_pull_request',
+        description:
+          "Put finished work up for review WITHOUT landing it. Creates a branch, commits the changes to it, and opens a real pull request against the venture's deploy branch. Use this whenever the change is real and complete but you would want a human to look before it goes live: anything touching money, auth, data, or a file you are not certain about; any change large enough that being wrong would be expensive to undo. This is the third option between committing straight to the deploy branch and writing a paragraph about what you would have committed — and unlike deploy_code it does NOT need an approved daily plan, because a pull request is how work gets proposed. Nothing is live until the founder merges it, and closing it undoes everything.",
+        input_schema: {
+          type: 'object',
+          properties: {
+            ventureId: { type: 'string', description: 'The venture id, from the business context below.' },
+            title: { type: 'string', description: 'The pull request title — what this change does, in one line.' },
+            body: {
+              type: 'string',
+              description:
+                'The description a reviewer reads first: what changed, why, what you checked, and what you are least sure about. Name the risk you would want caught — that is what the review is for.',
+            },
+            changes: {
+              type: 'array',
+              description:
+                'Every file this change touches, together. One commit, all of it or none of it.',
+              items: {
+                type: 'object',
+                properties: {
+                  path: { type: 'string', description: "File path within the repo. Must fall inside the venture's allowed paths." },
+                  content: { type: 'string', description: 'The full new content of the file. This replaces the file — it is not a diff. Omit when deleting.' },
+                  deleted: { type: 'boolean', description: 'Set true to remove the file instead of writing it. Leave content out.' },
+                },
+                required: ['path'],
+              },
+            },
+            branch: { type: 'string', description: 'Optional branch name. Leave it out and one is generated from the title.' },
+          },
+          required: ['ventureId', 'title', 'changes'],
+        },
+      },
+      {
+        name: 'revert_commit',
+        description:
+          "Undo a commit by putting the files it touched back the way they were. Use it the moment a change is found to be wrong — a broken deploy, a bad config, a file committed by mistake. It does not need an approved daily plan, because the paths are whatever that commit touched and no plan written this morning could have named them, and because a bad commit waiting until tomorrow is worse than the revert. It puts back only the paths that commit changed, so anything that landed on those same paths afterwards is overwritten — check what came after before calling it.",
+        input_schema: {
+          type: 'object',
+          properties: {
+            ventureId: { type: 'string', description: 'The venture id, from the business context below.' },
+            sha: { type: 'string', description: 'The commit to undo, from the deployment log in the context below.' },
+            rationale: { type: 'string', description: 'What went wrong — for the audit log the founder sees.' },
+          },
+          required: ['ventureId', 'sha'],
+        },
+      },
+      {
         name: 'queue_work',
         description:
           "Write down a multi-step job BEFORE attempting any of it. Use this whenever the work is more than one file or one action — it is the difference between a run that stops early costing one task and costing the whole plan. A turn has a token ceiling and a time limit; deciding on seven files and producing none is a real failure mode, and this is the fix for it. Queueing grants nothing: every task still passes scope, plan, caps and the kill switch when it is actually carried out.",
@@ -609,6 +684,33 @@ write a commit message and rationale a founder skimming the log later
 would find clear. If a request needs a path outside your scope or the
 venture isn't set up for deployment yet, say so plainly rather than
 working around it.
+
+You have four ways to change a repo, and picking the right one is most of
+the judgment:
+
+- \`deploy_changes\` for anything touching more than one file. One commit,
+  all of it or none of it. Four separate commits for one change is how the
+  deploy branch ends up holding half a refactor when a turn runs out of
+  room, and it is how a reviewer ends up reading four messages that each
+  describe a fragment. It is also the only tool that can delete a file.
+- \`deploy_code\` for a genuine one-file change. Nothing more.
+- \`open_pull_request\` for finished work you want looked at before it goes
+  live. This is not the cautious option to reach for when you are unsure —
+  work you are unsure about should not be proposed at all. It is the right
+  option when the work is *correct and consequential*: anything touching
+  money, auth, or customer data, anything large enough that being wrong
+  would be expensive to undo. Write the description for someone who was
+  not in this conversation, and name the thing you would most want caught.
+  It does not need an approved plan, because a pull request is how work
+  gets proposed and nothing about it is live.
+- \`revert_commit\` the moment something is found to be broken. Undo first,
+  diagnose second. It puts back only the paths that commit touched, so
+  check what landed on those paths afterwards before you call it.
+
+That last one matters more than it sounds. Until recently this company
+could commit and could not un-commit, and a team that can only move
+forward gets more cautious over time, not less. You can undo now. Ship
+accordingly.
 
 ${BASE_STYLE}`,
   },

@@ -2069,3 +2069,109 @@ returns the reason rather than failing, and the integration status panel shows
 inbound as unconfigured next to outbound, separately, because they are
 separate credentials and for most of this company's life only one of them
 existed.
+
+## Hands that can do more than one thing
+
+`commitFile` wrote exactly one file per commit, and that quietly decided how
+this company could work. A change spanning seven files became seven commits.
+A turn that ran out of room at the fourth left the deploy branch holding half
+a refactor — pushed, live, on the branch a deploy watches. There was no way to
+remove a file, no way to work on a branch, no way to propose a change rather
+than land it, and no way to undo one.
+
+The Contents API cannot express any of that. The git data API can: build a
+tree, hang a commit off it, move the ref. Same token, same guardrails — a
+wider hand, not a wider grant.
+
+Four tools now, and picking between them is most of the judgment:
+
+- **`deploy_code`** — one file. Unchanged.
+- **`deploy_changes`** — several files, one commit, all of it or none of it.
+  Also the only tool that can delete a file.
+- **`open_pull_request`** — real, finished work on a branch, not landed.
+- **`revert_commit`** — the undo button.
+
+### Checked once per path
+
+`authorizeDeploymentOfPaths()` runs the full nine-gate `authorizeDeployment()`
+once for every path in the commit. Checking only the first would let six files
+ride in on the seventh's approval, and writing a bespoke "multi" variant of a
+nine-gate authorizer is how two authorizers drift apart until one of them is
+wrong. Repeating the rate-limit check is harmless: it reads a log and writes
+nothing.
+
+Each path also gets its own entry in the deployment log, so a seven-file
+commit counts as seven changes against the founder's caps rather than as one
+small thing.
+
+### Fast-forward only
+
+The ref update passes `force: false`. Without it, a stale read followed by a
+slow turn silently discards whatever landed in between. "The commit I made an
+hour ago is gone" is the single failure that would end the founder's trust in
+this entirely, and it costs one field to make impossible.
+
+### A pull request does not need an approved plan
+
+This is the one deliberate hole in the plan gate, and it is the point rather
+than an oversight.
+
+A PR is how work gets *proposed*. Requiring a pre-approved daily plan in order
+to propose something means the only way to propose is to have already been
+approved — which is not a review step, it is a deadlock. It is also a direct
+answer to "why is the team constantly blocked": a plan gates what lands, and a
+PR is precisely what does not land.
+
+Everything else still applies: the kill switch, an active venture, a linked
+and enabled repo, the path allowlist, and its own rate limit. That last part
+is separate from the deploy caps on purpose — a team that has to spend its one
+daily commit to open a PR will stop opening PRs and go back to committing
+straight to the deploy branch, which is the opposite of the intent.
+
+A PR also cannot start CI/CD on the deploy branch, cannot overwrite a file
+anyone is running, and is undone by closing a tab. It is the only real-world
+write in this app that is reversible by default.
+
+### Undo does not need one either, for a different reason
+
+The paths a revert touches are not the agent's to choose — they are whatever
+the commit being undone changed. No plan written this morning could have named
+them. Gating on the plan would therefore mean a bad commit stays live until
+tomorrow, which inverts what the gate is for: a revert *shrinks* the blast
+radius of something this company already did.
+
+Every other gate holds, including the allowlist. A commit that reached outside
+the allowed scope cannot be undone through here — correct, because this app
+did not make that change.
+
+Reverts do count against the deploy caps, and that is the one place a cap is
+doing real work rather than bounding cost: two turns disagreeing about a file
+will undo each other forever, and the cap stops the loop at a price the
+founder set.
+
+### Plan, then commit
+
+`planRevert()` is split from the commit that applies it. The caller has to
+learn from GitHub which paths that commit touched before it can check them
+against the allowlist, so the order is: read what the commit did, authorize
+against the truth, then write. Authorizing against a claim the agent made
+would be authorizing nothing.
+
+A revert is scoped to those paths rather than resetting the branch to the
+parent commit. A hard reset would also discard everything that landed
+afterwards — a much larger act than "undo that", and not what anyone asking
+for an undo means. The tradeoff is real: if a later commit also edited one of
+those files, the revert overwrites that later edit. So the handler says so,
+every time, in the text the agent reads:
+
+> This put those specific paths back to their state before that commit. If
+> anything landed on them since, that work is now overwritten — check before
+> moving on.
+
+### Why this was the gap worth closing
+
+The asymmetry mattered more than any individual missing verb. A team that can
+commit but cannot un-commit gets more cautious over time, not less — every
+change is permanent, so every change deserves another round of deliberation,
+and caution of that kind looks exactly like never shipping. The Engineering
+Lead's prompt now says the quiet part: *you can undo now, ship accordingly.*

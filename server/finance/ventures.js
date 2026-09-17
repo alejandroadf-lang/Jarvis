@@ -377,6 +377,133 @@ export function authorizeDeployment(id, { path }) {
   return venture;
 }
 
+// A multi-file commit is still one deployment, so it passes the same door —
+// but the door was built to check one path, and a seven-file change has seven.
+// Checking only the first would let six ride in on the seventh's approval.
+export function authorizeDeploymentOfPaths(id, paths) {
+  const list = [...new Set((paths || []).filter(Boolean).map(String))];
+  if (!list.length) throw new Error('A commit needs at least one file change.');
+  let venture = null;
+  // Every path, individually, against the full gate. Repeating the rate-limit
+  // check is harmless — it reads the same log and writes nothing — and the
+  // alternative, a bespoke "multi" variant of a nine-gate authorizer, is how
+  // two authorizers drift apart until one of them is wrong.
+  for (const path of list) venture = authorizeDeployment(id, { path });
+  return venture;
+}
+
+// Opening a pull request is a real, public write to the founder's repo, so it
+// needs the halt, the linked repo, the enabled flag and the path allowlist.
+//
+// It deliberately does NOT need an approved daily plan, and that is the whole
+// design rather than an oversight. A PR is how work gets proposed; requiring
+// a pre-approved plan in order to propose something means the only way to
+// propose is to have already been approved, which is not a review step, it is
+// a deadlock. The founder's answer to "why is the team constantly blocked"
+// lives here: a plan gates what lands, a PR is what does not land yet.
+//
+// A PR also cannot start CI/CD on the deploy branch, cannot overwrite a file
+// anyone is running, and is undone by closing a tab. It is the one real-world
+// write in this app that is reversible by default.
+export function authorizePullRequest(id, { paths }) {
+  assertRealActionsAllowed();
+  const list = [...new Set((paths || []).filter(Boolean).map(String))];
+  if (!list.length) throw new Error('A pull request needs at least one file change.');
+  const venture = getVenture(id);
+  if (!venture) throw new Error('Venture not found');
+  if (venture.status !== 'active') throw new Error(`Venture must be active to open a pull request (is ${venture.status})`);
+  if (!venture.repo) throw new Error('No repo linked to this venture yet — the founder needs to link one first.');
+  if (!venture.repo.enabled) {
+    throw new Error('Repo writes are not enabled for this venture yet — the founder needs to turn them on.');
+  }
+  for (const path of list) {
+    if (!isPathAllowed(venture.repo, path)) {
+      throw new Error(
+        `"${path}" is outside the allowed scope (${venture.repo.allowedPaths.join(', ') || 'no paths allowed'}).`
+      );
+    }
+  }
+  // Rate-limited on its own log rather than against the deploy caps. A team
+  // that has to spend its one daily commit to open a PR will stop opening PRs
+  // and go back to committing straight to the deploy branch, which is the
+  // opposite of what this is for.
+  enforceRateLimits({
+    entries: venture.pullRequests || [],
+    timestampKey: 'openedAt',
+    scope: venture.repo,
+    label: 'pull request',
+  });
+  return venture;
+}
+
+export function recordPullRequest(id, { number, url, title, branch, paths, triggeredBy, agentId }) {
+  const data = load();
+  const venture = findOrThrow(data, id);
+  venture.pullRequests = venture.pullRequests || [];
+  const entry = {
+    number: Number(number) || null,
+    url: String(url || ''),
+    title: String(title || ''),
+    branch: String(branch || ''),
+    paths: (paths || []).map(String),
+    triggeredBy: triggeredBy === 'daily_cycle' ? 'daily_cycle' : 'interactive',
+    agentId: agentId ? String(agentId) : null,
+    openedAt: new Date().toISOString(),
+  };
+  venture.pullRequests.push(entry);
+  save(data);
+  return { venture, entry };
+}
+
+export function listPullRequests(id) {
+  return [...(getVenture(id)?.pullRequests || [])].sort((a, b) => (a.openedAt < b.openedAt ? 1 : -1));
+}
+
+// Undoing a commit passes every gate a deploy passes except one: it does not
+// need to be in the approved plan.
+//
+// That exception is the point of the function. The paths of a revert are not
+// the agent's to choose — they are whatever the commit being undone touched —
+// so no plan written this morning could have named them. Gating on the plan
+// would therefore mean a bad commit stays live until tomorrow, which inverts
+// what the gate is for: a revert shrinks the blast radius of something this
+// company already did, it does not open a new one. Every other check still
+// applies, including the allowlist, so a commit that reached outside the
+// allowed scope cannot be undone through here either — correct, because this
+// app did not make that change.
+export function authorizeRevert(id, { paths }) {
+  assertRealActionsAllowed();
+  const list = [...new Set((paths || []).filter(Boolean).map(String))];
+  if (!list.length) throw new Error('That commit changed no files, so there is nothing to put back.');
+  const venture = getVenture(id);
+  if (!venture) throw new Error('Venture not found');
+  if (venture.status !== 'active') throw new Error(`Venture must be active to revert (is ${venture.status})`);
+  if (!venture.repo) throw new Error('No repo linked to this venture yet — the founder needs to link one first.');
+  if (!venture.repo.enabled) {
+    throw new Error('Repo writes are not enabled for this venture yet — the founder needs to turn them on.');
+  }
+  for (const path of list) {
+    if (!isPathAllowed(venture.repo, path)) {
+      throw new Error(
+        `That commit touched "${path}", which is outside the allowed scope ` +
+          `(${venture.repo.allowedPaths.join(', ') || 'no paths allowed'}) — this app did not make that change ` +
+          'and cannot undo it.'
+      );
+    }
+  }
+  // Counted against the deploy caps, because it is a commit and the caps exist
+  // to bound how much the repo changes in a day. A revert loop is also a real
+  // failure mode: two turns disagreeing about a file will undo each other
+  // forever, and the cap is what stops it at a cost the founder set.
+  enforceRateLimits({
+    entries: venture.deployments,
+    timestampKey: 'deployedAt',
+    scope: venture.repo,
+    label: 'deployment',
+  });
+  return venture;
+}
+
 // Running the tests is not deploying, and shares none of its limits: no
 // allowlist (a workflow run touches no path), and not counted against the
 // deploy caps, because a team that must spend its one daily commit to find
