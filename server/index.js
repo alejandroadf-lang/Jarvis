@@ -26,6 +26,8 @@ import { recordExchange, buildFounderContext } from './memory/honcho.js';
 import { readFounderSteering } from './workspace/vault.js';
 import {
   handleProposeVenture,
+  handleCalculate,
+  handleVerifyClaim,
   handleLogRevenue,
   handleLogExpense,
   handleReportMilestoneProgress,
@@ -60,6 +62,7 @@ import {
 } from './actionHandlers.js';
 import { listDailyReports, getDailyReport, getLatestDailyReport } from './dailyReports.js';
 import { startDailyMeetingScheduler, runDailyMeetingNow, isDailyMeetingRunning } from './scheduler.js';
+import { studioActionHandlers } from './dailyMeeting.js';
 import { getKillSwitch, haltRealActions, resumeRealActions } from './killSwitch.js';
 import { getSpendSummary } from './spend.js';
 import { getIntegrationStatus } from './integrations.js';
@@ -474,7 +477,7 @@ app.post('/api/studio/chat', async (req, res) => {
       agents: STUDIO_AGENTS,
       agentId: STUDIO_ROOT,
       messages: workingMessages,
-      actionHandlers: { propose_venture: handleProposeVenture },
+      actionHandlers: studioActionHandlers(),
       extraContext: joinContext(buildStudioContext(), steering, founderContext),
       perAgentContext: buildPerAgentContext,
     });

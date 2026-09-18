@@ -23,7 +23,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { AGENTS as COMPANY_AGENTS } from '../agents/orgChart.js';
 import { AGENTS as STUDIO_AGENTS } from '../agents/ideationTeam.js';
-import { dailyCycleActionHandlers, BARRED_UNATTENDED } from '../dailyMeeting.js';
+import { dailyCycleActionHandlers, studioActionHandlers, BARRED_UNATTENDED } from '../dailyMeeting.js';
 
 function toolsOf(agents) {
   const names = new Set();
@@ -49,10 +49,27 @@ test('every Executive Team tool is either wired into the daily cycle or explicit
 });
 
 test('the Venture Studio phase covers its own roster the same way', () => {
-  // The studio wires exactly one handler, which is correct — but "correct"
-  // should be checked rather than assumed, for the same reason as above.
-  const studioTools = toolsOf(STUDIO_AGENTS);
-  assert.deepEqual([...studioTools], ['propose_venture']);
+  // This pinned the literal ['propose_venture'], which checked the roster of
+  // the day rather than the property. The property is the same one the company
+  // side asserts: a tool on a studio agent must be served by the studio's
+  // handler map, or it returns "Unknown tool" at 08:00 and reads as an
+  // environment fault from the inside.
+  const wired = new Set(Object.keys(studioActionHandlers()));
+  const unaccounted = [...toolsOf(STUDIO_AGENTS)].filter((name) => !wired.has(name));
+
+  assert.deepEqual(
+    unaccounted,
+    [],
+    `These tools exist on a Studio agent and are not wired into studioActionHandlers(): ${unaccounted.join(', ')}`
+  );
+});
+
+// The other half of the same property: a handler nobody can call is dead
+// weight that reads as capability from the outside.
+test('the Studio serves no handler that no Studio agent holds', () => {
+  const held = toolsOf(STUDIO_AGENTS);
+  const orphaned = Object.keys(studioActionHandlers()).filter((name) => !held.has(name));
+  assert.deepEqual(orphaned, [], `Handlers wired for tools no agent has: ${orphaned.join(', ')}`);
 });
 
 // The specific regression. Named individually because a count is easy to

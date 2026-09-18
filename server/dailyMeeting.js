@@ -33,7 +33,7 @@ import { getLedger } from './finance/ledger.js';
 import { listVentures } from './finance/ventures.js';
 import { planSyncScope } from './movement.js';
 import {
-  handleProposeVenture,
+  handleProposeVenture, handleCalculate, handleVerifyClaim,
   handleDeployCode,
   handleDeployChanges,
   handleCheckReady,
@@ -170,6 +170,29 @@ status lines.${planningInstruction()}`;
  */
 function soloRoster(agents, rootId) {
   return { ...agents, [rootId]: { ...agents[rootId], reports: [] } };
+}
+
+/**
+ * What the Venture Studio can do, in the cycle and in the interactive Studio
+ * alike — one map, exported, for the same reason the company's is.
+ *
+ * It lived inline in two places and was about to live inline in three. A
+ * handler map that is a literal at each call site is a map that drifts, which
+ * is the exact failure dailyCycleParity.test.js exists to catch; a second copy
+ * would have made the test pass while the interactive Studio quietly served a
+ * different set of tools.
+ */
+export function studioActionHandlers() {
+  return {
+    propose_venture: handleProposeVenture,
+    // The two the Studio was missing. Both belong to cheap-tier agents that
+    // had no way to check anything they asserted: the analyst sized markets
+    // with no calculator, the critic falsified cases with no way to open a
+    // source. See arithmetic.js and claimVerify.js for why each is an ordinary
+    // action rather than a hosted tool.
+    calculate: handleCalculate,
+    verify_claim: handleVerifyClaim,
+  };
 }
 
 /**
@@ -424,7 +447,7 @@ export async function runDailyMeeting({ anthropic }) {
         agents: STUDIO_AGENTS,
         agentId: STUDIO_ROOT,
         messages: [{ role: 'user', content: studioKickoff(leadership.text) }],
-        actionHandlers: { propose_venture: handleProposeVenture },
+        actionHandlers: studioActionHandlers(),
         extraContext: [buildStudioContext(), steering].filter(Boolean).join('\n\n'),
         perAgentContext: buildPerAgentContext,
       });
