@@ -2783,3 +2783,96 @@ or a property read off one, and a new test pins the exemption to exactly that
 so it can never grow into a hole. The guard flagging its own author's refactor
 is the intended behaviour; being able to tell that from a real finding is why
 the exemption is narrow.
+
+## Giving the Venture Studio something to check with
+
+A deep research pass asked whether the venture team was equipped to research
+what it proposes. It was not, and the shape of the gap was specific enough to
+fix precisely rather than generally. `reports/Venture research capability
+gaps.md` carries the full answer; this is what changed in the code.
+
+Of six Studio agents, two held research tools, capped at four searches and four
+fetches each — about sixteen lookups behind a decision to start a company.
+Anthropic's published heuristic for a task it classes as complex research is
+10–15 tool calls *per subagent*, and their variance decomposition puts token
+volume at ~80% of research quality, tool-call count at ~10%, and model choice
+at ~5%. The cap was spending the cheap term to save the expensive one.
+
+Worse, the three agents whose judgement decides anything — the Business Case
+Analyst, the Validation Critic and the Venture Partner — held none.
+
+### The search budget, and a pin that had drifted
+
+`SEARCH_MAX_USES` and `FETCH_MAX_USES` now default to 15 and 10 and are read at
+call time, so the founder can move them from Railway without a deploy. And
+`web_search` was pinned to `web_search_20250305` while `web_fetch` sat on the
+current `web_fetch_20260209` — eighteen months stale on the highest-leverage
+tool in the company, in a file whose own header warns that a stale type is "a
+400 that names a field nobody set."
+
+### A calculator, not a bigger model
+
+The Business Case Analyst sizes markets on the cheapest model in the company,
+and that sounds like the defect until you read what small models actually get
+wrong: they follow the right reasoning steps and then miss the sums, with
+logical error rates climbing as the numbers get messier. That is
+arithmetic-in-weights. Promoting the agent would cost roughly 15x and buy the
+~5% that model choice explains; a calculator costs nothing and fixes the part
+that was broken.
+
+`arithmetic.js` is a recursive-descent parser rather than `eval()`, because the
+expression arrives from a model and `eval()` on model output is remote code
+execution with extra steps. Percent is postfix — `500 * 20%` is 100 — because
+that is how a business case writes a conversion rate, and reading `%` as an
+infix operator made the natural spelling a syntax error, which is how a
+calculator ends up unused.
+
+### A critic that can open a source, without changing model family
+
+The obvious way to give the Validation Critic retrieval was the hosted
+`web_fetch` tool, and it was the wrong one. A hosted tool cannot travel to
+another provider, so attaching one silently promotes the agent onto Anthropic —
+and the critic's cheap non-Anthropic model is the one thing about it the
+evidence supports, because the measured multi-agent failure is *every role
+running on one model*. So the fetch happens in this server (`claimVerify.js`)
+and the tool is an ordinary action any provider can be handed. A test asserts
+both agents stay off Anthropic, because this is easy to undo by accident.
+
+Verification needs no search API and costs nothing: the claim arrives carrying
+the URL it came from, and the only question is whether that page says what the
+claim says it says. A source that will not open is a verdict, not an error.
+
+The input contract changed with it. The Venture Partner now hands the critic a
+numbered claim list with URLs rather than the finished case — the MARCH result
+is that a checker validates propositions *in isolation*, deprived of the
+proposer's output, and the cross-cutting pattern in that literature is that
+every measured verification win has that property and every measured failure
+lacks it. A critic reading your write-up grades your write-up.
+
+### Sizing that can be checked
+
+`propose_venture` now asks for an enumerable bottom-up SOM — a countable set of
+accounts, where the count came from, times a defended ACV, times a justified
+win rate — and names the "we capture 1%" fallacy as unacceptable. Published
+figures for the same market differ several-fold between reputable firms, so
+citing one is picking a side rather than sourcing a fact. At the $1M bar the
+arithmetic is small enough to write out in full.
+
+### What the parity test caught
+
+`dailyCycleParity.test.js` failed immediately, because it pinned the Studio's
+tool list as the literal `['propose_venture']`. That checked the roster of the
+day rather than the property, so it now runs the same wired-or-barred check the
+company side runs, plus its mirror: no handler served that no agent holds. The
+two inline studio handler maps became one exported `studioActionHandlers()` —
+a map that is a literal at each call site is a map that drifts, which is the
+exact failure that test exists to catch.
+
+### What none of this fixes
+
+Willingness to pay, urgency and budget ownership are not written down anywhere,
+for any unlaunched product. No retrieval budget reaches them and no database
+sells them. Every "path to €1M" the Studio produces remains an assumption chain
+in the shape of a forecast until someone talks to ten named buyers. The
+engineering above raises the Studio from confident narration to competent desk
+screen; the last step is not an engineering step.

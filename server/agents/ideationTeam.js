@@ -140,7 +140,7 @@ export const AGENTS = {
             marketSize: {
               type: 'string',
               description:
-                'The size of the addressable market and why it is large enough to support a venture-scale outcome — a rough TAM figure or a defensible comparable, not just "big."',
+                'Built bottom-up and enumerable, not a cited TAM. Name a countable set of target accounts and where the count came from (a registry, a marketplace listing, a job-posting search, an app-store category), times a defended annual contract value, times a win rate you can justify. A published TAM is a ceiling and a sanity check, never the number — the same market gets figures that differ several-fold between reputable firms, so citing one is picking a side, not sourcing a fact. An unexplained "we capture 1%" is not acceptable. At the $1M bar the arithmetic is small enough to write out in full: 100 accounts at $10k, or 1,000 at $1k.',
             },
             pathToMillions: {
               type: 'string',
@@ -194,6 +194,14 @@ Facilitator (generates and riffs on raw ideas), the Business Case Analyst
 Scale Strategist (sizes the real ceiling — TAM and the mechanism that gets
 there), and the Validation Critic (a deliberate skeptic who stress-tests
 assumptions, including whether the idea is ambitious enough).
+
+How you consult the Validation Critic matters more than that you do. Hand it
+the load-bearing claims as a numbered list with the URL each came from — the
+market size, the price, the volume, the competitor gap — and not the case you
+have built around them. A critic reading your write-up grades your write-up;
+a critic reading your claims checks them. It can open sources itself, so give
+it something to open. If you cannot produce that list, the case is not ready
+for criticism and probably not ready for propose_venture either.
 
 Before calling \`propose_venture\`, the idea must clear the ambition bar: a
 believable path to $1M+ in annual revenue within a few years, in a market
@@ -259,6 +267,16 @@ and a ballpark guess as if they carry the same confidence. Call out plainly
 when a space already looks crowded or is being chased by well-funded
 competitors.
 
+Spend your last searches trying to kill the idea, not to support it. Search
+for the incumbent that already does this, the reason the obvious version has
+not worked, the regulation in the way, the forum thread where someone says
+they tried it. The measured bias in this job is not in how evidence gets
+read — it is in which evidence gets looked for, so a page of supportive
+citations is what both a good idea and a bad one produce. Report what you
+searched for as well as what you found, including the searches that came
+back empty: a question you asked and could not answer is information, and
+silently dropping it is how a thin answer looks thorough.
+
 ${BASE_STYLE}`,
   },
 
@@ -301,6 +319,35 @@ ${BASE_STYLE}`,
     mission: 'Turns an idea into numbers: pricing, unit economics, and a credible path to $1M+ revenue.',
     toolDescription:
       'Consult the Business Case Analyst to turn an idea into a business case: pricing, unit economics, path to $1M+ revenue, and the first milestones.',
+    // A calculator, not a bigger model. The measured failure mode for small
+    // models is arithmetic-in-weights — right reasoning steps, wrong sums, with
+    // the error rate climbing as the numbers get messier — so this is the fix
+    // that addresses what is actually broken. Promoting the agent would cost
+    // roughly 15x and buy the ~5% of research quality that model choice
+    // explains. An ordinary action rather than a hosted tool, so the agent
+    // keeps its cheap tier: canUseAlternativeModel only refuses to travel
+    // Anthropic-hosted ones.
+    actions: [
+      {
+        name: 'calculate',
+        description:
+          'Work out one arithmetic expression exactly. Use this for every number that ends up in the business case — market sizes, unit economics, margins, run rates. Supports + - * / ^, brackets, and a trailing % (so "500 * 20%" is 100). Do not do multi-step arithmetic in your head: this is free, exact, and the thing you are measurably worst at.',
+        input_schema: {
+          type: 'object',
+          properties: {
+            expression: {
+              type: 'string',
+              description: 'The expression, e.g. "1200 * 12 * 0.65" or "250000 / 29".',
+            },
+            what: {
+              type: 'string',
+              description: 'What this number represents, in a few words — it is echoed back so the working is readable.',
+            },
+          },
+          required: ['expression'],
+        },
+      },
+    ],
     systemPrompt: `You are the Business Case Analyst. Given an idea, you build the numbers: a
 pricing or revenue model, the unit economics underneath it, what it would
 take to land the first paying customer, and 3-5 concrete, sequenced early
@@ -372,10 +419,60 @@ ${BASE_STYLE}`,
     modelTier: CHEAP_TIER,
     mission: 'Deliberately stress-tests an idea or business case and surfaces the strongest reasons it could fail or fall short of a real venture outcome.',
     toolDescription:
-      'Consult the Validation Critic to stress-test an idea or business case and surface the strongest reasons it could fail — including whether it is ambitious enough.',
-    systemPrompt: `You are the Validation Critic — the deliberate skeptic in the room. Given an
-idea or business case, you find the strongest, most specific reasons it
-could fail: the wrong market, no real willingness to pay, a competitor that
+      'Consult the Validation Critic to stress-test an idea or business case and surface the strongest reasons it could fail — including whether it is ambitious enough. Give it the claims and their sources, not the pitch.',
+    // Retrieval for the critic, without moving it onto an Anthropic model.
+    //
+    // The hosted web_fetch tool would have been the obvious way to do this and
+    // is the wrong one: a hosted tool cannot travel to another provider, so
+    // attaching one forces this agent onto Anthropic — and its cheap
+    // non-Anthropic model is the single thing about this agent the evidence
+    // supports, because the measured multi-agent failure is every role running
+    // on one model. So the fetch happens in this server (claimVerify.js) and
+    // the tool is an ordinary action any provider can be handed.
+    actions: [
+      {
+        name: 'verify_claim',
+        description:
+          "Open the page a claim was sourced from and read what it actually says. Use this on every load-bearing number before accepting it. A claim whose source will not open, or whose page does not contain the figure, is unsupported — say so; that is a finding, not a failure.",
+        input_schema: {
+          type: 'object',
+          properties: {
+            claim: {
+              type: 'string',
+              description: 'The specific claim to check, including its number — e.g. "the EU market was worth EUR 6.4B in 2024".',
+            },
+            url: { type: 'string', description: 'The http(s) URL the claim was sourced from.' },
+          },
+          required: ['claim', 'url'],
+        },
+      },
+    ],
+    systemPrompt: `You are the Validation Critic — the deliberate skeptic in the room.
+
+Before anything else: check the claims. Whoever consulted you should have
+given you the load-bearing claims and the URLs they came from. For each one
+that the case depends on, call verify_claim and read what the page actually
+says. A source being on-topic is not support — the figure has to be there.
+Three verdicts, and say which: SUPPORTED, PARTIAL (the page says something
+close but different — name the difference), UNSUPPORTED (the page does not
+say it, or will not open).
+
+If you were handed a polished pitch instead of a claim list, say so and ask
+for the claims and their sources. You are not here to react to a narrative.
+Reading the case first and then looking for problems is how a critic ends up
+agreeing with it: models reliably catch errors in someone else's text and
+reliably miss the same errors inside their own team's reasoning, and a
+confident write-up is the single best way to stop you noticing. Claims first,
+sources second, opinion last.
+
+When you search for anything, search for what would sink the idea, not for
+what would confirm it. The measured bias in this job is not in how evidence
+gets interpreted — it is in which evidence gets looked for, which means it is
+invisible in your own output. Every citation will look supportive, because
+the disconfirming ones were never pulled.
+
+Then, given an idea or business case, you find the strongest, most specific
+reasons it could fail: the wrong market, no real willingness to pay, a competitor that
 already owns this, an assumption that quietly doesn't hold. Be concrete, not
 generically cautious — "people might not want this" is not an objection,
 "this assumes SMBs will pay monthly for something they currently do for

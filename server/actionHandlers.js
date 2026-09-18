@@ -79,6 +79,8 @@ import { fetchReplies, isInboxConfigured } from './inbox.js';
 import { deployReadiness, outreachReadiness, formatReadiness } from './readiness.js';
 import { withComplianceFooter, isUnsubscribe } from './outreachCompliance.js';
 import { priceFloorRefusal, reviewOutbound } from './review.js';
+import { evaluate as evaluateArithmetic, formatNumber as formatCalcNumber } from './arithmetic.js';
+import { fetchCitedPage } from './claimVerify.js';
 import { createCheckoutLink, isPaymentsConfigured } from './payments.js';
 import { usageSummary, hasIngestKey } from './ventureUsage.js';
 import {
@@ -1307,4 +1309,54 @@ export function handleSetObjective(input, ctx = {}) {
   } catch (err) {
     return `Could not set the objective: ${err.message}`;
   }
+}
+
+// --- The Studio's two research tools -------------------------------------------------
+//
+// Both exist because of the same finding: the agents that size the market and
+// challenge the case were the only ones with no way to check anything, and both
+// run on the cheapest model. The fix for each is a tool, not a tier.
+
+export function handleCalculate(input, ctx = {}) {
+  const expression = typeof input?.expression === 'string' ? input.expression : '';
+  const what = typeof input?.what === 'string' ? input.what.trim() : '';
+  const result = evaluateArithmetic(expression);
+  if (!result.ok) {
+    return `Could not calculate "${expression}": ${result.error} Rewrite it as a single expression using + - * / ^, brackets and numbers.`;
+  }
+  recordContribution({ agentId: ctx.agentId, kind: 'calculate', detail: what || expression });
+  return `${expression} = ${formatCalcNumber(result.value)}${what ? ` (${what})` : ''}`;
+}
+
+export async function handleVerifyClaim(input, ctx = {}) {
+  const claim = typeof input?.claim === 'string' ? input.claim.trim() : '';
+  const url = typeof input?.url === 'string' ? input.url.trim() : '';
+  if (!claim) return 'Could not verify: name the claim you are checking, including its number.';
+  if (!url) return 'Could not verify: a claim with no source URL is unsupported by definition — say so rather than checking it.';
+
+  const page = await fetchCitedPage(url, { claim });
+  if (!page.ok) {
+    // A dead or unreadable source is a verdict, not an error. Saying so is the
+    // whole point of the tool: an unopenable citation is an unsupported claim.
+    return [
+      `UNSUPPORTED — could not read ${url}. ${page.error}`,
+      '',
+      'Treat the claim as unsupported and say which claim it was. Do not soften it into "the source suggests".',
+    ].join('\n');
+  }
+
+  recordContribution({ agentId: ctx.agentId, kind: 'verify_claim', detail: url });
+  return [
+    `Fetched ${url} (HTTP ${page.status}). The claim under test:`,
+    `  "${claim}"`,
+    '',
+    'What the page actually says, centred on that claim:',
+    '---',
+    page.excerpt,
+    '---',
+    '',
+    'Answer in one line, starting with SUPPORTED, UNSUPPORTED or PARTIAL, then the reason. ' +
+      'The page being on-topic is not support — the figure or statement in the claim has to appear. ' +
+      'If the page says something close but different, that is PARTIAL and the difference is the finding.',
+  ].join('\n');
 }
