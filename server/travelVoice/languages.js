@@ -34,17 +34,36 @@ export const LANGUAGE_NAMES = {
   en: { native: 'English', english: 'English' },
 };
 
-// Whisper names languages rather than coding them ("spanish", not "es"), and
-// occasionally with a capital letter. Anything outside the three is treated
-// as unknown rather than mapped to the nearest one — a Portuguese caller is
-// better served by the English fallback than by confident Spanish.
-const WHISPER_NAMES = {
+// Every name a language goes by around here, mapped to its code.
+//
+// Two sources feed this. Whisper names languages rather than coding them
+// ("spanish", not "es"), sometimes capitalised. And the people using this
+// product name them in their own language: a Spanish agent asking for
+// English types "inglés", not "english". Both belong in one table, because
+// both arrive at the same function.
+//
+// Anything outside the three is unknown rather than mapped to the nearest
+// one — a Portuguese caller is better served by the English fallback than by
+// confident Spanish.
+const LANGUAGE_ALIASES = {
+  // English names, which is also what the transcribers report.
   spanish: 'es',
-  español: 'es',
   castilian: 'es',
   french: 'fr',
-  français: 'fr',
   english: 'en',
+  // Spanish names.
+  español: 'es',
+  espanol: 'es',
+  castellano: 'es',
+  francés: 'fr',
+  frances: 'fr',
+  inglés: 'en',
+  ingles: 'en',
+  // French names.
+  français: 'fr',
+  francais: 'fr',
+  espagnol: 'es',
+  anglais: 'en',
 };
 
 /**
@@ -58,7 +77,7 @@ export function normalizeLanguage(value) {
   // "es-ES", "fr_CA", "en-GB" all carry the code up front.
   const code = raw.split(/[-_]/)[0];
   if (SUPPORTED_LANGUAGES.includes(code)) return code;
-  return WHISPER_NAMES[raw] || null;
+  return LANGUAGE_ALIASES[raw] || null;
 }
 
 export function isSupportedLanguage(value) {

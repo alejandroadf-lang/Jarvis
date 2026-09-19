@@ -121,6 +121,7 @@ import {
   handleTravelVoiceMessage,
   handleTravelVoiceCall,
   runTravelVoiceTurn,
+  runTranslateTurn,
   resetTravelVoiceSession,
   startTravelVoiceOutreach,
   ensureTravelVoiceVenture,
@@ -134,6 +135,13 @@ import {
   runTravelVoiceCommand,
 } from './travelVoice/index.js';
 import { canHear } from './travelVoice/speech.js';
+import {
+  parseTranslateCommand,
+  modeFor as translateModeFor,
+  setMode as setTranslateModeFor,
+  clearMode as clearTranslateModeFor,
+  describeMode as describeTranslateMode,
+} from './travelVoice/translate.js';
 import { extractCallEvent, recordCallPermission } from './travelVoice/calls.js';
 import { localized, normalizeLanguage, SUPPORTED_LANGUAGES } from './travelVoice/languages.js';
 import { listWeeklyReflections, getWeeklyReflection, getLatestWeeklyReflection } from './weeklyReflections.js';
@@ -1165,6 +1173,56 @@ app.post('/api/travel-voice/turn', audioBody, async (req, res) => {
   try {
     const contentType = String(req.get('content-type') || '');
     const filename = contentType.includes('webm') ? 'voice.webm' : contentType.includes('mp4') ? 'voice.mp4' : contentType.includes('mpeg') ? 'voice.mp3' : contentType.includes('wav') ? 'voice.wav' : 'voice.ogg';
+    // A translate command from the tab sets the mode and answers, the same
+    // way it does on WhatsApp.
+    const webSession = `web-${sessionId}`;
+    if (!isAudio) {
+      const command = parseTranslateCommand(text);
+      if (command) {
+        if (command.kind === 'off') clearTranslateModeFor(webSession);
+        else if (command.kind === 'to') setTranslateModeFor(webSession, { to: command.to });
+        else if (command.kind === 'pair') setTranslateModeFor(webSession, { pair: command.pair });
+        const mode = translateModeFor(webSession);
+        return res.json({
+          transcript: text,
+          reply: mode ? `Translation mode: ${describeTranslateMode(mode)}.` : 'Translation mode off.',
+          language: normalizeLanguage(language) || 'en',
+          translateMode: mode,
+        });
+      }
+    }
+
+    const mode = translateModeFor(webSession);
+    if (mode) {
+      const out = await runTranslateTurn({
+        anthropic,
+        sessionId: webSession,
+        text,
+        audio: isAudio ? req.body : null,
+        filename,
+        wantAudio,
+        providers,
+        mode,
+      });
+      if (out.empty) return res.json({ transcript: '', reply: localized('emptyVoiceNote', 'en'), empty: true });
+      return res.json({
+        transcript: out.transcript,
+        language: out.language,
+        source: out.source,
+        translated: true,
+        dropped: out.dropped,
+        reply: out.reply,
+        audio: out.audio ? out.audio.buffer.toString('base64') : null,
+        audioMimeType: out.audio ? out.audio.mimeType : null,
+        audioError: out.audioError,
+        providers: out.providers,
+        model: out.model,
+        timings: out.timings,
+        costUsd: out.costUsd,
+        durationMs: out.durationMs,
+      });
+    }
+
     const result = await runTravelVoiceTurn({
       anthropic,
       sessionId: `web-${sessionId}`,

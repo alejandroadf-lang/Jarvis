@@ -873,6 +873,41 @@ paying for while there are agencies to win — and it is the first thing to
 move once they are won, because it is the line that scales with use. That is
 a dropdown, not a rewrite.
 
+### Translation, which was already paid for
+
+The advisor answering a Spanish agent in Spanish is not translation. It is one
+person being understood. Translation is the other job an agency does all day:
+the agent speaks Spanish and needs those words in English for an airline desk,
+or receives a French message and needs it in Spanish before acting.
+
+It required no new technology. A model that answers in three languages can
+move words between them, so this reuses the brain, the ears and the voice
+exactly as they stand. No realtime model, no media bridge. That is the whole
+reason it shipped before live calls did.
+
+What it needed was its own prompt and its own routing, because the two jobs
+must never blur. An advisor that helpfully answers the question inside a
+sentence it was handed to translate has destroyed the thing it was given, so
+the translator's prompt says it is not an advisor and the mode bypasses the
+advisor entirely.
+
+**The rule that makes it a travel translator.** A generic translator ruins
+travel text. FXP is not a word, MAD is not Madrid spelled oddly, and a fare
+basis of ONNAZ must arrive character for character. Translate any of those and
+the message becomes actively dangerous, because an agent acts on a locator
+that no longer exists. So the prompt names what must survive, and then the
+output is checked for what actually did. Anything missing is reported to the
+caller, never repaired: putting a locator back into a sentence the model did
+not write it into would place it wrongly, and a locator in the wrong place
+reads as correct.
+
+**Who may use it.** Unlike the TRAVEL commands, this one is caller-facing.
+It is a feature of the product rather than an admin control: it changes one
+conversation, reaches nothing else, and is bounded by the same rate limit, so
+a guest running it is exactly as safe as a guest asking a question. It answers
+to TRANSLATE, TRADUCIR and TRADUIRE, since the people who need it are by
+definition the ones not working in English.
+
 ### The advisor checks its own answer
 
 Opening the brain slot to open models created a failure the Anthropic-only

@@ -32,12 +32,16 @@ import { runAdvisorTurn, advisorModel } from './advisor.js';
 import { transcribeWithLanguage, synthesizeSpeech, speakable, isSpeechConfigured, canHear, canSpeak, ttsModel, ttsVoice } from './speech.js';
 import { isAmadeusConfigured, amadeusEnvironment } from './amadeus.js';
 import { describeProviders, hasProvider, resolveProvider } from './providers/index.js';
+import { checkReply } from './replyCheck.js';
+import { assertUnderDailyCap, recordSpend } from '../spend.js';
+import { priceUsage } from '../usage.js';
 import {
   resolveLanguage,
   requestedLanguageSwitch,
   normalizeLanguage,
   localized,
   isBareGreeting,
+  LANGUAGE_NAMES,
   SUPPORTED_LANGUAGES,
   DEFAULT_LANGUAGE,
 } from './languages.js';
@@ -52,6 +56,17 @@ import {
 import { isGuest, addGuest, listGuests } from './guests.js';
 import { override as settingOverride } from './settings.js';
 import { parseTravelCommand, runTravelCommand } from './commands.js';
+import {
+  modeFor,
+  setMode,
+  clearMode,
+  targetFor,
+  describeMode,
+  runTranslation,
+  droppedCodes,
+  parseTranslateCommand,
+  replyFor,
+} from './translate.js';
 
 const STATE_FILE = 'travelVoiceState.json';
 const SESSION_KIND = 'travel';
@@ -337,6 +352,109 @@ export async function runTravelVoiceTurn({
   };
 }
 
+/**
+ * One translation turn: hear it, render it in the other language, say it back.
+ *
+ * Shares the ears and the voice with the advisor and differs only in the
+ * middle. The language resolution is the opposite way round from an advisor
+ * turn: there, what the caller spoke decides what they hear back; here it
+ * decides what they must NOT hear back.
+ */
+export async function runTranslateTurn({
+  anthropic,
+  sessionId,
+  text = '',
+  audio = null,
+  filename = 'voice.ogg',
+  wantAudio = false,
+  providers = {},
+  mode,
+}) {
+  const startedAt = Date.now();
+  let transcript = String(text || '').trim();
+  let heard = null;
+  let costUsd = 0;
+  const used = { stt: null, llm: null, tts: null };
+  const timings = { sttMs: null, llmMs: null, ttsMs: null };
+
+  if (audio) {
+    // No language hint: in a translation the source is the thing being
+    // detected, and telling the transcriber what to expect would let a
+    // French sentence be decoded as bad Spanish.
+    const result = await transcribeWithLanguage(audio, { filename, provider: providers.stt });
+    transcript = result.text;
+    heard = result.language;
+    costUsd += result.costUsd;
+    used.stt = result.provider;
+    timings.sttMs = result.ms;
+    if (!transcript) {
+      return { transcript: '', empty: true, costUsd, providers: used, timings, mode };
+    }
+  }
+
+  // Text with no audio still needs a source, so the pair knows which way to
+  // go. The word heuristic is enough: a pair only has to pick between two.
+  if (!heard) heard = resolveLanguage({ text: transcript }).language;
+  const target = targetFor(mode, heard);
+
+  const brain = resolveProvider('llm', providers.llm);
+  if (!brain) throw new Error('No advisor model is configured — set ANTHROPIC_API_KEY');
+  assertUnderDailyCap();
+  const done = await runTranslation({ anthropic, brain, text: transcript, target, source: heard });
+  const cost = priceUsage(
+    {
+      inputTokens: done.usage.input_tokens || 0,
+      outputTokens: done.usage.output_tokens || 0,
+      cacheWriteTokens: done.usage.cache_creation_input_tokens || 0,
+      cacheReadTokens: done.usage.cache_read_input_tokens || 0,
+    },
+    brain.priceSpec()
+  );
+  recordSpend(cost);
+  costUsd += cost;
+  used.llm = done.provider;
+  timings.llmMs = done.ms;
+
+  // Did every locator, code and price survive? Reported, never repaired:
+  // putting a locator back into a sentence the model did not write it into
+  // would place it wrongly, and a locator in the wrong place reads as right.
+  const dropped = droppedCodes(transcript, done.text);
+  // The same drift guard the advisor uses, pointed at the target language.
+  const check = checkReply(done.text, { language: target });
+
+  let speech = null;
+  let audioError = null;
+  if (wantAudio && done.text) {
+    try {
+      speech = await synthesizeSpeech(speakable(done.text), { language: target, format: 'opus', provider: providers.tts });
+      costUsd += speech.costUsd;
+      used.tts = speech.provider;
+      timings.ttsMs = speech.ms;
+    } catch (err) {
+      audioError = err.message;
+    }
+  }
+
+  return {
+    transcript,
+    source: heard,
+    language: target,
+    reply: done.text,
+    translated: true,
+    dropped,
+    tooLong: check.tooLong,
+    words: check.words,
+    audio: speech ? { buffer: speech.buffer, mimeType: speech.mimeType, filename: speech.filename } : null,
+    audioError,
+    model: done.model,
+    costUsd,
+    providers: used,
+    timings,
+    mode,
+    durationMs: Date.now() - startedAt,
+  };
+}
+
 export function resetTravelVoiceSession(sessionId) {
   saveSession(SESSION_KIND, sessionId, []);
   const data = loadState();
@@ -404,6 +522,101 @@ export async function handleTravelVoiceMessage(message, { anthropic, phoneNumber
     recordTurnLog({ channel: 'whatsapp', from: maskNumber(from), stage: 'unsupported_type', language: previous, detail: `type: ${message.type}` });
     await send(localized('unsupportedType', previous));
     return { stage: 'unsupported_type' };
+  }
+
+  // TRANSLATE / TRADUCIR / TRADUIRE. Caller-facing on purpose: this is a
+  // feature of the product, not an admin control. It changes this one
+  // conversation and reaches nothing else, so a guest running it is exactly
+  // as safe as a guest asking a question. Checked before the greeting so
+  // "TRADUIRE OFF" works even from a caller who has said nothing else.
+  if (!audio) {
+    const command = parseTranslateCommand(message.text);
+    if (command) {
+      const lang = rememberedLanguage(sessionId) || previous;
+      let reply;
+      if (command.kind === 'off') {
+        clearMode(sessionId);
+        reply = replyFor('off', lang);
+      } else if (command.kind === 'status') {
+        const current = modeFor(sessionId);
+        reply = current
+          ? replyFor(current.to ? 'on_to' : 'on_pair', lang, describeMode(current).replace(/^into /, ''))
+          : replyFor('status_off', lang);
+      } else if (command.kind === 'same') {
+        reply = replyFor('same', lang);
+      } else if (command.kind === 'to') {
+        setMode(sessionId, { to: command.to });
+        reply = replyFor('on_to', lang, LANGUAGE_NAMES[command.to].native);
+      } else {
+        setMode(sessionId, { pair: command.pair });
+        reply = replyFor('on_pair', lang, command.pair.map((l) => LANGUAGE_NAMES[l].native).join(' ↔ '));
+      }
+      recordTurnLog({ channel: 'whatsapp', from: maskNumber(from), stage: 'translate_mode', language: lang, detail: command.kind });
+      await send(reply);
+      return { stage: 'translate_mode', mode: command.kind };
+    }
+  }
+
+  // In translation mode the advisor steps aside entirely. An advisor that
+  // helpfully answers the question inside a sentence it was asked to
+  // translate has destroyed the thing it was handed.
+  const translating = modeFor(sessionId);
+  if (translating) {
+    let out;
+    try {
+      out = await runTranslateTurn({
+        anthropic,
+        sessionId,
+        text: audio ? '' : message.text,
+        audio,
+        filename,
+        wantAudio: Boolean(audio) && canSpeak(),
+        mode: translating,
+      });
+    } catch (err) {
+      recordTurnLog({ channel: 'whatsapp', from: maskNumber(from), stage: 'failed', language: previous, detail: `translate: ${err.message}` });
+      await send(localized('answerFailed', previous));
+      return { stage: 'failed', error: err.message };
+    }
+    if (out.empty) {
+      await send(localized('emptyVoiceNote', previous));
+      return { stage: 'empty' };
+    }
+
+    let spoke = false;
+    if (out.audio) {
+      try {
+        await sendWhatsAppAudio(from, out.audio.buffer, { mimeType: out.audio.mimeType, filename: out.audio.filename, phoneNumberId });
+        spoke = true;
+      } catch (err) {
+        console.warn(`Travel voice: could not send the translation to ${maskNumber(from)}: ${err.message}`);
+      }
+    }
+    // The text always goes, whatever TRAVEL TEXT says. A translation is
+    // meant to be forwarded, and you cannot forward a sentence you only
+    // heard — which is the entire point of translating it.
+    await send(out.reply);
+    if (out.dropped.length) {
+      await send(`⚠ Check these before you send it on: ${out.dropped.join(', ')}. They were in what you said and are not in the translation.`);
+    }
+
+    recordTurnLog({
+      channel: 'whatsapp',
+      from: maskNumber(from),
+      stage: 'translated',
+      language: out.language,
+      source: out.source,
+      voice: Boolean(audio),
+      spoke,
+      transcript: out.transcript.slice(0, PREVIEW_CHARS),
+      reply: out.reply.slice(0, PREVIEW_CHARS),
+      providers: out.providers,
+      timings: out.timings,
+      ...(out.dropped.length ? { dropped: out.dropped } : {}),
+      costUsd: out.costUsd,
+      durationMs: Date.now() - startedAt,
+    });
+    return { stage: 'translated', spoke, language: out.language, source: out.source };
   }
 
   // Somebody who has just been handed the number and typed "hola". A fixed
@@ -585,6 +798,7 @@ export async function inviteGuest(number, { language = null, phoneNumberId = nul
 }
 
 export { parseTravelCommand, isGuest, listGuests };
+export { parseTranslateCommand, modeFor as translateModeFor, setMode as setTranslateMode, clearMode as clearTranslateMode };
 
 /**
  * Runs a TRAVEL command from the founder's own line. The dependencies are
@@ -656,6 +870,7 @@ export function travelVoiceStatus() {
       maxTurnsPerHour: maxTurnsPerHour(),
       liveCalls: capabilities.liveCalls,
     },
+    translation: { available: true, languages: SUPPORTED_LANGUAGES },
     guests: listGuests().map((g) => ({ number: maskNumber(g.number), language: g.language, addedAt: g.addedAt })),
     venture: venture ? { id: venture.id, title: venture.title, status: venture.status } : null,
     recentTurns: recentTravelVoiceTurns(20),

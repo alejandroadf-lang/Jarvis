@@ -92,7 +92,13 @@ TRAVEL EARS|BRAIN|VOICE <provider> — switch one mid-demo
 TRAVEL SETTINGS — every dial and what it is on
 TRAVEL <dial> <value> — turn one, e.g. TRAVEL LENGTH 90
 TRAVEL DEFAULTS — undo every switch and dial
-TRAVEL LOG — the last few conversations`;
+TRAVEL LOG — the last few conversations
+
+Translation (anyone talking to the advisor can use these):
+TRANSLATE EN — everything they send comes back in English
+TRANSLATE ES FR — a two-way channel between those languages
+TRANSLATE OFF — back to the advisor
+Works as TRADUCIR and TRADUIRE too.`;
 
 // `voice` means a different thing per speech provider, so its value is read
 // against whichever one is live right now.

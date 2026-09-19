@@ -204,6 +204,22 @@ you can see which brain needs it. An overlong reply is not retried, since the
 text message carries the words intact. Only the audio is cut, at the last
 full sentence that fits.
 
+**It also translates.** Anyone talking to the advisor can send `TRANSLATE EN`
+and every message after that comes back in English, spoken and written, ready
+to forward to an airline desk. `TRANSLATE ES FR` opens a two-way channel, so
+one WhatsApp thread sits between a Spanish agent and a French client and each
+hears their own language. `TRANSLATE OFF` hands the conversation back to the
+advisor. `TRADUCIR` and `TRADUIRE` do the same thing, because the people who
+need this do not work in English.
+
+It needs no new provider and no configuration. It runs on the same brain, ears
+and voice, which is why it exists today rather than after the media bridge.
+What makes it a travel translator rather than a generic one is that IATA
+codes, Amadeus entries, record locators, fare bases, prices and dates are held
+back from translation, and anything that goes missing anyway is reported to
+the caller. A locator reinserted in the wrong place reads as correct, which is
+more dangerous than one that is visibly absent.
+
 **The demo runs without a browser, on one number.** Everything the tab does
 is also a WhatsApp command from your own allowlisted phone: `TRAVEL STATUS`
 for what is live and what it has spent, `TRAVEL INVITE <number> [es|fr|en]`

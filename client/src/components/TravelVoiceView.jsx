@@ -196,6 +196,12 @@ export default function TravelVoiceView({ onVenturesChanged }) {
             ? `answered in ${LANGUAGE_LABEL[data.drift.detected] || data.drift.detected}, could not be corrected: ${data.drift.error}`
             : `answered in ${LANGUAGE_LABEL[data.drift.detected] || data.drift.detected} twice`
         : null;
+      // A translation says so, and names any booking reference that did not
+      // survive it. That warning matters more than anything else on the line:
+      // a lost locator is a message the agent must not forward.
+      const translated = data.translated
+        ? `translated ${data.source || '?'} to ${data.language}${data.dropped?.length ? ` · ⚠ check ${data.dropped.join(', ')}` : ''}`
+        : null;
       append({
         role: 'assistant',
         text: data.reply,
@@ -203,7 +209,7 @@ export default function TravelVoiceView({ onVenturesChanged }) {
           data.toolCalls?.length ? ` · looked up: ${data.toolCalls.join(', ')}` : ''
         }${stages.length ? ` · ${stages.join(' · ')}` : ''}${
           Number.isFinite(data.costUsd) ? ` · $${data.costUsd.toFixed(4)}` : ''
-        }${drift ? ` · ⚠ ${drift}` : ''}${
+        }${translated ? ` · ${translated}` : ''}${drift ? ` · ⚠ ${drift}` : ''}${
           data.tooLong ? ` · ${data.words} words, the voice note stops at the last full sentence that fits` : ''
         }${data.audioError ? ` · no audio: ${data.audioError}` : ''}`,
         audioUrl,
@@ -509,6 +515,10 @@ export default function TravelVoiceView({ onVenturesChanged }) {
               <p className="text-xs">
                 Try: “¿Cómo valoro un PNR con la tarifa más baja?” · “Comment annuler un segment sans perdre le PNR ?” · “What does
                 fare basis ONNAZ tell me?”
+              </p>
+              <p className="text-xs">
+                Or send <span className="text-cyan-300">TRANSLATE EN</span> to turn the advisor into a translator, and{' '}
+                <span className="text-cyan-300">TRANSLATE ES FR</span> for a two-way channel.
               </p>
             </div>
           )}
