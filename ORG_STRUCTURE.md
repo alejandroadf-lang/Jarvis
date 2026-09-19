@@ -3073,3 +3073,50 @@ is *entirely* disconfirming never checked whether the thing works. And it is
 explicitly not a score anybody is judged on: an agent could satisfy a regex
 without changing what it looked for, and the day this becomes a target is the
 day it stops measuring anything.
+
+## Checking our own homework
+
+Every fix this week — the search budget, the calculator, the critic's
+retrieval, the enumerable sizing — was made on the strength of published
+evidence about what goes wrong in research agents. None of it was measured
+*here*. The published band for claim-level citation support runs **39% to 77%**
+across deep-research systems, a fifty-three point spread, and this company had
+no idea where in it sat.
+
+`FACTCHECK` samples claims the team has actually written over the last
+fortnight, opens the page each one cites, and asks whether that page says what
+the claim says it says. The three dimensions are kept apart deliberately,
+because collapsing them is how a system scores well on the easy two: does the
+link resolve, is the page on topic, and does it support *this* claim. Models
+are reliably good at the first two. The third is what separates systems.
+
+The judge is the cheap tier on purpose — small models are measurably good at
+verification against retrieved evidence, and it keeps a full pass affordable
+enough to run more than once.
+
+### Three ways it refuses to flatter itself
+
+**An unparseable judgement is never support.** If the model answers "well, it
+depends", that is `UNJUDGED` and it leaves the denominator. Defaulting it to
+SUPPORTED would inflate the only number the file exists to produce.
+
+**An unreachable source is not a failed claim.** Dimension one failing makes
+the other two unanswerable rather than false — blaming the claim for the
+network would be measuring the wrong thing. Those are reported separately, with
+the observation that a citation nobody can follow is not much of a citation.
+
+**"Nothing could be judged" never renders as 0%.** `supportRate` is `null`
+rather than zero in that case. The two are different findings and one of them
+is an indictment; a number that conflated them would be worse than no number.
+
+And the rate is always printed against the 39–77% band, because a bare
+percentage means nothing without knowing what good looks like.
+
+### What it cannot see
+
+It measures claims that carry a citation. A confident sentence with no URL
+attached is invisible to it — and that is the more dangerous kind. `claimCheck.js`
+catches a different slice (claimed real-world acts with no action in the
+trace). Neither substitutes for the other, and an empty result is reported as a
+finding rather than a blank: an uncited claim cannot be checked by anyone,
+including the team that made it.

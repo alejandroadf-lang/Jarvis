@@ -140,6 +140,9 @@ const COMMANDS = [
   // What the team went looking for. The bias that matters lives in the
   // queries, not the findings — see searchLog.js.
   { kind: 'searches', re: /^searches?$/i },
+  // Does our own output survive being checked? Costs a fetch and a cheap call
+  // per claim, so it runs when asked.
+  { kind: 'factcheck', re: /^fact\s*check$/i },
   { kind: 'drafts', re: /^drafts?$/i },
   { kind: 'draft_show', re: /^draft\s+(d\d+)$/i, arg: 'draftId' },
   { kind: 'draft_send', re: /^send\s+(d\d+)$/i, arg: 'draftId' },
@@ -395,6 +398,7 @@ MCP CLEAR <ventureId> — remove it
 DRYRUN <ventureId> <email> — rehearse the whole outreach path; the message comes to you, never to them
 DRYRUN <ventureId> <email> | subject | body — same, with your own words
 SEARCHES — what the team actually went looking for
+FACTCHECK — open the sources the team cited and see if they say what was claimed
 DRAFTS — outreach the team has written and is waiting on you
 DRAFT d1 — read one in full
 SEND d1 — release it (still passes every gate a normal send passes)
@@ -545,6 +549,12 @@ export async function runFounderCommand(command, deps = {}) {
     case 'unblock': {
       const venture = unblockContact(command.ventureId, command.email);
       return `${command.email.toLowerCase()} is no longer blocked on "${venture.title}".`;
+    }
+
+    case 'factcheck': {
+      if (!deps.startFactCheck) return 'The fact check is not available on this build.';
+      deps.startFactCheck();
+      return 'Checking the claims the team has cited over the last fortnight against the pages they cite. It costs a fetch and a cheap model call each, so it takes a minute — the result finds you when it is done.';
     }
 
     case 'searches': {

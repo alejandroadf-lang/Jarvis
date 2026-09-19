@@ -90,6 +90,7 @@ import { isImage, SUPPORTED_IMAGE_TYPES } from './channels/whatsapp.js';
 import { parseFounderCommand, runFounderCommand } from './channels/founderCommands.js';
 import { dryRunOutreach } from './outreachDryRun.js';
 import { runEval } from './eval/run.js';
+import { runFactCheck, describeFactCheck } from './factCheck.js';
 import { listTasks } from './tasks.js';
 import { getDegradationToday } from './degradation.js';
 import { privacyPolicyHtml } from './privacy.js';
@@ -914,6 +915,14 @@ async function handleWhatsAppMessage(message) {
         // Started, not awaited: the eval takes minutes of real API calls, and
         // holding the webhook open for it would time out long before it
         // finished. The result finds the founder when it exists.
+        // Same shape as the eval and for the same reason: it takes minutes of
+        // real calls and the webhook would time out long before it finished.
+        startFactCheck: () => {
+          runFactCheck({ anthropic })
+            .then((result) => sendWhatsAppMessage(message.from, describeFactCheck(result)))
+            .catch((err) => sendWhatsAppMessage(message.from, `The fact check could not finish — ${err.message}`))
+            .catch((sendErr) => console.error('Could not deliver the fact check:', sendErr));
+        },
         startEval: (scenarioId) => {
           runEval({ scenarioId })
             .then(({ summary }) => sendWhatsAppMessage(message.from, `Eval finished.\n\n${summary}`))
