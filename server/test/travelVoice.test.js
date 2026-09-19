@@ -17,6 +17,7 @@ let ventures;
 let consent;
 let escalation;
 let audit;
+let context;
 let originalFetch;
 const saved = {};
 const KEYS = [
@@ -44,6 +45,7 @@ const KEYS = [
   'WHATSAPP_ALLOWED_NUMBERS',
   'TRAVEL_VOICE_SESSION_CAP_USD',
   'TRAVEL_VOICE_REVIEW_SAMPLE_PCT',
+  'SESSION_MAX_MESSAGES',
 ];
 
 before(async () => {
@@ -57,6 +59,7 @@ before(async () => {
   consent = await import('../travelVoice/consent.js');
   escalation = await import('../travelVoice/escalation.js');
   audit = await import('../travelVoice/audit.js');
+  context = await import('../travelVoice/context.js');
 });
 
 after(() => {
@@ -81,6 +84,7 @@ beforeEach(() => {
   consent.__resetConsentForTests();
   escalation.__resetEscalationsForTests();
   audit.__resetAuditForTests();
+  context.__resetContextForTests();
   // The tests of the advisor itself run with the notice off; the consent
   // flow has its own tests below, which turn it back on.
   process.env.TRAVEL_VOICE_CONSENT = 'off';
@@ -853,5 +857,144 @@ test('the sweep forgets conversations older than the retention period and keeps 
   const swept = await tv.runTravelVoiceCommand({ kind: 'sweep' }, { from: '111' });
   assert.match(swept, /Retention applied/);
   assert.equal(tv.travelVoiceStatus().retention.transcriptDays, 180);
+});
+
+// --- the case: what survives the trim ------------------------------------------------
+
+const systemOf = (call) => call.system.map((b) => b.text).join('\n');
+
+test('the case is carried into the next turn, so the locator is not asked for twice', async () => {
+  stubOutside();
+  const anthropic = stubAnthropic('Valore con FXP y revise el TST con TQT.');
+  await tv.handleTravelVoiceMessage(
+    { id: 'wamid.k1', from: '34600111222', type: 'text', text: 'El localizador X7K2PQ de IB3402 MAD CDG no valora, el cliente quiere el reembolso', mediaId: null, phoneNumberId: '222' },
+    { anthropic, phoneNumberId: '222' }
+  );
+  // Nothing on the first turn: there was no case before it.
+  assert.ok(!/WHAT YOU ALREADY KNOW/.test(systemOf(anthropic.calls[0])));
+
+  const saved = context.caseFor('whatsapp-34600111222');
+  assert.deepEqual(saved.locators, ['X7K2PQ']);
+  assert.deepEqual(saved.carriers, ['IB']);
+  assert.deepEqual(saved.entries, ['FXP', 'TQT'], 'what the advisor suggested, so it does not repeat itself');
+  assert.deepEqual(saved.topics, ['refund', 'pricing']);
+
+  stubOutside();
+  await tv.handleTravelVoiceMessage(
+    { id: 'wamid.k2', from: '34600111222', type: 'text', text: '¿Y ahora qué hago?', mediaId: null, phoneNumberId: '222' },
+    { anthropic, phoneNumberId: '222' }
+  );
+  const carried = systemOf(anthropic.calls[1]);
+  assert.match(carried, /WHAT YOU ALREADY KNOW ABOUT THIS CALLER/);
+  assert.match(carried, /Record locator\(s\) in play: X7K2PQ\./);
+  assert.match(carried, /Carrier\(s\): IB\./);
+  assert.match(carried, /Already suggested to them: FXP, TQT/);
+  assert.match(carried, /do not ask them to repeat it/);
+  // It rides AFTER the cached brief, so it never costs a cache miss.
+  assert.equal(anthropic.calls[1].system[0].cache_control?.type, 'ephemeral');
+  assert.equal(anthropic.calls[1].system.at(-1).cache_control, undefined);
+  assert.match(anthropic.calls[1].system.at(-1).text, /WHAT YOU ALREADY KNOW/);
+});
+
+test('the case outlives the transcript the trim throws away, and the note is written only then', async () => {
+  process.env.SESSION_MAX_MESSAGES = '4';
+  const sessions = await import('../sessionStore.js');
+  // Earlier tests in this file have talked to this number; start it clean,
+  // or the trim fires on what they left rather than on what this test says.
+  tv.resetTravelVoiceSession('whatsapp-34600111222');
+  const notes = [];
+  const anthropic = {
+    calls: [],
+    messages: {
+      create: async (request) => {
+        anthropic.calls.push({ ...request, messages: [...request.messages] });
+        const system = (request.system || []).map((b) => b.text).join('\n');
+        if (/keeping the case notes/.test(system)) {
+          notes.push(request);
+          return { content: [{ type: 'text', text: 'Madrid agency on locator X7K2PQ with IB; advisor suggested FXP; refund still open.' }], usage: { input_tokens: 40, output_tokens: 20 } };
+        }
+        return { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Valore con FXP.' }], usage: { input_tokens: 40, output_tokens: 20 } };
+      },
+    },
+  };
+
+  stubOutside();
+  await tv.handleTravelVoiceMessage(
+    { id: 'wamid.t1', from: '34600111222', type: 'text', text: 'El localizador X7K2PQ no valora', mediaId: null, phoneNumberId: '222' },
+    { anthropic, phoneNumberId: '222' }
+  );
+  assert.equal(notes.length, 0, 'nothing was dropped yet, so no note was written');
+
+  for (const [i, text] of ['sigue igual', 'ya lo probé', 'y ahora'].entries()) {
+    stubOutside();
+    await tv.handleTravelVoiceMessage(
+      { id: `wamid.t${i + 2}`, from: '34600111222', type: 'text', text, mediaId: null, phoneNumberId: '222' },
+      { anthropic, phoneNumberId: '222' }
+    );
+  }
+
+  // The transcript has been cut to four messages; the opening one, which is
+  // where the locator was, is gone from it.
+  const history = sessions.loadSessions('travel').get('whatsapp-34600111222');
+  assert.equal(history.length, 4);
+  assert.ok(!JSON.stringify(history).includes('X7K2PQ'), 'the transcript lost the locator');
+
+  assert.ok(notes.length >= 1, 'a note was written when the trim started dropping');
+  const c = context.caseFor('whatsapp-34600111222');
+  assert.deepEqual(c.locators, ['X7K2PQ'], 'the case still has it');
+  assert.match(c.summary, /Madrid agency on locator X7K2PQ/);
+
+  stubOutside();
+  await tv.handleTravelVoiceMessage(
+    { id: 'wamid.t9', from: '34600111222', type: 'text', text: '¿Cuál era el localizador?', mediaId: null, phoneNumberId: '222' },
+    { anthropic, phoneNumberId: '222' }
+  );
+  const last = anthropic.calls.filter((c2) => !/keeping the case notes/.test((c2.system || []).map((b) => b.text).join(''))).at(-1);
+  assert.match(systemOf(last), /X7K2PQ/, 'and the advisor is told it, though the transcript no longer holds it');
+});
+
+test('the case never reaches the audit trail, and BORRAR erases it', async () => {
+  stubOutside();
+  const anthropic = stubAnthropic('Use FXP.');
+  await tv.handleTravelVoiceMessage(
+    { id: 'wamid.e1', from: '34600111222', type: 'text', text: 'localizador X7K2PQ', mediaId: null, phoneNumberId: '222' },
+    { anthropic, phoneNumberId: '222' }
+  );
+  assert.ok(context.caseFor('whatsapp-34600111222'));
+  assert.ok(!JSON.stringify(audit.readAudit()).includes('X7K2PQ'), 'the trail holds no locator');
+
+  stubOutside();
+  const gone = await tv.handleTravelVoiceMessage(
+    { id: 'wamid.e2', from: '34600111222', type: 'text', text: 'BORRAR', mediaId: null, phoneNumberId: '222' },
+    { anthropic, phoneNumberId: '222' }
+  );
+  assert.equal(gone.stage, 'forgotten');
+  assert.equal(context.caseFor('whatsapp-34600111222'), null, 'the case goes with the transcript');
+});
+
+test('a person taking a handoff is given the case, and the founder can read or erase it', async () => {
+  process.env.TRAVEL_VOICE_ESCALATION_NUMBERS = '34600000009';
+  stubOutside();
+  const anthropic = stubAnthropic('Utilisez TRF.');
+  await tv.handleTravelVoiceMessage(
+    { id: 'wamid.c1', from: '33600000000', type: 'text', text: 'dossier ABCDEF sur AF1234, remboursement', mediaId: null, phoneNumberId: '222' },
+    { anthropic, phoneNumberId: '222' }
+  );
+  const outside = stubOutside();
+  await tv.handleTravelVoiceMessage(
+    { id: 'wamid.c2', from: '33600000000', type: 'text', text: 'je veux parler à un conseiller', mediaId: null, phoneNumberId: '222' },
+    { anthropic, phoneNumberId: '222' }
+  );
+  const toPerson = sends(outside).find((m) => m.to === '34600000009').text.body;
+  assert.match(toPerson, /The case so far:/);
+  assert.match(toPerson, /locators ABCDEF/);
+  assert.match(toPerson, /already suggested TRF/);
+
+  const shown = await tv.runTravelVoiceCommand({ kind: 'context', number: '+33 600 000 000' }, { from: '111' });
+  assert.match(shown, /locators ABCDEF/);
+  const forgotten = await tv.runTravelVoiceCommand({ kind: 'forget', number: '33600000000' }, { from: '111' });
+  assert.match(forgotten, /Forgotten/);
+  assert.equal(context.caseFor('whatsapp-33600000000'), null);
+  assert.match(await tv.runTravelVoiceCommand({ kind: 'context', number: '33600000000' }, { from: '111' }), /Nothing remembered/);
 });
 

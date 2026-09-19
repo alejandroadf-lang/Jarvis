@@ -29,6 +29,7 @@ conversation to a person.
 | Voice note audio | Caller | Transcription only | Never stored by this server; sent to the transcription vendor and discarded |
 | Transcript and reply | Derived | Answering; conversation memory | `TRAVEL_VOICE_RETENTION_DAYS` (180 by default), then swept |
 | Conversation history | Derived | Context for the next answer | Same clock; deleted when the conversation is idle past it |
+| Case memory | Derived: locators, tickets, carriers, airports, entries suggested, topic, a short note | So the caller is not asked to repeat their case after the transcript is trimmed | Same clock as the transcript; erased together with it; never in the audit trail; never holds an amount |
 | Consent record | Caller's button tap | Evidence of disclosure and agreement | Until the caller withdraws (`BORRAR` / `SUPPRIMER` / `DELETE`) |
 | Review sample | 1–5% of answered turns, words included | Human quality review | `TRAVEL_VOICE_REVIEW_RETENTION_DAYS` (365) |
 | Audit trail | Every turn, **without words or the caller's codes** | Accountability, per-language metrics | `TRAVEL_VOICE_AUDIT_RETENTION_DAYS` (5 years) |
@@ -101,7 +102,9 @@ beyond the transcript clock.
 
 - **Access / portability:** the conversation history and consent record for a number can be
   exported from `sessions.json` and `travelVoiceConsent.json` by the operator.
-- **Erasure:** the caller sends `BORRAR` / `SUPPRIMER` / `DELETE`; the operator can also
+- **Erasure:** the caller sends `BORRAR` / `SUPPRIMER` / `DELETE`, or the operator sends
+  `TRAVEL FORGET <number>`; both clear the transcript, the case memory, the remembered
+  language and any translation mode. The operator can also
   call `forgetConsent()` and `resetTravelVoiceSession()`. The audit trail keeps only the
   hash and metadata.
 - **Objection to automated processing:** `AGENTE` / `CONSEILLER` / `AGENT` at any time.

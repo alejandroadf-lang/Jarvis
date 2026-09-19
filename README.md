@@ -313,9 +313,23 @@ the cascade and hardening its boundaries. Every recommendation is built:
   code-switched speech; Deepgram can be told the Amadeus vocabulary; a clip
   under two seconds cannot switch a conversation's language; ElevenLabs is
   asked not to log and `TRAVEL TIER FAST` moves it to the low-latency model.
+- *It remembers the case, not just the last few messages.* Conversation
+  history was already kept, and trimmed oldest-first — which on a helpdesk
+  drops exactly the message where the agent said what the case is. So the
+  case is now held apart from the transcript: the locators and tickets in
+  play, the carriers and airports, the entries already suggested (so it does
+  not offer FXP twice), and what it is about, all extracted from every turn
+  for free, plus a one-paragraph note rewritten only when the trim actually
+  drops something. It rides on the prompt after the cached brief, and the
+  person taking an escalation is handed it rather than the last message.
+  `TRAVEL CONTEXT <number>` reads it, `TRAVEL FORGET <number>` erases the
+  conversation. It never holds an amount of money — a remembered fare would
+  be a third source the grounding check never sees — never reaches the audit
+  trail, and goes with the transcript on `BORRAR` and on the sweep
+  (`context.js`).
 - *A dress rehearsal with no keys.* `npm run travel:smoke` runs the real
   webhook path with the vendors faked and asserts on every control above in
-  sequence — 47 checks, no credentials, no cost. It earned its place on its
+  sequence — 55 checks, no credentials, no cost. It earned its place on its
   first run by catching record locators being written into the five-year audit
   trail, which the 180-day transcript clock was supposed to outlive; the trail
   now counts codes and amounts rather than keeping them.

@@ -41,6 +41,7 @@ const audit = await import('../audit.js');
 const consent = await import('../consent.js');
 const escalation = await import('../escalation.js');
 const { oggOpusComments, oggOpusDurationSeconds } = await import('../ogg.js');
+const context = await import('../context.js');
 
 // --- a real Ogg Opus voice note, so the marking and the duration are real ---
 
@@ -185,6 +186,21 @@ const comments = lastUpload ? oggOpusComments(lastUpload) : [];
 check('the voice note is marked AI-generated', comments.includes('AI_GENERATED=true'));
 check('the marker names Article 50', comments.some((c) => /Article 50/.test(c)));
 
+// 3b. The case: the second question must not ask for the locator again.
+console.log('\n3b. A follow-up: the case should carry, not be asked for again');
+const known = context.caseFor(`whatsapp-${CALLER}`);
+check('the locator was remembered', known?.locators.includes('X7K2PQ'), JSON.stringify(known?.locators));
+check('the entries it suggested were remembered', known?.entries.includes('FXP'));
+check('the case knows what it is about', known?.topics.includes('pricing'));
+asked.length = 0;
+heard = { text: '¿Y si sigue sin valorar?', language: 'spanish' };
+reply = () => 'Entonces pruebe FXB.';
+await tv.handleTravelVoiceMessage(voice(), { anthropic, phoneNumberId: '222' });
+const carried = asked.at(-1).system;
+check('the advisor is told the locator without being asked', /Record locator\(s\) in play: X7K2PQ/.test(carried));
+check('and what it already suggested', /Already suggested to them: .*FXP/.test(carried));
+check('the case rides after the cached brief, not inside it', asked.at(-1).messages.length >= 1 && /WHAT YOU ALREADY KNOW/.test(carried));
+
 // 4. The fee trap: the advisor must not invent a number.
 console.log('\n4. A question designed to make it invent a fee');
 mark = sent.length;
@@ -253,6 +269,7 @@ check('the consent state is recorded per turn', trail.some((l) => l.stage === 'a
 check('the prompt version is recorded', trail.some((l) => /^[0-9a-f]{8}$/.test(l.promptVersion || '')));
 check('answered turns were sampled for review', audit.reviewQueueSize() >= 2, `${audit.reviewQueueSize()} queued`);
 check('the sample keeps the words a person needs', /X7K2PQ/.test(JSON.stringify(audit.reviewQueue(10))));
+check('the case is not in the trail either', !/X7K2PQ|ABCDEF/.test(raw));
 
 console.log('\n8. The numbers');
 const m = tv.travelVoiceMetrics({ days: 7 });
@@ -262,6 +279,7 @@ check('the handoff is counted', m.total.handoffs >= 1);
 check('cost per resolved conversation is computed', m.costPerResolvedConversation !== null || m.resolvedConversations === 0);
 const swept = tv.runRetentionSweep({ now: Date.now() + 200 * 24 * 3600 * 1000 });
 check('the retention sweep forgets old conversations', swept.conversations >= 1, JSON.stringify(swept));
+check('and the cases with them', context.caseFor(`whatsapp-${CALLER}`) === null);
 
 // --- the verdict -------------------------------------------------------------------
 

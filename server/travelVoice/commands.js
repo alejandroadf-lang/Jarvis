@@ -54,6 +54,8 @@ const COMMANDS = [
   // "set" is optional: "travel length 90" reads better on a phone than
   // "travel set length 90", and both should work.
   { kind: 'consents', re: /^travel\s+consents$/i },
+  { kind: 'context', re: /^travel\s+(?:context|case|remembers?)\s+(\+?[\d\s()-]{6,})$/i },
+  { kind: 'forget', re: /^travel\s+forget\s+(\+?[\d\s()-]{6,})$/i },
   { kind: 'metrics', re: /^travel\s+(?:metrics|numbers|stats)(?:\s+(\d{1,3}))?$/i },
   { kind: 'review', re: /^travel\s+review(?:\s+(\d{1,2}))?$/i },
   { kind: 'reviewed', re: /^travel\s+reviewed\s+(r[a-z0-9]+)\s+(ok|good|bad|wrong)(?:\s+([\s\S]+))?$/i },
@@ -92,7 +94,7 @@ export function parseTravelCommand(text) {
     if (kind === 'metrics') return { kind, days: match[1] ? Number(match[1]) : 7 };
     if (kind === 'review') return { kind, count: match[1] ? Number(match[1]) : 3 };
     if (kind === 'reviewed') return { kind, id: match[1], verdict: /^(ok|good)$/i.test(match[2]) ? 'ok' : 'bad', note: (match[3] || '').trim() };
-    if (kind === 'take' || kind === 'resume') return { kind, number: match[1].trim() };
+    if (kind === 'take' || kind === 'resume' || kind === 'context' || kind === 'forget') return { kind, number: match[1].trim() };
     return { kind };
   }
   return null;
@@ -104,6 +106,8 @@ TRAVEL STATUS — what is live, and today's spend
 TRAVEL ON / OFF — talk to the advisor from this line, or stop
 TRAVEL INVITE <number> [es|fr|en] — let someone try it, and send them a spoken hello
 TRAVEL GUESTS — who is invited
+TRAVEL CONTEXT <number> — what the advisor still remembers about their case
+TRAVEL FORGET <number> — erase that conversation: history, case and language
 TRAVEL METRICS [days] — per language: answers, cost, wrong language, ungrounded, codes, handoffs; cost per resolved conversation
 TRAVEL REVIEW [n] — the next sampled conversations for you to read
 TRAVEL REVIEWED <id> ok|bad [note] — your verdict on one
@@ -184,6 +188,7 @@ export async function runTravelCommand(command, deps = {}) {
     maskNumber = (n) => n,
     handoffs = null,
     metrics = null,
+    context = null,
     review = null,
     sweep = null,
   } = deps;
@@ -294,6 +299,19 @@ export async function runTravelCommand(command, deps = {}) {
       setSetting(command.setting, parsed, scope);
       const where = scope ? ` for ${scope}` : '';
       return `${spec.label}${where}: ${format(parsed)}. Takes effect on the next message.`;
+    }
+
+    case 'context': {
+      if (!context) return 'Case memory is unavailable here.';
+      return context.show(command.number);
+    }
+
+    case 'forget': {
+      if (!context) return 'Case memory is unavailable here.';
+      const had = context.forget(command.number);
+      return had
+        ? `Forgotten. ${command.number} has no history, no case and no translation mode on this line; their next message starts fresh.`
+        : `Nothing was remembered about ${command.number}. Their history and case are clear either way.`;
     }
 
     case 'metrics': {

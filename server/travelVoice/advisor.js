@@ -165,11 +165,14 @@ function usageOf(response) {
  * @param {Array} args.history prior messages for this caller, Anthropic-shaped
  * @param {string} args.text what the caller said, already transcribed
  * @param {string} args.language which of the three to answer in
+ * @param {string} [args.context] what is already known about this caller,
+ *   from earlier in the conversation (see context.js). Placed after the
+ *   cached brief so it never invalidates the cache.
  * @param {(name: string, input: object) => Promise<any>} [args.tools] tool
  *   executor override, for tests
  * @returns {Promise<{ reply: string, messages: Array, usage: object, toolCalls: Array<{name, input}>, provider: string, model: string, ms: number }>}
  */
-export async function runAdvisorTurn({ anthropic = null, provider = null, history = [], text, language, tools = runTool }) {
+export async function runAdvisorTurn({ anthropic = null, provider = null, history = [], text, language, context = null, tools = runTool }) {
   const lang = normalizeLanguage(language) || DEFAULT_LANGUAGE;
   const brain = resolveProvider('llm', provider);
   if (!brain) throw new Error('No advisor model is configured — set ANTHROPIC_API_KEY (or IONOS_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, DEEPSEEK_API_KEY, OPENROUTER_API_KEY and choose it)');
@@ -178,9 +181,13 @@ export async function runAdvisorTurn({ anthropic = null, provider = null, histor
   const toolDefs = toolsAvailable();
   const startedAt = Date.now();
 
+  // The brief is the same on every turn, so the cache breakpoint sits on
+  // it; everything that changes per caller goes after, where it costs a
+  // few hundred tokens rather than a cache miss on several thousand.
   const system = [
     { type: 'text', text: DOMAIN_BRIEF, cache_control: { type: 'ephemeral' } },
     { type: 'text', text: languageInstruction(lang) },
+    ...(context ? [{ type: 'text', text: context }] : []),
   ];
 
   const messages = [...history, { role: 'user', content: String(text) }];

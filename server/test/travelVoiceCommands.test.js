@@ -471,3 +471,10 @@ test('the metrics, review and sweep commands parse', () => {
   assert.deepEqual(parse('TRAVEL SAMPLE 10'), { kind: 'set', setting: 'sample', value: '10' });
 });
 
+test('the case commands parse a number', () => {
+  assert.deepEqual(parse('TRAVEL CONTEXT +34 600 111 222'), { kind: 'context', number: '+34 600 111 222' });
+  assert.deepEqual(parse('travel case 34600111222'), { kind: 'context', number: '34600111222' });
+  assert.deepEqual(parse('TRAVEL FORGET 34600111222'), { kind: 'forget', number: '34600111222' });
+  assert.equal(parse('travel context'), null, 'no number, no command');
+});
+

@@ -37,6 +37,15 @@ import { checkReply } from './replyCheck.js';
 import { readBack } from './spoken.js';
 import { oggOpusDurationSeconds } from './ogg.js';
 import { residencyMode } from './residency.js';
+import {
+  caseFor,
+  rememberTurn,
+  summarizeCase,
+  forgetCase,
+  sweepCases,
+  contextPrompt,
+  describeCase,
+} from './context.js';
 import { describeAnthropicGateway } from '../agents/anthropicClient.js';
 import {
   consentMode,
@@ -400,13 +409,23 @@ export async function runTravelVoiceTurn({
     ? { language: previous, source: 'previous' }
     : resolveLanguage({ chosen: switched || chosen, heard, text: transcript, previous });
   const history = sessionHistory(sessionId);
+  // What survived the last trim: the locators in play, the carriers, what
+  // has already been suggested. Free to read and free to carry.
+  const known = caseFor(sessionId);
   // A locator or ticket number heard in a voice note is read back before
   // the answer, spelled in the caller's alphabet, so the one person who can
   // catch a misheard letter gets the chance. A typed one needs no reading
   // back: they can see what they typed.
   const heardBack = audio ? readBack(transcript, resolved.language) : null;
 
-  const turn = await runAdvisorTurn({ anthropic, provider: providers.llm, history, text: transcript, language: resolved.language });
+  const turn = await runAdvisorTurn({
+    anthropic,
+    provider: providers.llm,
+    history,
+    text: transcript,
+    language: resolved.language,
+    context: contextPrompt(known),
+  });
   costUsd += turn.usage.costUsd;
   used.llm = turn.provider;
   timings.llmMs = turn.ms;
@@ -418,6 +437,21 @@ export async function runTravelVoiceTurn({
   const trimmed = trimHistory(turn.messages);
   saveSession(SESSION_KIND, sessionId, trimmed);
   rememberLanguage(sessionId, resolved.language);
+
+  // The case, updated from what was just said. The facts cost nothing; the
+  // note is rewritten only when the trim actually dropped messages, which
+  // is the one moment something would otherwise be lost for good.
+  rememberTurn(sessionId, { text: transcript, reply: turn.reply, language: resolved.language });
+  const dropped = turn.messages.length - trimmed.length;
+  if (dropped > 0) {
+    await summarizeCase(sessionId, {
+      anthropic,
+      brain: resolveProvider('llm', providers.llm),
+      history: turn.messages,
+      previous: known?.summary || null,
+      through: turn.messages.length,
+    });
+  }
 
   let speech = null;
   let audioError = null;
@@ -561,8 +595,13 @@ export async function runTranslateTurn({
 
 export function resetTravelVoiceSession(sessionId) {
   saveSession(SESSION_KIND, sessionId, []);
+  // The case goes with the transcript, always. It is the same conversation
+  // by another name, and a "forget me" that left it behind would leave the
+  // locators — the most identifying thing here — sitting in a file.
+  forgetCase(sessionId);
   const data = loadState();
   delete data.languages[sessionId];
+  delete data.lastSeen[sessionId];
   saveState(data);
 }
 
@@ -943,7 +982,11 @@ async function notifyEscalation(text, { phoneNumberId = null } = {}) {
  */
 async function openHandoffAndTell(from, { by, reason, language, transcript, phoneNumberId, send }) {
   const entry = openHandoffFor(from, { by, reason, language, transcript });
-  const reached = await notifyEscalation(notificationFor(entry, { from }), { phoneNumberId });
+  // The person taking over gets the case, not just the last message. That
+  // is the difference between picking up a conversation and starting one.
+  const known = caseFor(`whatsapp-${normalizeNumber(from)}`);
+  const note = known ? `\n\nThe case so far:\n${describeCase(known)}` : '';
+  const reached = await notifyEscalation(`${notificationFor(entry, { from })}${note}`, { phoneNumberId });
   recordTurnLog({ channel: 'whatsapp', ...turnMeta(from), stage: 'handoff_opened', language, detail: `${by}: ${reason || ''}`.trim(), notified: reached.length });
   await send(handoffText('opened', language));
   return { entry, reached };
@@ -1152,6 +1195,16 @@ export function runTravelVoiceCommand(command, { from, phoneNumberId = null } = 
     localized,
     maskNumber,
     metrics: (days) => auditMetrics({ days }),
+    context: {
+      show: (number) => describeCase(caseFor(`whatsapp-${normalizeNumber(number)}`)),
+      forget: (number) => {
+        const sessionId = `whatsapp-${normalizeNumber(number)}`;
+        const had = Boolean(caseFor(sessionId));
+        resetTravelVoiceSession(sessionId);
+        clearMode(sessionId);
+        return had;
+      },
+    },
     review: { queue: reviewQueue, mark: (id, verdict, note) => markReviewed(id, { verdict, note, by: from }) },
     sweep: () => runRetentionSweep(),
     handoffs: {
@@ -1188,7 +1241,7 @@ function sweepConversations(cutoffMs) {
     removed += 1;
   }
   saveState(data);
-  return removed;
+  return removed + sweepCases(cutoffMs);
 }
 
 /** Runs every retention clock now. Returns what was removed. */
