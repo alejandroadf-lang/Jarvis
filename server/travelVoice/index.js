@@ -37,6 +37,7 @@ import { checkReply } from './replyCheck.js';
 import { readBack } from './spoken.js';
 import { oggOpusDurationSeconds } from './ogg.js';
 import { residencyMode } from './residency.js';
+import { capturing, setCapturing, captureVoiceNote, captureState, capturedFixtures, captureDir, sweepFixtures } from './qa/capture.js';
 import {
   caseFor,
   rememberTurn,
@@ -910,6 +911,9 @@ export async function handleTravelVoiceMessage(message, { anthropic, phoneNumber
   }
 
   recordSessionSpend(sessionId, result.costUsd);
+  // When capture is on, the voice note and what was heard become a fixture
+  // the ears benchmark can score. Off unless the founder switched it on.
+  if (audio && result.transcript) captureVoiceNote({ audio, filename, transcript: result.transcript, language: result.language });
   // A few per cent of answered turns, words included, for a person to read.
   maybeSample({
     from,
@@ -1195,6 +1199,10 @@ export function runTravelVoiceCommand(command, { from, phoneNumberId = null } = 
     localized,
     maskNumber,
     metrics: (days) => auditMetrics({ days }),
+    capture: {
+      state: () => ({ ...captureState(), fixtures: capturedFixtures().length, dir: captureDir() }),
+      set: (on) => setCapturing(on),
+    },
     context: {
       show: (number) => describeCase(caseFor(`whatsapp-${normalizeNumber(number)}`)),
       forget: (number) => {
@@ -1241,7 +1249,7 @@ function sweepConversations(cutoffMs) {
     removed += 1;
   }
   saveState(data);
-  return removed + sweepCases(cutoffMs);
+  return removed + sweepCases(cutoffMs) + sweepFixtures(cutoffMs);
 }
 
 /** Runs every retention clock now. Returns what was removed. */
@@ -1337,6 +1345,7 @@ export function travelVoiceStatus() {
     handoffs: { open: listOpenHandoffs().map((h) => ({ number: maskNumber(h.number), openedAt: h.openedAt, by: h.by, reason: h.reason, language: h.language })), notifies: escalationNumbers().length },
     residency: { mode: residencyMode(), anthropic: describeAnthropicGateway() },
     retention: { transcriptDays: retentionDays(), sessionCapUsd: sessionCapUsd() },
+    capture: { on: capturing(), fixtures: capturedFixtures().length },
     consent: {
       mode: consentMode(),
       disclosed: listConsents(maskNumber).length,

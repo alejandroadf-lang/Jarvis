@@ -18,6 +18,7 @@ let consent;
 let escalation;
 let audit;
 let context;
+let capture;
 let originalFetch;
 const saved = {};
 const KEYS = [
@@ -60,6 +61,7 @@ before(async () => {
   escalation = await import('../travelVoice/escalation.js');
   audit = await import('../travelVoice/audit.js');
   context = await import('../travelVoice/context.js');
+  capture = await import('../travelVoice/qa/capture.js');
 });
 
 after(() => {
@@ -85,6 +87,7 @@ beforeEach(() => {
   escalation.__resetEscalationsForTests();
   audit.__resetAuditForTests();
   context.__resetContextForTests();
+  capture.__resetCaptureForTests();
   // The tests of the advisor itself run with the notice off; the consent
   // flow has its own tests below, which turn it back on.
   process.env.TRAVEL_VOICE_CONSENT = 'off';
@@ -996,5 +999,46 @@ test('a person taking a handoff is given the case, and the founder can read or e
   assert.match(forgotten, /Forgotten/);
   assert.equal(context.caseFor('whatsapp-33600000000'), null);
   assert.match(await tv.runTravelVoiceCommand({ kind: 'context', number: '33600000000' }, { from: '111' }), /Nothing remembered/);
+});
+
+test('capture keeps a real voice note as a fixture, only while it is on', async () => {
+  const anthropic = stubAnthropic('Valore con FXP.');
+  stubOutside({ transcript: 'no me valora el localizador X7K2PQ', heard: 'spanish' });
+  await tv.handleTravelVoiceMessage(
+    { id: 'wamid.cap0', from: '34600111222', type: 'audio', text: '', mediaId: 'media-1', phoneNumberId: '222' },
+    { anthropic, phoneNumberId: '222' }
+  );
+  assert.deepEqual(capture.capturedFixtures(), [], 'off by default, so nothing was written');
+
+  const on = await tv.runTravelVoiceCommand({ kind: 'capture', mode: 'on' }, { from: '111' });
+  assert.match(on, /Capture is ON/);
+  assert.match(on, /people's voices/, 'and says what it is keeping');
+
+  stubOutside({ transcript: 'no me valora el localizador X7K2PQ', heard: 'spanish' });
+  await tv.handleTravelVoiceMessage(
+    { id: 'wamid.cap1', from: '34600111222', type: 'audio', text: '', mediaId: 'media-1', phoneNumberId: '222' },
+    { anthropic, phoneNumberId: '222' }
+  );
+  const [fixture] = capture.capturedFixtures();
+  assert.equal(fixture.language, 'es');
+  assert.match(fixture.reference, /X7K2PQ/, 'the transcript is the starting reference');
+  assert.ok(fs.readFileSync(fixture.file).length > 0);
+
+  // A typed message has no audio to keep.
+  stubOutside();
+  await tv.handleTravelVoiceMessage(
+    { id: 'wamid.cap2', from: '34600111222', type: 'text', text: '¿Y ahora?', mediaId: null, phoneNumberId: '222' },
+    { anthropic, phoneNumberId: '222' }
+  );
+  assert.equal(capture.capturedFixtures().length, 1);
+
+  const off = await tv.runTravelVoiceCommand({ kind: 'capture', mode: 'off' }, { from: '111' });
+  assert.match(off, /Capture is off/);
+  assert.match(off, /correct it to what was actually said/, 'a transcript is not a reference until someone checks it');
+  assert.equal(tv.travelVoiceStatus().capture.fixtures, 1);
+
+  // And the sweep takes the voices with everything else.
+  tv.runRetentionSweep({ now: Date.now() + 200 * 24 * 3600 * 1000 });
+  assert.deepEqual(capture.capturedFixtures(), []);
 });
 

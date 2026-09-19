@@ -327,6 +327,16 @@ the cascade and hardening its boundaries. Every recommendation is built:
   be a third source the grounding check never sees — never reaches the audit
   trail, and goes with the transcript on `BORRAR` and on the sweep
   (`context.js`).
+- *And the three things no fake can answer.* `npm run travel:verify` uses
+  your real keys to settle them: it round-trips a marked voice note through
+  Meta's media API to see whether the AI marker survives storage, calls
+  ElevenLabs with `enable_logging=false` to find out whether this plan
+  accepts it, and reports what benchmark audio you have. `TRAVEL CAPTURE ON`
+  keeps the voice notes a demo produces, beside what was heard, in the layout
+  `travel:bench` reads — so the ears get measured on a Spanish agent in a busy
+  office rather than on the vendors' own recordings. It is off by default,
+  says out loud that it is keeping people's voices, and is swept on the same
+  clock as everything else.
 - *A dress rehearsal with no keys.* `npm run travel:smoke` runs the real
   webhook path with the vendors faked and asserts on every control above in
   sequence — 55 checks, no credentials, no cost. It earned its place on its

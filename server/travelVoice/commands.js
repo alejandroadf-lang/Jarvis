@@ -54,6 +54,7 @@ const COMMANDS = [
   // "set" is optional: "travel length 90" reads better on a phone than
   // "travel set length 90", and both should work.
   { kind: 'consents', re: /^travel\s+consents$/i },
+  { kind: 'capture', re: /^travel\s+capture(?:\s+(on|off|status))?$/i },
   { kind: 'context', re: /^travel\s+(?:context|case|remembers?)\s+(\+?[\d\s()-]{6,})$/i },
   { kind: 'forget', re: /^travel\s+forget\s+(\+?[\d\s()-]{6,})$/i },
   { kind: 'metrics', re: /^travel\s+(?:metrics|numbers|stats)(?:\s+(\d{1,3}))?$/i },
@@ -91,6 +92,7 @@ export function parseTravelCommand(text) {
     if (kind === 'invite') return { kind, number: match[1].trim(), language: normalizeLanguage(match[2]) };
     if (kind === 'guest_remove') return { kind, number: match[1].trim() };
     if (kind === 'say') return { kind, number: match[1].trim(), text: match[2].trim() };
+    if (kind === 'capture') return { kind, mode: (match[1] || 'status').toLowerCase() };
     if (kind === 'metrics') return { kind, days: match[1] ? Number(match[1]) : 7 };
     if (kind === 'review') return { kind, count: match[1] ? Number(match[1]) : 3 };
     if (kind === 'reviewed') return { kind, id: match[1], verdict: /^(ok|good)$/i.test(match[2]) ? 'ok' : 'bad', note: (match[3] || '').trim() };
@@ -106,6 +108,7 @@ TRAVEL STATUS — what is live, and today's spend
 TRAVEL ON / OFF — talk to the advisor from this line, or stop
 TRAVEL INVITE <number> [es|fr|en] — let someone try it, and send them a spoken hello
 TRAVEL GUESTS — who is invited
+TRAVEL CAPTURE on|off — keep the voice notes people send as benchmark audio
 TRAVEL CONTEXT <number> — what the advisor still remembers about their case
 TRAVEL FORGET <number> — erase that conversation: history, case and language
 TRAVEL METRICS [days] — per language: answers, cost, wrong language, ungrounded, codes, handoffs; cost per resolved conversation
@@ -189,6 +192,7 @@ export async function runTravelCommand(command, deps = {}) {
     handoffs = null,
     metrics = null,
     context = null,
+    capture = null,
     review = null,
     sweep = null,
   } = deps;
@@ -299,6 +303,22 @@ export async function runTravelCommand(command, deps = {}) {
       setSetting(command.setting, parsed, scope);
       const where = scope ? ` for ${scope}` : '';
       return `${spec.label}${where}: ${format(parsed)}. Takes effect on the next message.`;
+    }
+
+    case 'capture': {
+      if (!capture) return 'Capture is unavailable here.';
+      if (command.mode === 'status') {
+        const state = capture.state();
+        return state.on
+          ? `Capture is ON since ${state.since?.slice(11, 16)} — ${state.count} kept this run, ${state.fixtures} in all.\nTRAVEL CAPTURE OFF stops it.`
+          : `Capture is off. ${state.fixtures} voice notes kept from earlier runs.\nTRAVEL CAPTURE ON keeps the next ones, so the ears can be measured on real audio rather than the vendors' own recordings.`;
+      }
+      const on = command.mode === 'on';
+      capture.set(on);
+      const state = capture.state();
+      return on
+        ? `Capture is ON. Every voice note answered from now is kept with what was heard, so the ears can be compared on real agency audio.\nThese are people's voices: switch it off when the demo ends. They are swept on the same clock as everything else.`
+        : `Capture is off. ${state.fixtures} voice notes kept in all.\nRead each transcript and correct it to what was actually said — that is what makes it a benchmark — then run the bench over ${state.dir}.`;
     }
 
     case 'context': {

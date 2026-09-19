@@ -478,3 +478,10 @@ test('the case commands parse a number', () => {
   assert.equal(parse('travel context'), null, 'no number, no command');
 });
 
+test('the capture command parses on, off and a bare status', () => {
+  assert.deepEqual(parse('TRAVEL CAPTURE ON'), { kind: 'capture', mode: 'on' });
+  assert.deepEqual(parse('travel capture off'), { kind: 'capture', mode: 'off' });
+  assert.deepEqual(parse('TRAVEL CAPTURE'), { kind: 'capture', mode: 'status' });
+  assert.equal(parse('travel capture everything'), null);
+});
+

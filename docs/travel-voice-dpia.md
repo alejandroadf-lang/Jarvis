@@ -34,6 +34,7 @@ conversation to a person.
 | Review sample | 1–5% of answered turns, words included | Human quality review | `TRAVEL_VOICE_REVIEW_RETENTION_DAYS` (365) |
 | Audit trail | Every turn, **without words or the caller's codes** | Accountability, per-language metrics | `TRAVEL_VOICE_AUDIT_RETENTION_DAYS` (5 years) |
 | Handoff record | Escalations | A person can take over | With the audit trail; numbers masked |
+| Captured voice notes | Only while `TRAVEL CAPTURE ON` | Measuring the transcribers on real audio rather than vendor recordings | Same clock as the transcript; off by default; swept with everything else |
 
 **Subjects:** travel agents and agency staff (professionals), and any consumer an agency
 invites. **Special categories:** voice is inherently biometric-capable; this system never
@@ -110,6 +111,11 @@ beyond the transcript clock.
 - **Objection to automated processing:** `AGENTE` / `CONSEILLER` / `AGENT` at any time.
 
 ## 8. Evidence
+
+`npm run travel:verify` settles, against the real vendors, the three questions the
+architecture cannot: whether the AI marker survives Meta's media pipeline, whether this
+ElevenLabs plan honours `enable_logging=false`, and what benchmark audio exists. Its first
+two answers belong in §3 and §5 respectively once run.
 
 `npm run travel:smoke` walks a caller through the whole pipeline with the vendors faked —
 first contact and the notice, the tap, a question carrying a locator, a question designed to
