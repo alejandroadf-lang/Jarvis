@@ -90,3 +90,17 @@ test('every plumbing message exists in all three languages', () => {
   assert.equal(localized('greeting', 'pt'), localized('greeting', 'en'), 'unknown language falls back to English');
   assert.throws(() => localized('nope', 'en'), /No localized string/);
 });
+
+test('a country code is a language hint for the moment before anything is heard', async () => {
+  const { languageFromNumber } = await import('../travelVoice/languages.js');
+  assert.equal(languageFromNumber('+34 600 111 222'), 'es');
+  assert.equal(languageFromNumber('5215512345678'), 'es', 'Mexico');
+  assert.equal(languageFromNumber('33612345678'), 'fr');
+  assert.equal(languageFromNumber('2250700000000'), 'fr', "Côte d'Ivoire");
+  assert.equal(languageFromNumber('447700900123'), 'en');
+  assert.equal(languageFromNumber('12125551234'), 'en', 'a bare 1 is North America');
+  assert.equal(languageFromNumber('18095551234'), 'es', 'but the Dominican Republic is Spanish');
+  assert.equal(languageFromNumber('4915112345678'), null, 'Germany is none of the three');
+  assert.equal(languageFromNumber(''), null);
+});
+

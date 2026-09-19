@@ -115,6 +115,17 @@ export const SETTINGS = {
     fallback: true,
     parse: bool,
   },
+  consent: {
+    label: 'consent',
+    help: 'required to ask before hearing a voice note, notice to only disclose, off for a demo on your own phone',
+    envName: 'TRAVEL_VOICE_CONSENT',
+    fallback: 'required',
+    parse: (value) => {
+      const v = String(value).trim().toLowerCase();
+      if (!['required', 'notice', 'off'].includes(v)) throw new Error('needs to be required, notice or off');
+      return v;
+    },
+  },
   limit: {
     label: 'limit',
     help: 'how many questions one caller may ask per hour',

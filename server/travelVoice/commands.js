@@ -28,6 +28,7 @@ import {
   clearAll as clearSettings,
 } from './settings.js';
 import { getSpendSummary } from '../spend.js';
+import { listConsents, consentMode } from './consent.js';
 import { formatUsd } from '../usage.js';
 
 const SLOT_WORDS = { ears: 'stt', hearing: 'stt', brain: 'llm', model: 'llm', voice: 'tts', speech: 'tts' };
@@ -52,7 +53,8 @@ const COMMANDS = [
   { kind: 'settings', re: /^travel\s+(?:settings|options|config)$/i },
   // "set" is optional: "travel length 90" reads better on a phone than
   // "travel set length 90", and both should work.
-  { kind: 'set', re: /^travel\s+(?:set\s+)?(voice|voiceid|language|lang|idioma|langue|length|words|effort|thinking|model|text|retry|limit|rate|tier)\s+(.+)$/i },
+  { kind: 'consents', re: /^travel\s+consents$/i },
+  { kind: 'set', re: /^travel\s+(?:set\s+)?(voice|voiceid|language|lang|idioma|langue|length|words|effort|thinking|model|text|retry|limit|rate|tier|consent)\s+(.+)$/i },
   { kind: 'guests', re: /^travel\s+guests$/i },
   { kind: 'guest_remove', re: /^travel\s+(?:guest\s+)?remove\s+(\+?[\d\s()-]{6,})$/i },
   { kind: 'guest_clear', re: /^travel\s+guests\s+clear$/i },
@@ -87,6 +89,8 @@ TRAVEL STATUS — what is live, and today's spend
 TRAVEL ON / OFF — talk to the advisor from this line, or stop
 TRAVEL INVITE <number> [es|fr|en] — let someone try it, and send them a spoken hello
 TRAVEL GUESTS — who is invited
+TRAVEL CONSENTS — who has seen the AI notice and what they answered
+TRAVEL CONSENT required|notice|off — ask before hearing voice, only disclose, or neither
 TRAVEL REMOVE <number> — take someone off the list
 TRAVEL EARS|BRAIN|VOICE <provider> — switch one mid-demo
 TRAVEL SETTINGS — every dial and what it is on
@@ -153,6 +157,7 @@ export async function runTravelCommand(command, deps = {}) {
     recentTurns = () => [],
     inviteGuest,
     localized: t,
+    maskNumber = (n) => n,
   } = deps;
 
   switch (command.kind) {
@@ -170,6 +175,7 @@ export async function runTravelCommand(command, deps = {}) {
         `voice: ${slotLine('tts', described)}`,
         `spend today: ${formatUsd(spend.spentUsd)} of ${formatUsd(spend.capUsd)}${spend.overCap ? ' — CAP REACHED, nothing will answer' : ''}`,
         `guests invited: ${guests}`,
+        `consent: ${consentMode()}`,
       ].join('\n');
     }
 
@@ -259,6 +265,15 @@ export async function runTravelCommand(command, deps = {}) {
       setSetting(command.setting, parsed, scope);
       const where = scope ? ` for ${scope}` : '';
       return `${spec.label}${where}: ${format(parsed)}. Takes effect on the next message.`;
+    }
+
+    case 'consents': {
+      const rows = listConsents(maskNumber);
+      const mode = consentMode();
+      if (!rows.length) return `Consent is ${mode}. Nobody has been shown the AI notice yet.`;
+      return [`Consent is ${mode}. ${rows.length} shown the AI notice:`]
+        .concat(rows.map((r) => `  ${r.number} ${r.consent || 'no answer yet'}${r.consentAt ? ` (${r.consentAt.slice(0, 16).replace('T', ' ')})` : ''}${r.language ? ` ${r.language}` : ''}`))
+        .join('\n');
     }
 
     case 'guests': {

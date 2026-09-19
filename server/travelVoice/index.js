@@ -26,6 +26,7 @@ import {
   downloadMedia,
   sendWhatsAppMessage,
   sendWhatsAppAudio,
+  sendWhatsAppPayload,
   normalizeNumber,
 } from '../channels/whatsapp.js';
 import { runAdvisorTurn, advisorModel } from './advisor.js';
@@ -35,12 +36,28 @@ import { describeProviders, hasProvider, resolveProvider } from './providers/ind
 import { checkReply } from './replyCheck.js';
 import { readBack } from './spoken.js';
 import { oggOpusDurationSeconds } from './ogg.js';
+import {
+  consentMode,
+  needsDisclosure,
+  recordDisclosure,
+  recordConsent,
+  forgetConsent,
+  voiceAllowed,
+  listConsents,
+  disclosurePayload,
+  spokenDisclosure,
+  consentAnswer,
+  parseConsentReply,
+  isForgetRequest,
+} from './consent.js';
 import { assertUnderDailyCap, recordSpend } from '../spend.js';
 import { priceUsage } from '../usage.js';
 import {
   resolveLanguage,
   requestedLanguageSwitch,
   normalizeLanguage,
+  languageFromNumber,
+  guessLanguage,
   localized,
   isBareGreeting,
   LANGUAGE_NAMES,
@@ -268,6 +285,7 @@ export async function runTravelVoiceTurn({
   audio = null,
   filename = 'voice.ogg',
   language = null,
+  fallbackLanguage = null,
   wantAudio = false,
   providers = {},
 }) {
@@ -276,7 +294,10 @@ export async function runTravelVoiceTurn({
   // one: it beats detection, which is the point when you are demonstrating
   // to a French agency and do not want a stray English word to decide.
   const chosen = language || settingOverride('language') || null;
-  const previous = rememberedLanguage(sessionId);
+  // What the conversation was in last time; for a first message, whatever
+  // the channel can say about the caller (their country code) rather than
+  // English by reflex.
+  const previous = rememberedLanguage(sessionId) || normalizeLanguage(fallbackLanguage) || null;
   let transcript = String(text || '').trim();
   let heard = null;
   let costUsd = 0;
@@ -517,19 +538,57 @@ export async function handleTravelVoiceMessage(message, { anthropic, phoneNumber
   const from = message.from;
   const sessionId = `whatsapp-${normalizeNumber(from)}`;
   const send = (text) => sendWhatsAppMessage(from, text, { phoneNumberId });
-  // The language for anything said before the advisor has answered — a
-  // rate-limit notice, an apology. A returning caller has one on record; a
-  // new one who typed is guessed from their words; a new one who spoke gets
-  // English until the transcriber has heard them.
+  // The language for anything said before the advisor has answered — the
+  // notice, a rate-limit message, an apology. A returning caller has one on
+  // record; a new one who typed is guessed from their words; a new one who
+  // spoke cannot be listened to before they have been told what this is,
+  // so their country code decides, and English is the last resort.
+  const typedGuess = message.text?.trim() ? guessLanguage(message.text) : null;
   const previous =
     rememberedLanguage(sessionId) ||
-    (message.text?.trim() ? resolveLanguage({ text: message.text }).language : DEFAULT_LANGUAGE);
+    (typedGuess?.language && typedGuess.confidence >= 0.6 ? typedGuess.language : null) ||
+    languageFromNumber(from) ||
+    DEFAULT_LANGUAGE;
   const startedAt = Date.now();
+
+  // A tap on one of the consent buttons. Recorded with Meta's id for the
+  // tap, which is the evidence that this person agreed, and when.
+  const tapped = parseConsentReply(message.buttonReply);
+  if (tapped) {
+    recordConsent(from, { granted: tapped.granted, messageId: message.id, buttonId: message.buttonReply.id });
+    recordTurnLog({ channel: 'whatsapp', from: maskNumber(from), stage: 'consent', language: previous, detail: tapped.granted ? 'granted' : 'declined' });
+    await send(consentAnswer(tapped.granted ? 'granted' : 'declined', previous));
+    return { stage: 'consent', granted: tapped.granted };
+  }
 
   if (!admitTurn(sessionId)) {
     recordTurnLog({ channel: 'whatsapp', from: maskNumber(from), stage: 'rate_limited', language: previous });
     await send(localized('rateLimited', previous));
     return { stage: 'rate_limited' };
+  }
+
+  // "BORRAR" / "SUPPRIMER" / "DELETE": the caller withdraws and is forgotten
+  // — consent, history, language, translation mode — from this line.
+  if (!isVoiceNote(message) && isForgetRequest(message.text)) {
+    forgetConsent(from);
+    resetTravelVoiceSession(sessionId);
+    clearMode(sessionId);
+    recordTurnLog({ channel: 'whatsapp', from: maskNumber(from), stage: 'forgotten', language: previous });
+    await send(consentAnswer('forgotten', previous));
+    return { stage: 'forgotten' };
+  }
+
+  // First contact: say what this is before doing anything with what they
+  // sent. Spoken in the advisor's voice and written with the two buttons.
+  const firstContact = needsDisclosure(from);
+  if (firstContact) await discloseTo(from, { language: previous, phoneNumberId });
+
+  // Voice waits for the tap. Nothing is downloaded, let alone transcribed,
+  // until it has been given; text is answered meanwhile.
+  if (isVoiceNote(message) && !voiceAllowed(from)) {
+    if (!firstContact) await send(consentAnswer('needed', previous));
+    recordTurnLog({ channel: 'whatsapp', from: maskNumber(from), stage: 'consent_required', language: previous });
+    return { stage: 'consent_required' };
   }
 
   let audio = null;
@@ -671,6 +730,7 @@ export async function handleTravelVoiceMessage(message, { anthropic, phoneNumber
       text: audio ? '' : message.text,
       audio,
       filename,
+      fallbackLanguage: languageFromNumber(from),
       wantAudio: Boolean(audio) && canSpeak(),
     });
   } catch (err) {
@@ -728,6 +788,32 @@ export async function handleTravelVoiceMessage(message, { anthropic, phoneNumber
     durationMs: Date.now() - startedAt,
   });
   return { stage: 'answered', spoke, language: result.language };
+}
+
+/**
+ * The disclosure, delivered: spoken first when there is a voice, then the
+ * written notice with its two buttons. Recorded with the id of the written
+ * message. A failure to speak is not a failure to disclose — the text is
+ * the record — but a failure to send the text is thrown, because a caller
+ * who was never told must not be processed.
+ */
+export async function discloseTo(number, { language = DEFAULT_LANGUAGE, phoneNumberId = null, speak = true } = {}) {
+  const lang = normalizeLanguage(language) || DEFAULT_LANGUAGE;
+  let spoke = false;
+  if (speak && canSpeak()) {
+    try {
+      const speech = await synthesizeSpeech(speakable(spokenDisclosure(lang), { maxWords: Infinity }), { language: lang, format: 'opus' });
+      await sendWhatsAppAudio(number, speech.buffer, { mimeType: speech.mimeType, filename: speech.filename, phoneNumberId });
+      spoke = true;
+    } catch (err) {
+      console.warn(`Travel voice: could not speak the disclosure to ${maskNumber(number)}: ${err.message}`);
+    }
+  }
+  const sent = await sendWhatsAppPayload(number, disclosurePayload(lang), { phoneNumberId });
+  const messageId = sent?.messages?.[0]?.id || null;
+  recordDisclosure(number, { language: lang, messageId, spoken: spoke });
+  recordTurnLog({ channel: 'whatsapp', from: maskNumber(number), stage: 'disclosed', language: lang, spoke, detail: consentMode() });
+  return { spoke, messageId };
 }
 
 /** A call event on the advisor's number — see calls.js for what happens. */
@@ -818,14 +904,25 @@ export async function inviteGuest(number, { language = null, phoneNumberId = nul
   if (delivered && canSpeak()) {
     try {
       // The greeting is short and deliberately written; it is not the
-      // advisor rambling, so it goes out whole.
-      const speech = await synthesizeSpeech(speakable(greeting, { maxWords: Infinity }), { language: lang, format: 'opus' });
+      // advisor rambling, so it goes out whole — with the spoken disclosure
+      // on the end of it, so the first thing they hear says what this is.
+      const words = consentMode() === 'off' ? greeting : `${greeting} ${spokenDisclosure(lang)}`;
+      const speech = await synthesizeSpeech(speakable(words, { maxWords: Infinity }), { language: lang, format: 'opus' });
       await sendWhatsAppAudio(digits, speech.buffer, { mimeType: speech.mimeType, filename: speech.filename, phoneNumberId: from });
       spoke = true;
     } catch (err) {
       // They still have the text and can still write. A failed voice note is
       // a worse invitation, not a failed one.
       console.warn(`Travel voice: could not speak the invitation to ${maskNumber(digits)}: ${err.message}`);
+    }
+  }
+  // The written notice and its buttons, so their first voice note is not
+  // met with a second hello. Already spoken above, so not spoken again.
+  if (delivered && needsDisclosure(digits)) {
+    try {
+      await discloseTo(digits, { language: lang, phoneNumberId: from, speak: false });
+    } catch (err) {
+      console.warn(`Travel voice: could not send the notice to ${maskNumber(digits)}: ${err.message}`);
     }
   }
 
@@ -850,6 +947,7 @@ export function runTravelVoiceCommand(command, { from, phoneNumberId = null } = 
     recentTurns: recentTravelVoiceTurns,
     inviteGuest: (number, opts) => inviteGuest(number, { ...opts, phoneNumberId }),
     localized,
+    maskNumber,
   });
 }
 
@@ -910,6 +1008,11 @@ export function travelVoiceStatus() {
       liveCalls: capabilities.liveCalls,
     },
     translation: { available: true, languages: SUPPORTED_LANGUAGES },
+    consent: {
+      mode: consentMode(),
+      disclosed: listConsents(maskNumber).length,
+      granted: listConsents(maskNumber).filter((c) => c.consent === 'granted').length,
+    },
     guests: listGuests().map((g) => ({ number: maskNumber(g.number), language: g.language, addedAt: g.addedAt })),
     venture: venture ? { id: venture.id, title: venture.title, status: venture.status } : null,
     recentTurns: recentTravelVoiceTurns(20),

@@ -133,6 +133,7 @@ test('an inbound text message is pulled out of the nested payload', () => {
     mediaId: null,
     phoneNumberId: null,
     callPermission: null,
+    buttonReply: null,
   });
 });
 
@@ -196,3 +197,13 @@ test('a rejected send surfaces the reason rather than failing silently', async (
   global.fetch = async () => ({ ok: false, status: 401, text: async () => 'bad token' });
   await assert.rejects(sendWhatsAppMessage('447700900123', 'hi'), /WhatsApp send failed \(401\)/);
 });
+
+test('a tap on a reply button is surfaced as its id and title', () => {
+  const message = extractMessage({
+    entry: [{ changes: [{ value: { metadata: { phone_number_id: '222' }, messages: [{ id: 'wamid.b', from: '34600111222', type: 'interactive', interactive: { type: 'button_reply', button_reply: { id: 'consent_yes', title: 'Acepto' } } }] } }] }],
+  });
+  assert.deepEqual(message.buttonReply, { id: 'consent_yes', title: 'Acepto' });
+  assert.equal(message.text, '');
+  assert.equal(message.phoneNumberId, '222');
+});
+

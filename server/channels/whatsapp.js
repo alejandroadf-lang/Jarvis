@@ -113,6 +113,15 @@ export function extractMessage(body) {
             permanent: Boolean(message.interactive.call_permission_reply?.is_permanent),
           }
         : null,
+    // A tap on a reply button — the consent buttons in travelVoice/consent.js
+    // — arrives as an interactive message too. Surfaced as the button's id
+    // and title so the caller never parses the payload.
+    buttonReply:
+      message.type === 'interactive' && message.interactive?.type === 'button_reply'
+        ? { id: message.interactive.button_reply?.id || null, title: message.interactive.button_reply?.title || '' }
+        : message.type === 'button'
+          ? { id: message.button?.payload || null, title: message.button?.text || '' }
+          : null,
     // An image can carry a caption, and the caption is usually the actual
     // question — "is this the right setting?" over a screenshot. Treated as
     // the message text so everything downstream works unchanged.

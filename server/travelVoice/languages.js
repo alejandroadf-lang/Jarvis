@@ -186,6 +186,32 @@ export function resolveLanguage({ chosen, heard, text, previous } = {}) {
   return { language: DEFAULT_LANGUAGE, source: 'default' };
 }
 
+// Country calling codes, for the one moment nothing else is known: a
+// stranger's first voice note, which cannot be listened to before they have
+// been told what this is — in a language they will understand. Spain and
+// Spanish-speaking America; France and the francophone countries an agency
+// here actually deals with. Everything else gets English, the fallback.
+const SPANISH_PREFIXES = ['34', '52', '54', '56', '57', '58', '51', '593', '591', '595', '598', '506', '507', '502', '503', '504', '505', '53', '1809', '1829', '1849', '1787', '1939', '240'];
+const ENGLISH_PREFIXES = ['44', '353', '61', '64', '27', '91', '234', '254', '233', '92', '63', '65', '60'];
+const FRENCH_PREFIXES = ['33', '32', '352', '377', '41', '212', '213', '216', '221', '223', '225', '226', '227', '228', '229', '237', '241', '242', '243', '261', '262', '269', '509', '590', '594', '596', '687', '689'];
+
+/**
+ * The language a phone number's country most likely speaks, or null.
+ * A hint for before anything has been heard, never an override of what is.
+ */
+export function languageFromNumber(number) {
+  const digits = String(number || '').replace(/\D/g, '');
+  if (!digits) return null;
+  const longest = (list) => list.some((p) => digits.startsWith(p));
+  // Four-digit NANP prefixes before the bare "1", which is English.
+  if (longest(SPANISH_PREFIXES.filter((p) => p.length === 4))) return 'es';
+  if (digits.startsWith('1')) return 'en';
+  if (longest(SPANISH_PREFIXES)) return 'es';
+  if (longest(FRENCH_PREFIXES)) return 'fr';
+  if (longest(ENGLISH_PREFIXES)) return 'en';
+  return null;
+}
+
 /**
  * "En français, s'il vous plaît" — a caller asking to switch language, in any
  * of the three. Returns the requested code or null. Checked before the

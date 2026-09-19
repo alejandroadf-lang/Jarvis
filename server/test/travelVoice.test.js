@@ -14,6 +14,7 @@ let tmpDir;
 let tv;
 let whatsapp;
 let ventures;
+let consent;
 let originalFetch;
 const saved = {};
 const KEYS = [
@@ -36,6 +37,7 @@ const KEYS = [
   'TRAVEL_VOICE_MODEL',
   'TRAVEL_VOICE_EFFORT',
   'TRAVEL_VOICE_SHORT_CLIP_SECONDS',
+  'TRAVEL_VOICE_CONSENT',
 ];
 
 before(async () => {
@@ -46,6 +48,7 @@ before(async () => {
   tv = await import('../travelVoice/index.js');
   whatsapp = await import('../channels/whatsapp.js');
   ventures = await import('../finance/ventures.js');
+  consent = await import('../travelVoice/consent.js');
 });
 
 after(() => {
@@ -67,6 +70,10 @@ beforeEach(() => {
   process.env.ANTHROPIC_API_KEY = 'an-key';
   tv.__resetTravelVoiceForTests();
   whatsapp.__resetDedupForTests();
+  consent.__resetConsentForTests();
+  // The tests of the advisor itself run with the notice off; the consent
+  // flow has its own tests below, which turn it back on.
+  process.env.TRAVEL_VOICE_CONSENT = 'off';
   global.fetch = originalFetch;
 });
 
@@ -473,3 +480,141 @@ test('the venture is registered once, on the portfolio, with milestones', () => 
   assert.deepEqual(status.languages, ['es', 'fr', 'en']);
   assert.equal(status.whatsapp.open, true);
 });
+
+// --- first contact: the notice and the tap ------------------------------------------
+
+function interactiveSends(calls) {
+  return sends(calls).filter((m) => m.type === 'interactive');
+}
+
+test('first contact is disclosed, spoken and written with two buttons, and voice waits for the tap', async () => {
+  process.env.TRAVEL_VOICE_CONSENT = 'required';
+  const outside = stubOutside({ transcript: '¿Cómo emito?', heard: 'spanish' });
+  const anthropic = stubAnthropic('Con TTP.');
+
+  // A voice note from a stranger: the notice goes out, the note is not touched.
+  const first = await tv.handleTravelVoiceMessage(
+    { id: 'wamid.c1', from: '34600111222', type: 'audio', text: '', mediaId: 'media-1', phoneNumberId: '222' },
+    { anthropic, phoneNumberId: '222' }
+  );
+  assert.deepEqual(first, { stage: 'consent_required' });
+  assert.equal(anthropic.calls.length, 0, 'nothing was asked of the model');
+  assert.ok(!outside.some((c) => c.url.includes('lookaside')), 'the audio was not downloaded');
+  assert.ok(!outside.some((c) => c.url.includes('/audio/transcriptions')), 'and not transcribed');
+
+  // What went out: the spoken disclosure, then the interactive notice.
+  const spoken = JSON.parse(outside.find((c) => c.url.includes('/audio/speech')).init.body).input;
+  assert.match(spoken, /asistente automático de inteligencia artificial, no una persona/);
+  const [notice] = interactiveSends(outside);
+  assert.equal(notice.interactive.type, 'button');
+  assert.match(notice.interactive.body.text, /^Aviso: estás hablando con un asistente automático/);
+  assert.match(notice.interactive.body.text, /AGENTE/);
+  assert.deepEqual(notice.interactive.action.buttons.map((b) => [b.reply.id, b.reply.title]), [['consent_yes', 'Acepto'], ['consent_no', 'No acepto']]);
+  for (const b of notice.interactive.action.buttons) assert.ok(b.reply.title.length <= 20);
+
+  const state = consent.consentState('34600111222');
+  assert.equal(state.disclosureVersion, consent.DISCLOSURE_VERSION);
+  assert.equal(state.consent, null);
+  assert.equal(state.disclosureSpoken, true);
+
+  // A second voice note before the tap: reminded, not disclosed again.
+  const again = stubOutside({ transcript: 'x', heard: 'spanish' });
+  await tv.handleTravelVoiceMessage(
+    { id: 'wamid.c2', from: '34600111222', type: 'audio', text: '', mediaId: 'media-1', phoneNumberId: '222' },
+    { anthropic, phoneNumberId: '222' }
+  );
+  assert.equal(interactiveSends(again).length, 0);
+  assert.match(sends(again)[0].text.body, /necesito tu aceptación/);
+
+  // Text is still answered while voice waits.
+  const typed = stubOutside();
+  const text = await tv.handleTravelVoiceMessage(
+    { id: 'wamid.c3', from: '34600111222', type: 'text', text: '¿Qué hace FXP?', mediaId: null, phoneNumberId: '222' },
+    { anthropic, phoneNumberId: '222' }
+  );
+  assert.equal(text.stage, 'answered');
+  assert.equal(interactiveSends(typed).length, 0, 'the notice is not repeated');
+
+  // The tap.
+  const tap = stubOutside();
+  const consented = await tv.handleTravelVoiceMessage(
+    { id: 'wamid.tap', from: '34600111222', type: 'interactive', text: '', mediaId: null, phoneNumberId: '222', buttonReply: { id: 'consent_yes', title: 'Acepto' } },
+    { anthropic, phoneNumberId: '222' }
+  );
+  assert.deepEqual(consented, { stage: 'consent', granted: true });
+  assert.match(sends(tap)[0].text.body, /Ya puedes enviarme notas de voz/);
+  const after = consent.consentState('34600111222');
+  assert.equal(after.consent, 'granted');
+  assert.equal(after.consentMessageId, 'wamid.tap');
+  assert.equal(after.consentButton, 'consent_yes');
+
+  // Now the voice note is heard and answered.
+  const heard = stubOutside({ transcript: '¿Cómo emito?', heard: 'spanish' });
+  const answered = await tv.handleTravelVoiceMessage(
+    { id: 'wamid.c4', from: '34600111222', type: 'audio', text: '', mediaId: 'media-1', phoneNumberId: '222' },
+    { anthropic, phoneNumberId: '222' }
+  );
+  assert.equal(answered.stage, 'answered');
+  assert.ok(heard.some((c) => c.url.includes('/audio/transcriptions')));
+
+  const stages = tv.recentTravelVoiceTurns().map((t) => t.stage);
+  assert.deepEqual(stages.slice().reverse(), ['disclosed', 'consent_required', 'consent_required', 'answered', 'consent', 'answered']);
+});
+
+test('a decline keeps text working and voice closed; BORRAR forgets the caller', async () => {
+  process.env.TRAVEL_VOICE_CONSENT = 'required';
+  const anthropic = stubAnthropic('Sí.');
+  stubOutside();
+  await tv.handleTravelVoiceMessage(
+    { id: 'wamid.d1', from: '34600111222', type: 'interactive', text: '', mediaId: null, phoneNumberId: '222', buttonReply: { id: 'consent_no', title: 'No acepto' } },
+    { anthropic, phoneNumberId: '222' }
+  );
+  assert.equal(consent.consentState('34600111222').consent, 'declined');
+  assert.equal(consent.voiceAllowed('34600111222'), false);
+
+  const forget = stubOutside();
+  const gone = await tv.handleTravelVoiceMessage(
+    { id: 'wamid.d2', from: '34600111222', type: 'text', text: 'BORRAR', mediaId: null, phoneNumberId: '222' },
+    { anthropic, phoneNumberId: '222' }
+  );
+  assert.equal(gone.stage, 'forgotten');
+  assert.equal(consent.consentState('34600111222'), null);
+  assert.match(sends(forget)[0].text.body, /He borrado/);
+  assert.equal(anthropic.calls.length, 0);
+});
+
+test('notice mode discloses once and never gates; off mode does neither', async () => {
+  process.env.TRAVEL_VOICE_CONSENT = 'notice';
+  const outside = stubOutside({ transcript: 'Bonjour, comment émettre ?', heard: 'french' });
+  const anthropic = stubAnthropic('Avec TTP.');
+  const outcome = await tv.handleTravelVoiceMessage(
+    { id: 'wamid.n1', from: '33600000000', type: 'audio', text: '', mediaId: 'media-1', phoneNumberId: '222' },
+    { anthropic, phoneNumberId: '222' }
+  );
+  assert.equal(outcome.stage, 'answered');
+  const [notice] = interactiveSends(outside);
+  assert.match(notice.interactive.body.text, /^Information : vous parlez à un assistant automatique/);
+  assert.deepEqual(notice.interactive.action.buttons.map((b) => b.reply.title), ["J'accepte", 'Je refuse']);
+
+  process.env.TRAVEL_VOICE_CONSENT = 'off';
+  const quiet = stubOutside({ transcript: 'hello', heard: 'english' });
+  await tv.handleTravelVoiceMessage(
+    { id: 'wamid.n2', from: '447700900123', type: 'audio', text: '', mediaId: 'media-1', phoneNumberId: '222' },
+    { anthropic, phoneNumberId: '222' }
+  );
+  assert.equal(interactiveSends(quiet).length, 0);
+  assert.equal(consent.consentState('447700900123'), null);
+});
+
+test('the status and the founder commands report the consent mode', async () => {
+  process.env.TRAVEL_VOICE_CONSENT = 'required';
+  assert.deepEqual(tv.travelVoiceStatus().consent, { mode: 'required', disclosed: 0, granted: 0 });
+  const reply = await tv.runTravelVoiceCommand({ kind: 'consents' }, { from: '111' });
+  assert.match(reply, /Consent is required\. Nobody has been shown/);
+  consent.recordDisclosure('34600111222', { language: 'es' });
+  consent.recordConsent('34600111222', { granted: true, messageId: 'wamid.x' });
+  const listed = await tv.runTravelVoiceCommand({ kind: 'consents' }, { from: '111' });
+  assert.match(listed, /…1222 granted/);
+  assert.ok(!listed.includes('34600111222'), 'numbers are masked');
+});
+

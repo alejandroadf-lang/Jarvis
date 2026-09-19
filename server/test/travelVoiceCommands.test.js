@@ -24,6 +24,7 @@ let replyCheck;
 let originalFetch;
 const saved = {};
 const KEYS = [
+  'TRAVEL_VOICE_CONSENT',
   'ANTHROPIC_API_KEY',
   'OPENAI_API_KEY',
   'ELEVENLABS_API_KEY',
@@ -77,6 +78,8 @@ beforeEach(() => {
   prefs.__resetPrefsForTests();
   settings.__resetSettingsForTests();
   tv.__resetTravelVoiceForTests();
+  // Consent has its own tests; here the notice would only get in the way.
+  process.env.TRAVEL_VOICE_CONSENT = 'off';
   global.fetch = originalFetch;
 });
 
@@ -360,6 +363,7 @@ test('the log reads back what happened, with a wrong-language answer called out'
 // --- inviting ---------------------------------------------------------------
 
 test('an invite sends a hello as text and as a voice note in the demo voice', async () => {
+  process.env.TRAVEL_VOICE_CONSENT = 'required';
   process.env.OPENAI_API_KEY = 'oa';
   process.env.TRAVEL_VOICE_PHONE_NUMBER_ID = '222';
   const sent = [];
@@ -378,10 +382,12 @@ test('an invite sends a hello as text and as a voice note in the demo voice', as
 
   assert.deepEqual(result, { number: '34600111222', language: 'es', spoke: true, delivered: true, error: null });
   assert.equal(guests.isGuest('34600111222'), true, 'they can now message the number');
-  assert.equal(sent.length, 2);
+  assert.equal(sent.length, 3);
   assert.equal(sent[0].body.type, 'text');
   assert.equal(sent[0].body.text.body, languages.localized('greeting', 'es'));
   assert.equal(sent[1].body.type, 'audio', 'they hear the product before they read about it');
+  assert.equal(sent[2].body.type, 'interactive', 'then the AI notice with its buttons');
+  assert.deepEqual(sent[2].body.interactive.action.buttons.map((b) => b.reply.title), ['Acepto', 'No acepto']);
   assert.ok(sent.every((m) => m.url.includes('/222/')), 'sent from the advisor’s number');
 });
 
@@ -396,6 +402,7 @@ test('a hello that fails to send still leaves the invitation live, and says so',
 });
 
 test('an invite with no voice provider still invites them, in text', async () => {
+  process.env.TRAVEL_VOICE_CONSENT = 'required';
   const sent = [];
   global.fetch = async (url, init = {}) => {
     sent.push(JSON.parse(init.body));
@@ -403,8 +410,10 @@ test('an invite with no voice provider still invites them, in text', async () =>
   };
   const result = await tv.inviteGuest('33600000000', { language: 'fr' });
   assert.equal(result.spoke, false);
-  assert.equal(sent.length, 1);
+  assert.equal(sent.length, 2);
   assert.match(sent[0].text.body, /conseiller voyage/);
+  assert.equal(sent[1].type, 'interactive', 'the AI notice still goes, in French');
+  assert.match(sent[1].interactive.body.text, /^Information : vous parlez/);
   assert.equal(guests.isGuest('33600000000'), true);
 });
 

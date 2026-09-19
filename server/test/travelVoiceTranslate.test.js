@@ -18,7 +18,8 @@ let tr;
 let tv;
 let originalFetch;
 const saved = {};
-const KEYS = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'WHATSAPP_TOKEN', 'WHATSAPP_PHONE_NUMBER_ID', 'TRAVEL_VOICE_PHONE_NUMBER_ID'];
+const KEYS = [
+  'TRAVEL_VOICE_CONSENT','ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'WHATSAPP_TOKEN', 'WHATSAPP_PHONE_NUMBER_ID', 'TRAVEL_VOICE_PHONE_NUMBER_ID'];
 
 before(async () => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jarvis-travel-tr-'));
@@ -47,6 +48,8 @@ beforeEach(() => {
   process.env.TRAVEL_VOICE_PHONE_NUMBER_ID = '222';
   tr.__resetTranslateForTests();
   tv.__resetTravelVoiceForTests();
+  // Consent has its own tests; here the notice would only get in the way.
+  process.env.TRAVEL_VOICE_CONSENT = 'off';
   global.fetch = originalFetch;
 });
 
