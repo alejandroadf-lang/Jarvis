@@ -157,10 +157,26 @@ test('moving an agent to another provider changes what the graph reports', () =>
 test('agents pinned to Anthropic by a server tool are flagged, across both teams', () => {
   const g = graph.buildGraph();
   const pinned = g.nodes.filter((n) => n.pinnedToAnthropic).map((n) => n.id).sort();
-  // Four, not two: the Studio's researchers ground themselves with live web
-  // search as well, and web_search executes inside Anthropic's infrastructure
-  // so none of them can be moved to another provider however the tiers are set.
-  assert.deepEqual(pinned, ['market_researcher', 'scale_strategist', 'seo_specialist', 'solutions_architect']);
+  // A literal on purpose, unlike most lists in this suite: web_search executes
+  // inside Anthropic's infrastructure, so attaching it pins that agent to the
+  // frontier model whatever AGENT_MODEL_TIERS says. Pinning one more agent is a
+  // standing cost decision, and this failing is how someone is made to notice
+  // they took it.
+  //
+  // Six now. The CMO and the Sales & Commercial Manager joined when the
+  // commercial side was given eyes — it had none, which is why every GTM
+  // recommendation in every report was addressed to the founder. Both already
+  // ran on the frontier tier for other reasons, so in their case the pin costs
+  // nothing; that is why it was these two and not the Marketing Manager, who
+  // would have been promoted off the cheap tier to get the same tools.
+  assert.deepEqual(pinned, [
+    'cmo',
+    'market_researcher',
+    'sales_commercial_manager',
+    'scale_strategist',
+    'seo_specialist',
+    'solutions_architect',
+  ]);
 });
 
 test('the latest report lights up the agents that actually ran', async () => {

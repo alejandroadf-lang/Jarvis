@@ -1155,14 +1155,50 @@ export function setBookingUrl(id, url) {
 // one thing that happens next.
 export const PIPELINE_STAGES = ['lead', 'contacted', 'replied', 'call_booked', 'pilot', 'paying', 'lost'];
 
-export function updatePipeline(id, { email, stage, dealValueMonthly, nextAction }) {
+// A prospect the company has not met yet.
+//
+// This required an email, and that single line is most of why the commercial
+// side of this company never did anything proactive. A lead discovered the way
+// leads are actually discovered — someone complaining in a GitHub issue, a
+// handle in a forum thread, a company in a directory — has no email. It has a
+// URL and a name. So the only place to record a prospect refused every prospect
+// found by looking, and the team could identify exactly the right outreach and
+// then had nowhere to put the result. What a competent team does at that point
+// is schedule it as an objective, which is what ours did.
+//
+// Now a lead can be keyed by a handle instead, with the source that found it.
+// The email stays required for *sending* — authorizeOutreach is unchanged and
+// a handle will never match an allowlist — which is the right place for that
+// gate. Finding someone and writing to them are different acts and only the
+// second reaches a stranger.
+export function updatePipeline(id, { email, handle, source, stage, dealValueMonthly, nextAction }) {
   const address = normalizeEmail(email);
-  if (!address.includes('@')) throw new Error('email is required');
+  const tag = normalizeHandle(handle);
+  if (!address.includes('@') && !tag) {
+    throw new Error(
+      'A pipeline entry needs either an email or a handle — a GitHub username, a forum handle, or the URL where ' +
+        'you found them. Use the handle when you have not got an address yet; pass both once you do and the entry moves across.'
+    );
+  }
+
   const data = load();
   const venture = findOrThrow(data, id);
   venture.pipeline = venture.pipeline || {};
-  const current = venture.pipeline[address] || {};
+
+  // The key is the email once there is one, the handle until then. Finding
+  // someone's address later is the normal path, not an edge case, so the
+  // handle-keyed row moves rather than becoming a duplicate of itself.
+  const key = address.includes('@') ? address : tag;
+  let current = venture.pipeline[key] || {};
+  if (address.includes('@') && tag && venture.pipeline[tag]) {
+    current = { ...venture.pipeline[tag], ...current };
+    delete venture.pipeline[tag];
+  }
+
   const next = { ...current };
+  if (address.includes('@')) next.email = address;
+  if (tag) next.handle = tag;
+  if (source !== undefined) next.source = String(source || '').trim();
   if (stage !== undefined) {
     if (!PIPELINE_STAGES.includes(stage)) throw new Error(`stage must be one of: ${PIPELINE_STAGES.join(', ')}`);
     next.stage = stage;
@@ -1174,9 +1210,17 @@ export function updatePipeline(id, { email, stage, dealValueMonthly, nextAction 
   }
   if (nextAction !== undefined) next.nextAction = String(nextAction || '').trim();
   next.updatedAt = new Date().toISOString();
-  venture.pipeline[address] = next;
+  venture.pipeline[key] = next;
   save(data);
-  return { venture, entry: { email: address, ...next } };
+  return { venture, entry: { email: address || '', handle: tag, key, ...next } };
+}
+
+// A handle is whatever identifies someone before an address does: a username,
+// a profile URL, a company domain. Kept as written apart from case and
+// whitespace, because "gh:alice" and "github.com/alice" are both things a
+// researcher will reasonably produce and neither is wrong.
+function normalizeHandle(handle) {
+  return String(handle || '').trim().toLowerCase().slice(0, 200);
 }
 
 export function pipelineSummary(id) {

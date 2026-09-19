@@ -374,6 +374,14 @@ ${BASE_STYLE}`,
     mission: 'Owns brand, positioning, go-to-market strategy, and demand generation.',
     toolDescription:
       'Consult the CMO for brand strategy, positioning, go-to-market plans, or demand-generation strategy.',
+    // Eyes. The commercial side of this company could not see the internet:
+    // RESEARCH_TOOLS reached the Solutions Architect and the SEO Specialist and
+    // nobody who sells. So "find the people already hand-rolling this in public"
+    // was work no agent could perform, and the only honest thing left was to
+    // recommend the founder do it — which is what every GTM section of every
+    // report did. Free here: both of these already run on the frontier tier, so
+    // attaching hosted tools changes no model and no cost.
+    serverTools: RESEARCH_TOOLS,
     systemPrompt: `You are the CMO. You own brand, positioning, go-to-market strategy, and how
 the company gets discovered and remembered. You think about the story the
 company is telling the market and whether that story matches the product.
@@ -936,6 +944,14 @@ ${BASE_STYLE}`,
     mission: 'Owns the deal pipeline: proposals, pricing execution, negotiation, and contracts.',
     toolDescription:
       'Consult the Sales & Commercial Manager for deal strategy, proposal/quote drafting, pricing execution, negotiation approach, or contract terms.',
+    // Eyes. The commercial side of this company could not see the internet:
+    // RESEARCH_TOOLS reached the Solutions Architect and the SEO Specialist and
+    // nobody who sells. So "find the people already hand-rolling this in public"
+    // was work no agent could perform, and the only honest thing left was to
+    // recommend the founder do it — which is what every GTM section of every
+    // report did. Free here: both of these already run on the frontier tier, so
+    // attaching hosted tools changes no model and no cost.
+    serverTools: RESEARCH_TOOLS,
     actions: [
       {
         name: 'check_ready',
@@ -995,17 +1011,26 @@ ${BASE_STYLE}`,
       {
         name: 'update_pipeline',
         description:
-          'Record where a deal stands: the stage (lead, contacted, replied, call_booked, pilot, paying, lost), its likely monthly value, and the one thing that happens next. This is not a note about the person — log_contact_note is — it is the state of the deal, and the CFO reads the total. Update it every time something moves: a reply, a call booked, a price agreed, a no.',
+          'Record a prospect and where the deal stands: the stage (lead, contacted, replied, call_booked, pilot, paying, lost), its likely monthly value, and the one thing that happens next. Use it to build a list, not only to track one — a named person you found in a GitHub issue or a forum thread goes in here with their handle and the URL, before anyone has written to them. This is not a note about the person — log_contact_note is — it is the state of the deal, and the CFO reads the total. Update it every time something moves: a reply, a call booked, a price agreed, a no.',
         input_schema: {
           type: 'object',
           properties: {
             ventureId: { type: 'string', description: 'The venture id.' },
-            email: { type: 'string', description: "The contact's email address." },
+            email: { type: 'string', description: "The contact's email address, once you have one. Not needed to record a lead." },
+            handle: {
+              type: 'string',
+              description:
+                'How you identify them before you have an address: a GitHub username, a forum handle, a profile URL, a company domain. Pass this for anyone you found by looking rather than by being written to. Pass it together with the email once you find the address and the entry moves across rather than duplicating.',
+            },
+            source: {
+              type: 'string',
+              description: 'The URL where you found them, and in a few words what they said or did that makes them a fit. This is the evidence — a lead with no source is a guess.',
+            },
             stage: { type: 'string', description: 'One of: lead, contacted, replied, call_booked, pilot, paying, lost.' },
             dealValueMonthly: { type: 'number', description: 'What this customer would be worth per month at the price on record.' },
             nextAction: { type: 'string', description: 'The single next step, in one line, with who does it.' },
           },
-          required: ['ventureId', 'email'],
+          required: ['ventureId'],
         },
       },
       {
@@ -1040,8 +1065,23 @@ ${BASE_STYLE}`,
       },
     ],
     systemPrompt: `You are the Sales & Commercial Manager. You own the deal pipeline end to
-end: qualifying prospects, drafting proposals and quotes, negotiating
-terms, and getting contracts signed. You think about what actually gets a
+end: finding prospects, qualifying them, drafting proposals and quotes,
+negotiating terms, and getting contracts signed.
+
+Finding them is the part that starts before anyone has replied, and it is
+yours. You have web search and fetch: use them to go and find named people
+with the problem — someone who filed a GitHub issue about it, wrote the
+hacky script, complained in a forum, or listed the job. Put each one in the
+pipeline with \`update_pipeline\` as you find them, using \`handle\` and
+\`source\` when you have no email yet. A list of fifteen named people with
+the URL that proves each one has the problem is a morning's work and it is
+worth more than any amount of describing who the customer might be.
+
+Two things follow from that. Never end a turn having recommended that
+someone build a prospect list — build it; the tools are yours and the
+founder is not a research assistant. And never report a segment or a
+channel you have not looked at: "developers who travel" is a guess until
+you can name five of them and link to what each one said. You think about what actually gets a
 deal closed — the objection under the objection — and you're comfortable
 drafting real proposal or email language rather than describing it in the
 abstract. You escalate pricing exceptions rather than freelancing them.

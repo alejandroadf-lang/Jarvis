@@ -1286,13 +1286,21 @@ function assertRealActionsAllowedForLink() {
 
 // --- The pipeline ------------------------------------------------------------------
 export function handleUpdatePipeline(input, ctx = {}) {
-  const { ventureId, email, stage, dealValueMonthly, nextAction } = input || {};
+  const { ventureId, email, handle, source, stage, dealValueMonthly, nextAction } = input || {};
   try {
-    const { entry } = updatePipeline(ventureId, { email, stage, dealValueMonthly, nextAction });
-    recordContribution({ agentId: ctx.agentId, kind: 'update_pipeline', ventureId, detail: `${entry.email} -> ${entry.stage || '?'}` });
-    return `Pipeline updated: ${entry.email} is at "${entry.stage || 'lead'}"${
-      entry.dealValueMonthly ? `, worth ${entry.dealValueMonthly}/month` : ''
-    }${entry.nextAction ? `. Next: ${entry.nextAction}` : '.'}`;
+    const { entry } = updatePipeline(ventureId, { email, handle, source, stage, dealValueMonthly, nextAction });
+    const who = entry.email || entry.handle || entry.key;
+    recordContribution({ agentId: ctx.agentId, kind: 'update_pipeline', ventureId, detail: `${who} -> ${entry.stage || '?'}` });
+    return [
+      `Pipeline updated: ${who} is at "${entry.stage || 'lead'}"${
+        entry.dealValueMonthly ? `, worth ${entry.dealValueMonthly}/month` : ''
+      }${entry.nextAction ? `. Next: ${entry.nextAction}` : '.'}`,
+      // A lead with no address is a real lead and also an incomplete one. Say
+      // which, so nobody discovers at send time that the list cannot be mailed.
+      entry.email ? '' : 'No email on this one yet, so nothing can be sent to them until there is. That is a research task, not a blocker.',
+    ]
+      .filter(Boolean)
+      .join(' ');
   } catch (err) {
     return `Could not update the pipeline: ${err.message}`;
   }

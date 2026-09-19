@@ -2876,3 +2876,72 @@ sells them. Every "path to €1M" the Studio produces remains an assumption chai
 in the shape of a forecast until someone talks to ten named buyers. The
 engineering above raises the Studio from confident narration to competent desk
 screen; the last step is not an engineering step.
+
+## "There is no clear proactivity"
+
+The founder's words, after a daily report in which every go-to-market action
+was addressed to him. It read as a team with no initiative. It was not. Two
+structural facts made proactive selling impossible, and the report was what a
+competent team produces when it can see the right move and cannot perform it.
+
+**Nobody who sells could see the internet.** `RESEARCH_TOOLS` reached the
+Solutions Architect and the SEO Specialist — one technical role, one content
+role — and nobody in the commercial line. So when the CMO recommended "direct
+outreach to people already hand-rolling this problem in public", that was work
+no agent in the company could do. The only honest thing left was to recommend
+the founder do it, which is what every GTM section of every report had been
+doing.
+
+**And the pipeline refused a lead without an email.** `updatePipeline` opened
+with `if (!address.includes('@')) throw new Error('email is required')`. A
+prospect found the way prospects are actually found is a username and a URL.
+The company's only representation of a customer demanded the one field you do
+not have at discovery time, so the list could not be recorded even if it could
+have been found. Faced with that, the team set an objective with a due date —
+scheduling is what is left when acting is impossible.
+
+Both are the same disease this file has now documented seven times: a
+capability behind a door nobody can open. The tell is always identical — the
+failure looks like judgement from the outside.
+
+### The fix, and why it was those two agents
+
+The Sales & Commercial Manager and the CMO got `RESEARCH_TOOLS`. Both already
+ran on the frontier tier for other reasons, so attaching hosted tools changed
+no model and cost nothing. The Marketing Manager did not, deliberately: it runs
+on the cheap tier, and a hosted tool would have promoted it at roughly 15x for
+a role that writes copy rather than finds people. An unexplained omission is
+how the next person "fixes" something by accident, so it is explained in the
+code and asserted in a test.
+
+A lead can now be keyed by a `handle` — a GitHub username, a forum handle, a
+profile URL — with the `source` that found it. The email stays required for
+*sending*: `authorizeOutreach` is untouched and a handle can never match an
+allowlist. Finding someone and writing to them are different acts, and only the
+second reaches a stranger. Tests assert both halves of that seam, including
+that a handle-keyed lead becomes writable the moment a real address lands on
+the row.
+
+Finding the address later moves the row rather than duplicating it. That is the
+normal path, not an edge case: a list that silently double-counts everyone it
+successfully researched would be worse than no list.
+
+### The instruction that follows from having the tools
+
+> Never end a turn having recommended that someone build a prospect list —
+> build it; the tools are yours and the founder is not a research assistant.
+> And never report a segment or a channel you have not looked at: "developers
+> who travel" is a guess until you can name five of them and link to what each
+> one said.
+
+A prompt is a request and code is a rule, so the prompt is the smaller half of
+this change. But it is the half that closes the loop: the tools arrived, and
+without it the habit of recommending would have survived them.
+
+### The one still hiding in the same report
+
+*"Bonus find: full API-key auth + FastAPI layer already exists — nobody had
+flagged it."* A week went into building auth that was already written. Same
+disease, engineering lane, and the read-the-repo tools that should have caught
+it landed only recently. Worth watching whether the next instance is caught by
+them or by accident.
