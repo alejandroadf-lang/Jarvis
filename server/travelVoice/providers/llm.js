@@ -19,6 +19,7 @@
 
 import { MODELS, CHEAP_TIER, OPENAI_TIER, GEMINI_TIER, DEEPSEEK_TIER } from '../../agents/models.js';
 import { hasSecret } from '../../env.js';
+import { override as settingOverride } from '../settings.js';
 import { isOpenAIConfigured, createCompletion as openaiCreate, chatModel as openaiModel } from '../../agents/openai.js';
 import { isIonosConfigured, createCompletion as ionosCreate, ionosModel, ionosPriceSpec } from '../../agents/ionos.js';
 import { isGeminiConfigured, createCompletion as geminiCreate, geminiModel } from '../../agents/gemini.js';
@@ -66,6 +67,10 @@ const ANTHROPIC_PRICES = {
 // Set TRAVEL_VOICE_EFFORT to empty to send no effort at all, which is what an
 // older model that predates the parameter needs.
 function advisorEffort() {
+  // "off" is how a phone says "send no effort at all", which is what an
+  // empty environment variable already meant.
+  const pinned = settingOverride('effort');
+  if (pinned !== undefined) return pinned === 'off' ? null : pinned;
   const raw = process.env.TRAVEL_VOICE_EFFORT;
   if (raw !== undefined && raw.trim() === '') return null;
   return (raw || '').trim() || 'low';
@@ -78,7 +83,7 @@ export const anthropicBrain = {
   id: 'anthropic',
   label: 'Anthropic Claude',
   configured: () => hasSecret('ANTHROPIC_API_KEY'),
-  model: () => (process.env.TRAVEL_VOICE_MODEL || '').trim() || ADVISOR_MODEL,
+  model: () => settingOverride('model') || (process.env.TRAVEL_VOICE_MODEL || '').trim() || ADVISOR_MODEL,
   priceSpec() {
     const model = this.model();
     // An unrecognised model is priced at the most expensive one known rather

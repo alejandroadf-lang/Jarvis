@@ -19,6 +19,7 @@
 
 import { readSecret, hasSecret } from '../../env.js';
 import { SUPPORTED_LANGUAGES } from '../languages.js';
+import { override as settingOverride } from '../settings.js';
 
 const FORMATS = {
   opus: { mimeType: 'audio/ogg', filename: 'reply.ogg' },
@@ -59,7 +60,7 @@ export const openaiVoice = {
   label: 'OpenAI',
   configured: () => hasSecret('OPENAI_API_KEY'),
   model: () => (process.env.TRAVEL_VOICE_TTS_MODEL || '').trim() || 'gpt-4o-mini-tts',
-  voice: () => (process.env.TRAVEL_VOICE_TTS_VOICE || '').trim() || 'alloy',
+  voice: () => settingOverride('voice', 'openai') || (process.env.TRAVEL_VOICE_TTS_VOICE || '').trim() || 'alloy',
   languages: ['es', 'fr', 'en'],
   // tts-1 is $15 per million characters; the newer model is priced per token
   // and lands close to the same figure per spoken minute. Checked 2026-09-19.
@@ -111,7 +112,7 @@ export const elevenLabsVoice = {
   model: () => (process.env.ELEVENLABS_TTS_MODEL || '').trim() || 'eleven_multilingual_v2',
   // "George", a stock multilingual voice, so a fresh key works without a
   // trip to the voice library. Any voice id from the account replaces it.
-  voice: () => (process.env.ELEVENLABS_VOICE_ID || '').trim() || 'JBFqnCBsd6RMkjVDRZzb',
+  voice: () => settingOverride('voice', 'elevenlabs') || (process.env.ELEVENLABS_VOICE_ID || '').trim() || 'JBFqnCBsd6RMkjVDRZzb',
   languages: ['es', 'fr', 'en'],
   // Per thousand characters at the Creator/Pro API rates, checked 2026-09-19.
   // The Flash model bills at half that; adjust the variable if switching.

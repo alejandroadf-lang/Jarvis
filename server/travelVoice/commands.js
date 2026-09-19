@@ -18,10 +18,27 @@ import { listGuests, addGuest, removeGuest, clearGuests } from './guests.js';
 import { allOverrides, setOverride, clearOverrides } from './providerPrefs.js';
 import { findProvider, listProviders, describeProviders } from './providers/index.js';
 import { normalizeLanguage, LANGUAGE_NAMES, DEFAULT_LANGUAGE } from './languages.js';
+import {
+  SETTINGS,
+  findSetting,
+  isClearing,
+  override as settingOverride,
+  setOverride as setSetting,
+  clearOverride as clearSetting,
+  clearAll as clearSettings,
+} from './settings.js';
 import { getSpendSummary } from '../spend.js';
 import { formatUsd } from '../usage.js';
 
 const SLOT_WORDS = { ears: 'stt', hearing: 'stt', brain: 'llm', model: 'llm', voice: 'tts', speech: 'tts' };
+
+// "voice" and "model" each name two things: which provider, and which voice
+// or model within it. Both readings are what someone means at different
+// moments, and they never collide in practice — a provider id is one of a
+// closed set of three, a voice id is not. So the value decides: a known
+// provider switches the slot, anything else sets the dial. The other slot
+// words have no such dial and say so instead of guessing.
+const SLOT_WORD_DIALS = { voice: 'voice', speech: 'voice', model: 'model' };
 
 const COMMANDS = [
   { kind: 'help', re: /^travel(?:\s+(?:help|commands|\?))?$/i },
@@ -32,6 +49,10 @@ const COMMANDS = [
   // Slot first so "travel voice elevenlabs" is a pin, not an invite.
   { kind: 'pin', re: /^travel\s+(ears|hearing|brain|model|voice|speech)\s+(\S+)$/i },
   { kind: 'unpin', re: /^travel\s+(?:defaults|unpin|reset\s+providers)$/i },
+  { kind: 'settings', re: /^travel\s+(?:settings|options|config)$/i },
+  // "set" is optional: "travel length 90" reads better on a phone than
+  // "travel set length 90", and both should work.
+  { kind: 'set', re: /^travel\s+(?:set\s+)?(voice|voiceid|language|lang|idioma|langue|length|words|effort|thinking|model|text|retry|limit|rate)\s+(.+)$/i },
   { kind: 'guests', re: /^travel\s+guests$/i },
   { kind: 'guest_remove', re: /^travel\s+(?:guest\s+)?remove\s+(\+?[\d\s()-]{6,})$/i },
   { kind: 'guest_clear', re: /^travel\s+guests\s+clear$/i },
@@ -49,7 +70,10 @@ export function parseTravelCommand(text) {
   for (const { kind, re } of COMMANDS) {
     const match = trimmed.match(re);
     if (!match) continue;
-    if (kind === 'pin') return { kind, slot: SLOT_WORDS[match[1].toLowerCase()], provider: match[2].toLowerCase() };
+    // The raw value, not lowercased: findProvider folds case itself, and a
+    // voice id like JBFqnCBsd6RMkjVDRZzb does not survive being flattened.
+    if (kind === 'pin') return { kind, slot: SLOT_WORDS[match[1].toLowerCase()], word: match[1].toLowerCase(), provider: match[2] };
+    if (kind === 'set') return { kind, setting: findSetting(match[1]), value: match[2].trim() };
     if (kind === 'invite') return { kind, number: match[1].trim(), language: normalizeLanguage(match[2]) };
     if (kind === 'guest_remove') return { kind, number: match[1].trim() };
     return { kind };
@@ -65,8 +89,42 @@ TRAVEL INVITE <number> [es|fr|en] — let someone try it, and send them a spoken
 TRAVEL GUESTS — who is invited
 TRAVEL REMOVE <number> — take someone off the list
 TRAVEL EARS|BRAIN|VOICE <provider> — switch one mid-demo
-TRAVEL DEFAULTS — undo those switches
+TRAVEL SETTINGS — every dial and what it is on
+TRAVEL <dial> <value> — turn one, e.g. TRAVEL LENGTH 90
+TRAVEL DEFAULTS — undo every switch and dial
 TRAVEL LOG — the last few conversations`;
+
+// `voice` means a different thing per speech provider, so its value is read
+// against whichever one is live right now.
+function providerScope(key, described) {
+  const slot = SETTINGS[key].perProvider;
+  return slot ? described[slot].active : null;
+}
+
+function settingLine(key, described) {
+  const spec = SETTINGS[key];
+  const scope = providerScope(key, described);
+  const pinned = settingOverride(key, scope);
+  if (pinned !== undefined) {
+    return `${spec.label}: ${format(pinned)} (set here)`;
+  }
+  const fromEnv = spec.envName ? (process.env[spec.envName] || '').trim() : '';
+  if (fromEnv) return `${spec.label}: ${fromEnv} (configured)`;
+  if (spec.describeDefault) return `${spec.label}: ${spec.describeDefault}`;
+  // Nothing set anywhere: show what the code will actually do, which for the
+  // provider-scoped dials means asking the live provider.
+  if (scope) {
+    const live = listProviders(spec.perProvider).find((p) => p.id === scope);
+    if (live && typeof live.voice === 'function') return `${spec.label}: ${live.voice()} (${scope}'s default)`;
+  }
+  return `${spec.label}: ${format(spec.fallback)}`;
+}
+
+function format(value) {
+  if (value === true) return 'on';
+  if (value === false) return 'off';
+  return String(value);
+}
 
 function slotLine(kind, described) {
   const spec = described[kind];
@@ -120,7 +178,11 @@ export async function runTravelCommand(command, deps = {}) {
     case 'pin': {
       const provider = findProvider(command.slot, command.provider);
       const options = listProviders(command.slot).map((p) => p.id).join(', ');
-      if (!provider) return `No such provider "${command.provider}". Options: ${options}.`;
+      if (!provider) {
+        const dial = SLOT_WORD_DIALS[command.word];
+        if (dial) return runTravelCommand({ kind: 'set', setting: dial, value: command.provider }, deps);
+        return `No such provider "${command.provider}". Options: ${options}.`;
+      }
       if (!provider.configured()) return `${provider.label} has no key set, so pinning it would break the next answer. Options with a key: ${listProviders(command.slot).filter((p) => p.configured()).map((p) => p.id).join(', ') || 'none'}.`;
       setOverride(command.slot, provider.id);
       const what = { stt: 'Ears', llm: 'Brain', tts: 'Voice' }[command.slot];
@@ -128,12 +190,16 @@ export async function runTravelCommand(command, deps = {}) {
     }
 
     case 'unpin': {
+      // Everything back: the provider pins and the dials together, because
+      // "defaults" on a phone means all of it, not a category someone has to
+      // remember the boundary of.
       const had = Object.keys(allOverrides()).length;
       clearOverrides();
+      clearSettings();
       const described = describeProviders();
-      return had
-        ? `Back to the configured defaults — ears ${described.stt.active}, brain ${described.llm.active}, voice ${described.tts.active}.`
-        : 'Nothing was pinned; already on the configured defaults.';
+      return `Back to the configured defaults — ears ${described.stt.active}, brain ${described.llm.active}, voice ${described.tts.active}, and every dial reset.${
+        had ? '' : ''
+      }`;
     }
 
     case 'log': {
@@ -150,6 +216,43 @@ export async function runTravelCommand(command, deps = {}) {
         return `${when} ${turn.from || '?'} ${turn.language || '?'} ${turn.stage} (${how})${via}${wrong}${said}`;
       });
       return [`Last ${turns.length} conversations:`].concat(lines).join('\n');
+    }
+
+    case 'settings': {
+      const described = describeProviders();
+      return ['Travel advisor dials — send TRAVEL <name> <value> to change one:']
+        .concat(Object.keys(SETTINGS).map((key) => `  ${settingLine(key, described)}`))
+        .concat(['', 'TRAVEL DEFAULTS puts every one of them back.'])
+        .join('\n');
+    }
+
+    case 'set': {
+      if (!command.setting) return `No such dial. Send TRAVEL SETTINGS for the list.`;
+      const spec = SETTINGS[command.setting];
+      const described = describeProviders();
+      const scope = providerScope(command.setting, described);
+
+      if (isClearing(command.value)) {
+        clearSetting(command.setting, scope);
+        return `${spec.label} is back to the configured default — now ${settingLine(command.setting, described).split(': ').slice(1).join(': ')}.`;
+      }
+
+      let parsed;
+      try {
+        parsed = spec.parse(command.value);
+      } catch (err) {
+        return `${spec.label} ${err.message}. It takes: ${spec.help}.`;
+      }
+
+      // A voice belongs to a speech provider, and pinning one while no
+      // provider is live would be setting a dial on nothing.
+      if (spec.perProvider && !scope) {
+        return `No ${spec.perProvider === 'tts' ? 'speech' : spec.perProvider} provider is configured, so there is nothing to set a ${spec.label} on.`;
+      }
+
+      setSetting(command.setting, parsed, scope);
+      const where = scope ? ` for ${scope}` : '';
+      return `${spec.label}${where}: ${format(parsed)}. Takes effect on the next message.`;
     }
 
     case 'guests': {

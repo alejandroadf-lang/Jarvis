@@ -19,6 +19,8 @@ let prefs;
 let registry;
 let tv;
 let languages;
+let settings;
+let replyCheck;
 let originalFetch;
 const saved = {};
 const KEYS = [
@@ -32,6 +34,13 @@ const KEYS = [
   'TRAVEL_VOICE_STT_PROVIDER',
   'TRAVEL_VOICE_LLM_PROVIDER',
   'TRAVEL_VOICE_TTS_PROVIDER',
+  'TRAVEL_VOICE_SPOKEN_MAX_WORDS',
+  'TRAVEL_VOICE_LANGUAGE_RETRY',
+  'TRAVEL_VOICE_MAX_TURNS_PER_HOUR',
+  'TRAVEL_VOICE_TEXT_TOO',
+  'TRAVEL_VOICE_EFFORT',
+  'TRAVEL_VOICE_MODEL',
+  'ELEVENLABS_VOICE_ID',
 ];
 
 before(async () => {
@@ -45,6 +54,8 @@ before(async () => {
   registry = await import('../travelVoice/providers/index.js');
   tv = await import('../travelVoice/index.js');
   languages = await import('../travelVoice/languages.js');
+  settings = await import('../travelVoice/settings.js');
+  replyCheck = await import('../travelVoice/replyCheck.js');
 });
 
 after(() => {
@@ -64,6 +75,7 @@ beforeEach(() => {
   process.env.WHATSAPP_PHONE_NUMBER_ID = '111';
   guests.__resetGuestsForTests();
   prefs.__resetPrefsForTests();
+  settings.__resetSettingsForTests();
   tv.__resetTravelVoiceForTests();
   global.fetch = originalFetch;
 });
@@ -91,10 +103,10 @@ test('the bare word is help, and so are the usual ways of asking for it', () => 
 });
 
 test('a slot word is a pin, with its synonyms', () => {
-  assert.deepEqual(parse('travel voice elevenlabs'), { kind: 'pin', slot: 'tts', provider: 'elevenlabs' });
-  assert.deepEqual(parse('travel ears deepgram'), { kind: 'pin', slot: 'stt', provider: 'deepgram' });
-  assert.deepEqual(parse('travel brain ionos'), { kind: 'pin', slot: 'llm', provider: 'ionos' });
-  assert.deepEqual(parse('travel model openai'), { kind: 'pin', slot: 'llm', provider: 'openai' });
+  assert.deepEqual(parse('travel voice elevenlabs'), { kind: 'pin', slot: 'tts', word: 'voice', provider: 'elevenlabs' });
+  assert.deepEqual(parse('travel ears deepgram'), { kind: 'pin', slot: 'stt', word: 'ears', provider: 'deepgram' });
+  assert.deepEqual(parse('travel brain ionos'), { kind: 'pin', slot: 'llm', word: 'brain', provider: 'ionos' });
+  assert.deepEqual(parse('travel model openai'), { kind: 'pin', slot: 'llm', word: 'model', provider: 'openai' });
   assert.deepEqual(parse('travel defaults'), { kind: 'unpin' });
 });
 
@@ -153,7 +165,10 @@ test('pinning something with no key is refused rather than breaking the next ans
   assert.match(reply, /no key set/);
   assert.equal(registry.resolveProvider('tts').id, 'openai', 'nothing changed');
 
-  const unknown = await commands.runTravelCommand(parse('travel voice hal9000'), {});
+  // "ears" names no dial, so an unknown value there is a mistake rather
+  // than a second reading. ("voice" and "model" do name one — see the
+  // dial tests below for why an unknown value means something there.)
+  const unknown = await commands.runTravelCommand(parse('travel ears hal9000'), {});
   assert.match(unknown, /No such provider "hal9000"/);
 });
 
@@ -165,6 +180,133 @@ test('a pin whose key is later removed falls through instead of taking the demo 
 
   delete process.env.ELEVENLABS_API_KEY;
   assert.equal(registry.resolveProvider('tts').id, 'openai', 'the demo keeps answering');
+});
+
+// --- the dials --------------------------------------------------------------
+
+test('a dial can be set with or without the word set', () => {
+  assert.deepEqual(parse('travel length 90'), { kind: 'set', setting: 'length', value: '90' });
+  assert.deepEqual(parse('travel set length 90'), { kind: 'set', setting: 'length', value: '90' });
+  assert.deepEqual(parse('travel words 90'), { kind: 'set', setting: 'length', value: '90' }, 'an alias people reach for');
+  assert.deepEqual(parse('travel lang fr'), { kind: 'set', setting: 'language', value: 'fr' });
+  assert.deepEqual(parse('travel settings'), { kind: 'settings' });
+});
+
+test('setting a dial changes what the next answer actually does', async () => {
+  assert.equal(replyCheck.spokenMaxWords(), 220);
+  await commands.runTravelCommand(parse('travel length 90'), {});
+  assert.equal(replyCheck.spokenMaxWords(), 90, 'the spoken cap the advisor is trimmed to');
+
+  assert.equal(tv.maxTurnsPerHour(), 20);
+  await commands.runTravelCommand(parse('travel limit 3'), {});
+  assert.equal(tv.maxTurnsPerHour(), 3);
+
+  assert.equal(replyCheck.languageRetryEnabled(), true);
+  await commands.runTravelCommand(parse('travel retry off'), {});
+  assert.equal(replyCheck.languageRetryEnabled(), false);
+});
+
+test('a dial set from a phone beats the configured value, and clearing gives it back', async () => {
+  process.env.TRAVEL_VOICE_SPOKEN_MAX_WORDS = '150';
+  assert.equal(replyCheck.spokenMaxWords(), 150, 'configuration is the base');
+
+  await commands.runTravelCommand(parse('travel length 60'), {});
+  assert.equal(replyCheck.spokenMaxWords(), 60, 'the phone overrides it');
+
+  const reply = await commands.runTravelCommand(parse('travel length default'), {});
+  assert.match(reply, /back to the configured default/);
+  assert.equal(replyCheck.spokenMaxWords(), 150, 'not the built-in default, the configured one');
+});
+
+test('a value a dial cannot take is refused with what it does take', async () => {
+  const bad = await commands.runTravelCommand(parse('travel length banana'), {});
+  assert.match(bad, /needs a whole number/);
+  assert.match(bad, /It takes:/);
+  assert.equal(replyCheck.spokenMaxWords(), 220, 'nothing changed');
+
+  assert.match(await commands.runTravelCommand(parse('travel effort turbo'), {}), /one of low, medium, high, xhigh, max, off/);
+  assert.match(await commands.runTravelCommand(parse('travel length 5'), {}), /between 20 and 2000/);
+  assert.match(await commands.runTravelCommand(parse('travel text maybe'), {}), /say on or off/);
+  assert.match(await commands.runTravelCommand(parse('travel language klingon'), {}), /one of es, fr, en/);
+});
+
+test('on and off are understood in all three languages', async () => {
+  for (const yes of ['on', 'yes', 'true', 'sí', 'oui']) {
+    settings.__resetSettingsForTests();
+    await commands.runTravelCommand(parse(`travel retry ${yes}`), {});
+    assert.equal(replyCheck.languageRetryEnabled(), true, yes);
+  }
+  for (const no of ['off', 'no', 'false', 'non']) {
+    settings.__resetSettingsForTests();
+    await commands.runTravelCommand(parse(`travel retry ${no}`), {});
+    assert.equal(replyCheck.languageRetryEnabled(), false, no);
+  }
+});
+
+test('"voice" means the provider when the value is one, and the voice when it is not', async () => {
+  process.env.OPENAI_API_KEY = 'oa';
+  process.env.ELEVENLABS_API_KEY = 'el';
+
+  await commands.runTravelCommand(parse('travel voice elevenlabs'), {});
+  assert.equal(registry.resolveProvider('tts').id, 'elevenlabs', 'a provider id switches the provider');
+
+  const reply = await commands.runTravelCommand(parse('travel voice JBFqnCBsd6RMkjVDRZzb'), {});
+  assert.match(reply, /voice for elevenlabs/);
+  assert.equal(registry.resolveProvider('tts').voice(), 'JBFqnCBsd6RMkjVDRZzb', 'case survives — a voice id is case-sensitive');
+  assert.equal(registry.resolveProvider('tts').id, 'elevenlabs', 'and the provider did not change');
+});
+
+test('a voice belongs to its provider, so switching provider does not carry it across', async () => {
+  process.env.OPENAI_API_KEY = 'oa';
+  process.env.ELEVENLABS_API_KEY = 'el';
+  await commands.runTravelCommand(parse('travel voice elevenlabs'), {});
+  await commands.runTravelCommand(parse('travel voice someElevenId'), {});
+
+  await commands.runTravelCommand(parse('travel voice openai'), {});
+  assert.equal(registry.resolveProvider('tts').voice(), 'alloy', "OpenAI keeps its own, not ElevenLabs' id");
+
+  await commands.runTravelCommand(parse('travel voice elevenlabs'), {});
+  assert.equal(registry.resolveProvider('tts').voice(), 'someElevenId', 'and switching back remembers');
+});
+
+test('a pinned language overrides detection, which is the point when demoing to one agency', async () => {
+  const anthropic = {
+    calls: [],
+    messages: {
+      create: async (req) => {
+        anthropic.calls.push(req);
+        return { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Oui.' }], usage: { input_tokens: 5, output_tokens: 2 } };
+      },
+    },
+  };
+  await commands.runTravelCommand(parse('travel language fr'), {});
+  const result = await tv.runTravelVoiceTurn({ anthropic, sessionId: 'pinned', text: 'Hello, how do I price a booking?' });
+  assert.equal(result.language, 'fr', 'answered in French despite an English question');
+  assert.match(anthropic.calls[0].system.map((b) => b.text).join(), /Reply entirely in French/);
+});
+
+test('the listing says what each dial is on and where that came from', async () => {
+  process.env.OPENAI_API_KEY = 'oa';
+  process.env.TRAVEL_VOICE_MAX_TURNS_PER_HOUR = '50';
+  await commands.runTravelCommand(parse('travel length 90'), {});
+
+  const reply = await commands.runTravelCommand(parse('travel settings'), {});
+  assert.match(reply, /length: 90 \(set here\)/);
+  assert.match(reply, /limit: 50 \(configured\)/);
+  assert.match(reply, /effort: low/, 'and the built-in default where nothing was set');
+  assert.match(reply, /language: auto/);
+  assert.match(reply, /voice: alloy \(openai's default\)/, 'the live provider answers for its own dial');
+});
+
+test('defaults puts the dials back as well as the providers', async () => {
+  process.env.OPENAI_API_KEY = 'oa';
+  process.env.ELEVENLABS_API_KEY = 'el';
+  await commands.runTravelCommand(parse('travel length 60'), {});
+  await commands.runTravelCommand(parse('travel voice elevenlabs'), {});
+
+  await commands.runTravelCommand(parse('travel defaults'), {});
+  assert.equal(replyCheck.spokenMaxWords(), 220, 'a dial');
+  assert.equal(registry.resolveProvider('tts').id, 'openai', 'and a provider pin');
 });
 
 // --- status -----------------------------------------------------------------

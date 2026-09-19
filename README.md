@@ -208,9 +208,20 @@ full sentence that fits.
 is also a WhatsApp command from your own allowlisted phone: `TRAVEL STATUS`
 for what is live and what it has spent, `TRAVEL INVITE <number> [es|fr|en]`
 to let someone try it and send them a spoken hello in the demo voice,
-`TRAVEL VOICE deepgram` to switch a provider mid-demo with `TRAVEL DEFAULTS`
-to undo it, `TRAVEL LOG` for the recent conversations, and `TRAVEL GUESTS`
-or `TRAVEL REMOVE <number>` for the guest list. Send `TRAVEL` for the list.
+`TRAVEL VOICE deepgram` to switch a provider mid-demo, `TRAVEL LOG` for the
+recent conversations, and `TRAVEL GUESTS` or `TRAVEL REMOVE <number>` for the
+guest list. Send `TRAVEL` for the list.
+
+Eight further dials are settable the same way, so the things you reach for
+mid-demo are not a redeploy away: the voice of whichever speech provider is
+live, a pinned answer language, how long the spoken answer may run, the
+brain's effort and model, whether the words go out alongside the voice note,
+whether a wrong-language answer is re-asked, and the per-caller hourly limit.
+`TRAVEL SETTINGS` shows each one and whether its value came from the
+environment or from your phone; `TRAVEL LENGTH 90` sets one; `TRAVEL
+DEFAULTS` puts every switch and dial back. The environment variables stay the
+deployment's base and the phone is an override on top, persisted so a restart
+mid-demo does not undo it.
 
 An invited guest reaches the travel advisor and nothing else on that number.
 Not the executive team, not the founder commands. The webhook checks the

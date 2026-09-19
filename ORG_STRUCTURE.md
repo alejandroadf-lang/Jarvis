@@ -953,6 +953,39 @@ survives a restart; `TRAVEL DEFAULTS` puts it back. `TRAVEL LOG` reads back
 the recent conversations with a wrong-language answer called out, because
 that is the one worth seeing at a glance.
 
+### The dials, and why they are a registry
+
+Switching the provider was the first thing that had to leave the browser,
+but it was not the only one. An agency owner says the answer was too long,
+or that they only ever want French, or that the voice is wrong — and each of
+those was an environment variable, which is to say a redeploy, which is to
+say not during this conversation.
+
+So eight of them became dials settable from a phone: the voice of the live
+speech provider, a pinned language, the spoken length, the brain's effort and
+model, whether the text goes out alongside the voice note, whether a
+wrong-language answer is re-asked, and the per-caller hourly limit. Each
+resolves the same way — what was set from a phone, then the environment
+variable, then the built-in default — so a redeploy still puts a deployment
+where its config says, and the phone is an override on top. `TRAVEL SETTINGS`
+says which of those three a value came from, because "it is 90" and "it is 90
+because you set it five minutes ago" are different facts.
+
+They are a registry rather than eight commands. One entry names the dial, how
+to parse a value, and what to say when the value is wrong; the command, the
+listing, the validation and the help text all read from it. Adding a dial is
+that entry plus reading it where the value is used, which is the difference
+between a mechanism and nine special cases.
+
+Two of the words name two things. "Voice" is both which speech provider and
+which voice within it; "model" is both which brain and which model. Rather
+than invent `VOICEID`, the value decides: a provider id is one of a closed
+set of three, a voice id is not, so `TRAVEL VOICE elevenlabs` switches the
+provider and `TRAVEL VOICE JBFqnCBsd6RMkjVDRZzb` sets the voice. A voice is
+stored against its provider, so switching provider and back remembers rather
+than carrying an ElevenLabs id to OpenAI, where it would mean nothing. The
+slot words that name no dial say "no such provider" instead of guessing.
+
 ### One number, two doors
 
 The interesting part is `TRAVEL INVITE`. A demo needs a prospect to be able

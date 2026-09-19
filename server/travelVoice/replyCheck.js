@@ -26,6 +26,7 @@
 // detect, and that is the common case for the shortest answers.
 
 import { guessLanguage, normalizeLanguage, DEFAULT_LANGUAGE, LANGUAGE_NAMES } from './languages.js';
+import { override as settingOverride } from './settings.js';
 
 // Higher than the 0.6 used on the way in. Acting on the caller's own words
 // costs nothing if it is wrong; acting on the advisor's costs a second call
@@ -36,13 +37,19 @@ const DRIFT_CONFIDENCE = 0.7;
 // scores one marker or none, and one marker is not a language.
 const DRIFT_MIN_HITS = 6;
 
+// Each of these is settable from a phone mid-demo (see settings.js), which
+// is why the override is consulted before the environment rather than after.
 export function spokenMaxWords() {
+  const pinned = settingOverride('length');
+  if (pinned !== undefined) return pinned;
   const value = Number(process.env.TRAVEL_VOICE_SPOKEN_MAX_WORDS);
   return Number.isFinite(value) && value > 0 ? value : 220;
 }
 
 /** Whether a drifted reply is worth a second call. On by default. */
 export function languageRetryEnabled() {
+  const pinned = settingOverride('retry');
+  if (pinned !== undefined) return pinned;
   return (process.env.TRAVEL_VOICE_LANGUAGE_RETRY || '').trim().toLowerCase() !== 'false';
 }
 

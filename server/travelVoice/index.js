@@ -50,6 +50,7 @@ import {
   recentCallEvents,
 } from './calls.js';
 import { isGuest, addGuest, listGuests } from './guests.js';
+import { override as settingOverride } from './settings.js';
 import { parseTravelCommand, runTravelCommand } from './commands.js';
 
 const STATE_FILE = 'travelVoiceState.json';
@@ -114,6 +115,8 @@ const turnsByCaller = new Map(); // normalized number -> [timestamps]
 const WINDOW_MS = 60 * 60 * 1000;
 
 export function maxTurnsPerHour() {
+  const pinned = settingOverride('limit');
+  if (pinned !== undefined) return pinned;
   const value = Number(process.env.TRAVEL_VOICE_MAX_TURNS_PER_HOUR);
   return Number.isFinite(value) && value > 0 ? value : 20;
 }
@@ -246,6 +249,10 @@ export async function runTravelVoiceTurn({
   providers = {},
 }) {
   const startedAt = Date.now();
+  // A language pinned from a phone behaves exactly like a caller who chose
+  // one: it beats detection, which is the point when you are demonstrating
+  // to a French agency and do not want a stray English word to decide.
+  const chosen = language || settingOverride('language') || null;
   const previous = rememberedLanguage(sessionId);
   let transcript = String(text || '').trim();
   let heard = null;
@@ -261,7 +268,7 @@ export async function runTravelVoiceTurn({
     // changed their mind, and the transcriber says so.
     const result = await transcribeWithLanguage(audio, {
       filename,
-      languageHint: normalizeLanguage(language) || previous,
+      languageHint: normalizeLanguage(chosen) || previous,
       provider: providers.stt,
     });
     transcript = result.text;
@@ -273,7 +280,7 @@ export async function runTravelVoiceTurn({
       // The transcriber may still have heard which language the silence was in.
       return {
         transcript: '',
-        language: normalizeLanguage(language) || heard || previous || DEFAULT_LANGUAGE,
+        language: normalizeLanguage(chosen) || heard || previous || DEFAULT_LANGUAGE,
         empty: true,
         costUsd,
         providers: used,
@@ -283,7 +290,7 @@ export async function runTravelVoiceTurn({
   }
 
   const switched = requestedLanguageSwitch(transcript);
-  const resolved = resolveLanguage({ chosen: switched || language, heard, text: transcript, previous });
+  const resolved = resolveLanguage({ chosen: switched || chosen, heard, text: transcript, previous });
   const history = sessionHistory(sessionId);
 
   const turn = await runAdvisorTurn({ anthropic, provider: providers.llm, history, text: transcript, language: resolved.language });
@@ -344,6 +351,8 @@ function isVoiceNote(message) {
 }
 
 function textToo() {
+  const pinned = settingOverride('text');
+  if (pinned !== undefined) return pinned;
   return (process.env.TRAVEL_VOICE_TEXT_TOO || '').trim().toLowerCase() !== 'false';
 }
 
