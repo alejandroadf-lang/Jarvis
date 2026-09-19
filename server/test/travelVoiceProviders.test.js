@@ -16,6 +16,9 @@ let originalFetch;
 const saved = {};
 const KEYS = [
   'OPENAI_API_KEY',
+  'ASSEMBLYAI_API_KEY',
+  'ASSEMBLYAI_POLL_MS',
+  'DEEPGRAM_KEYTERMS',
   'ELEVENLABS_API_KEY',
   'ELEVENLABS_TTS_MODEL',
   'ELEVENLABS_VOICE_ID',
@@ -415,4 +418,92 @@ test('the registry describes every option so the tab can show what a choice woul
   const ionos = described.llm.options.find((o) => o.id === 'ionos');
   assert.equal(ionos.model, 'meta-llama/Llama-3.3-70B-Instruct');
   assert.equal(ionos.voice, undefined, 'a brain has no voice');
+});
+
+// --- AssemblyAI, keyterms, and what is never asked for ----------------------------
+
+test('AssemblyAI Universal: upload, create, poll until complete, and the language heard', async () => {
+  process.env.ASSEMBLYAI_API_KEY = 'aai-key';
+  process.env.ASSEMBLYAI_POLL_MS = '1';
+  let polls = 0;
+  const seen = capture((url, init) => {
+    if (url.endsWith('/v2/upload')) return { ok: true, json: async () => ({ upload_url: 'https://cdn.assemblyai.com/upload/abc' }) };
+    if (url.endsWith('/v2/transcript')) return { ok: true, json: async () => ({ id: 'tr_1', status: 'queued' }) };
+    if (url.endsWith('/v2/transcript/tr_1')) {
+      polls += 1;
+      return polls < 3
+        ? { ok: true, json: async () => ({ id: 'tr_1', status: 'processing' }) }
+        : { ok: true, json: async () => ({ id: 'tr_1', status: 'completed', text: ' El cliente quiere un refund ', language_code: 'es', audio_duration: 4.8 }) };
+    }
+    throw new Error(`unexpected ${url}`);
+  });
+
+  const result = await stt.assemblyAiEars.transcribe(Buffer.from('opus'), { filename: 'voice.ogg' });
+
+  assert.equal(seen[0].url, 'https://api.assemblyai.com/v2/upload');
+  assert.equal(seen[0].init.headers.authorization, 'aai-key');
+  assert.equal(seen[0].init.headers['Content-Type'], 'audio/ogg');
+  const created = JSON.parse(seen[1].init.body);
+  assert.deepEqual(created, { audio_url: 'https://cdn.assemblyai.com/upload/abc', speech_model: 'universal', language_detection: true });
+  assert.equal(polls, 3);
+  assert.equal(result.text, 'El cliente quiere un refund');
+  assert.equal(result.language, 'es');
+  assert.equal(result.durationSeconds, 4.8);
+  assert.ok(result.costUsd > 0);
+  delete process.env.ASSEMBLYAI_POLL_MS;
+});
+
+test('AssemblyAI: a chosen language is sent instead of detection, and an error status is an error', async () => {
+  process.env.ASSEMBLYAI_API_KEY = 'aai-key';
+  const seen = capture((url) => {
+    if (url.endsWith('/v2/upload')) return { ok: true, json: async () => ({ upload_url: 'u' }) };
+    if (url.endsWith('/v2/transcript')) return { ok: true, json: async () => ({ id: 'tr_2' }) };
+    return { ok: true, json: async () => ({ status: 'error', error: 'audio too short' }) };
+  });
+  await assert.rejects(() => stt.assemblyAiEars.transcribe(Buffer.from('x'), { languageHint: 'fr' }), /AssemblyAI transcription failed: audio too short/);
+  const created = JSON.parse(seen[1].init.body);
+  assert.equal(created.language_code, 'fr');
+  assert.equal(created.language_detection, undefined);
+});
+
+test('Deepgram: keyterms are sent only when configured, one parameter each', async () => {
+  process.env.DEEPGRAM_API_KEY = 'dg-key';
+  const reply = { ok: true, json: async () => ({ metadata: { duration: 1 }, results: { channels: [{ alternatives: [{ transcript: 'FXP' }] }] } }) };
+  let seen = capture(reply);
+  await stt.deepgramEars.transcribe(Buffer.from('x'));
+  assert.deepEqual(new URL(seen[0].url).searchParams.getAll('keyterm'), []);
+
+  process.env.DEEPGRAM_KEYTERMS = 'FXP, TTP, Amadeus, MAD,CDG';
+  try {
+    seen = capture(reply);
+    await stt.deepgramEars.transcribe(Buffer.from('x'));
+    assert.deepEqual(new URL(seen[0].url).searchParams.getAll('keyterm'), ['FXP', 'TTP', 'Amadeus', 'MAD', 'CDG']);
+  } finally {
+    delete process.env.DEEPGRAM_KEYTERMS;
+  }
+});
+
+test('no ear asks for speaker identification, diarisation or sentiment', async () => {
+  process.env.OPENAI_API_KEY = 'oa';
+  process.env.ELEVENLABS_API_KEY = 'el';
+  process.env.DEEPGRAM_API_KEY = 'dg';
+  process.env.ASSEMBLYAI_API_KEY = 'aai';
+  process.env.ASSEMBLYAI_POLL_MS = '1';
+  const forbidden = /diarize=true|diarization|speaker_labels|sentiment|entity_detection|identify|speaker_id|emotion/i;
+  const seen = capture((url, init) => {
+    if (url.includes('/audio/transcriptions')) return { ok: true, json: async () => ({ text: 'x', language: 'english', duration: 1 }) };
+    if (url.includes('elevenlabs')) return { ok: true, json: async () => ({ text: 'x', language_code: 'en' }) };
+    if (url.includes('deepgram')) return { ok: true, json: async () => ({ results: { channels: [{ alternatives: [{ transcript: 'x' }] }] } }) };
+    if (url.endsWith('/v2/upload')) return { ok: true, json: async () => ({ upload_url: 'u' }) };
+    if (url.endsWith('/v2/transcript')) return { ok: true, json: async () => ({ id: 't' }) };
+    return { ok: true, json: async () => ({ status: 'completed', text: 'x', language_code: 'en' }) };
+  });
+  for (const ear of stt.EARS) await ear.transcribe(Buffer.from('x'));
+  for (const call of seen) {
+    const body = call.init.body instanceof FormData ? [...call.init.body.entries()].map(([k, v]) => `${k}=${typeof v === 'string' ? v : ''}`).join('&') : typeof call.init.body === 'string' ? call.init.body : '';
+    assert.ok(!forbidden.test(call.url), `${call.url} asks for something about the person`);
+    assert.ok(!forbidden.test(body), `${call.url} body asks for something about the person: ${body}`);
+  }
+  assert.deepEqual(stt.EARS.map((e) => e.id), ['openai', 'elevenlabs', 'deepgram', 'assemblyai']);
+  delete process.env.ASSEMBLYAI_POLL_MS;
 });

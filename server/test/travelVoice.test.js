@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fakeOpus } from './travelVoiceOgg.test.js';
 
 let tmpDir;
 let tv;
@@ -34,6 +35,7 @@ const KEYS = [
   'TRAVEL_VOICE_TTS_PROVIDER',
   'TRAVEL_VOICE_MODEL',
   'TRAVEL_VOICE_EFFORT',
+  'TRAVEL_VOICE_SHORT_CLIP_SECONDS',
 ];
 
 before(async () => {
@@ -217,6 +219,39 @@ test('a WhatsApp voice note is answered with a voice note in the same language, 
   assert.ok(logged.costUsd > 0);
   assert.deepEqual(logged.providers, { stt: 'openai', llm: 'anthropic', tts: 'openai' });
   assert.ok(Number.isFinite(logged.timings.sttMs) && Number.isFinite(logged.timings.llmMs) && Number.isFinite(logged.timings.ttsMs));
+});
+
+test('a clip under two seconds cannot switch the language of a conversation', async () => {
+  // A Spanish conversation is under way.
+  const first = stubOutside({ transcript: '¿Cómo valoro el PNR?', heard: 'spanish' });
+  await tv.handleTravelVoiceMessage(
+    { id: 'wamid.s1', from: '34600111222', type: 'audio', text: '', mediaId: 'media-1', phoneNumberId: '222' },
+    { anthropic: stubAnthropic('Con FXP.'), phoneNumberId: '222' }
+  );
+  assert.equal(sends(first).length, 2);
+
+  // Then "oui, merci": one second, and Whisper reports French with no duration
+  // of its own — the Ogg pages give it.
+  const outside = stubOutside({ transcript: 'oui merci', heard: 'french' });
+  const inner = global.fetch;
+  global.fetch = async (url, init) => {
+    const u = String(url);
+    if (u === 'https://lookaside/blob') return { ok: true, arrayBuffer: async () => fakeOpus(1.1).buffer.slice(fakeOpus(1.1).byteOffset, fakeOpus(1.1).byteOffset + fakeOpus(1.1).length) };
+    if (u.includes('/audio/transcriptions')) return { ok: true, json: async () => ({ text: 'oui merci', language: 'french' }) };
+    return inner(url, init);
+  };
+  const anthropic = stubAnthropic('De nada.');
+  const outcome = await tv.handleTravelVoiceMessage(
+    { id: 'wamid.s2', from: '34600111222', type: 'audio', text: '', mediaId: 'media-1', phoneNumberId: '222' },
+    { anthropic, phoneNumberId: '222' }
+  );
+
+  assert.equal(outcome.language, 'es', 'the conversation stays Spanish');
+  assert.match(anthropic.calls[0].system.map((b) => b.text).join(), /Reply entirely in Spanish/);
+  const [logged] = tv.recentTravelVoiceTurns();
+  assert.equal(logged.shortClip, true);
+  assert.ok(Math.abs(logged.durationSeconds - 1.1) < 0.01);
+  assert.equal(logged.languageSource, 'previous');
 });
 
 test('a locator heard in a voice note is read back, spelled aloud and written as heard', async () => {

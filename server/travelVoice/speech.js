@@ -39,7 +39,7 @@ export function canSpeak() {
  */
 export async function transcribeWithLanguage(audio, { filename = 'voice.ogg', languageHint = null, provider = null } = {}) {
   const ears = resolveProvider('stt', provider);
-  if (!ears) throw new Error('No speech-to-text provider is configured — set OPENAI_API_KEY, ELEVENLABS_API_KEY or DEEPGRAM_API_KEY');
+  if (!ears) throw new Error('No speech-to-text provider is configured — set OPENAI_API_KEY, ELEVENLABS_API_KEY, DEEPGRAM_API_KEY or ASSEMBLYAI_API_KEY');
   assertUnderDailyCap();
 
   const startedAt = Date.now();

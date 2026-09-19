@@ -34,6 +34,7 @@ import { isAmadeusConfigured, amadeusEnvironment } from './amadeus.js';
 import { describeProviders, hasProvider, resolveProvider } from './providers/index.js';
 import { checkReply } from './replyCheck.js';
 import { readBack } from './spoken.js';
+import { oggOpusDurationSeconds } from './ogg.js';
 import { assertUnderDailyCap, recordSpend } from '../spend.js';
 import { priceUsage } from '../usage.js';
 import {
@@ -129,6 +130,12 @@ export function isTravelVoiceCallerAllowed(from) {
 
 const turnsByCaller = new Map(); // normalized number -> [timestamps]
 const WINDOW_MS = 60 * 60 * 1000;
+
+/** Below this many seconds of audio, a clip cannot change the conversation's language. */
+export function shortClipSeconds() {
+  const value = Number(process.env.TRAVEL_VOICE_SHORT_CLIP_SECONDS);
+  return Number.isFinite(value) && value >= 0 ? value : 2;
+}
 
 export function maxTurnsPerHour() {
   const pinned = settingOverride('limit');
@@ -273,6 +280,8 @@ export async function runTravelVoiceTurn({
   let transcript = String(text || '').trim();
   let heard = null;
   let costUsd = 0;
+  let durationSeconds = null;
+  let shortClip = false;
   // Which provider answered each stage, and how long it took — the numbers
   // that make "which ears are better" a comparison rather than an opinion.
   const used = { stt: null, llm: null, tts: null };
@@ -292,6 +301,14 @@ export async function runTravelVoiceTurn({
     costUsd += result.costUsd;
     used.stt = result.provider;
     timings.sttMs = result.ms;
+    durationSeconds = result.durationSeconds ?? oggOpusDurationSeconds(audio);
+    // Language identification is unreliable under about two seconds of
+    // speech — "oui", "vale", "ok merci" — and a conversation almost never
+    // changes language on a clip that short without saying so. So a short
+    // clip cannot switch a conversation that already has a language; what
+    // the transcriber heard is kept as evidence but not acted on.
+    shortClip = Number.isFinite(durationSeconds) && durationSeconds < shortClipSeconds();
+    if (shortClip && previous && heard && heard !== previous) heard = null;
     if (!transcript) {
       // The transcriber may still have heard which language the silence was in.
       return {
@@ -306,7 +323,9 @@ export async function runTravelVoiceTurn({
   }
 
   const switched = requestedLanguageSwitch(transcript);
-  const resolved = resolveLanguage({ chosen: switched || chosen, heard, text: transcript, previous });
+  const resolved = shortClip && previous && !switched && !chosen
+    ? { language: previous, source: 'previous' }
+    : resolveLanguage({ chosen: switched || chosen, heard, text: transcript, previous });
   const history = sessionHistory(sessionId);
   // A locator or ticket number heard in a voice note is read back before
   // the answer, spelled in the caller's alphabet, so the one person who can
@@ -347,6 +366,8 @@ export async function runTravelVoiceTurn({
     languageSource: switched ? 'switched' : resolved.source,
     reply: turn.reply,
     readBack: heardBack,
+    durationSeconds,
+    shortClip,
     toolCalls: turn.toolCalls,
     audio: speech ? { buffer: speech.buffer, mimeType: speech.mimeType, filename: speech.filename } : null,
     audioError,
@@ -697,6 +718,7 @@ export async function handleTravelVoiceMessage(message, { anthropic, phoneNumber
     providers: result.providers,
     timings: result.timings,
     ...(result.readBack ? { readBack: result.readBack.codes } : {}),
+    ...(result.shortClip ? { shortClip: true, durationSeconds: result.durationSeconds } : {}),
     // Only recorded when something was actually wrong with the answer, so a
     // scan down the log shows the bad turns rather than a column of nulls.
     ...(result.drift ? { drift: result.drift } : {}),

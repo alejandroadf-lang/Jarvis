@@ -153,6 +153,13 @@ export const deepgramEars = {
     const apiKey = readSecret('DEEPGRAM_API_KEY');
     if (!apiKey) throw new Error('DEEPGRAM_API_KEY is not set');
     const params = new URLSearchParams({ model: this.model(), smart_format: 'true', punctuate: 'true' });
+    // Keyterm prompting: the words the transcriber should expect. On a
+    // travel line that is the Amadeus vocabulary and the airport codes —
+    // "FXP" heard as "effects P" is the failure it prevents. Opt-in by
+    // variable because Deepgram documents it for Nova-3 with per-language
+    // coverage that has changed between releases, and a rejected
+    // parameter would fail every transcription rather than one word.
+    for (const term of deepgramKeyterms()) params.append('keyterm', term);
     const hint = normalizeLanguage(languageHint);
     // Told the language when the caller chose one; asked to detect it
     // otherwise. Sending both makes the detection redundant and the hint a
@@ -179,5 +186,87 @@ export const deepgramEars = {
   },
 };
 
+/** The keyterms Deepgram is told to expect, from DEEPGRAM_KEYTERMS, comma-separated. */
+export function deepgramKeyterms() {
+  return (process.env.DEEPGRAM_KEYTERMS || '')
+    .split(',')
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .slice(0, 100);
+}
+
+// --- AssemblyAI Universal -------------------------------------------------------
+
+// The one ear here that claims to follow a speaker who changes language
+// mid-sentence — "el cliente quiere un refund, ¿qué hago?" — in a single
+// pass rather than picking one language for the whole note. Whether that
+// claim survives an agency's actual voice notes is what the comparison is
+// for. The API is asynchronous: upload the bytes, ask for a transcript,
+// poll until it is done. A few seconds on a short note.
+const ASSEMBLYAI_URL = 'https://api.assemblyai.com/v2';
+
+function assemblyPollMs() {
+  return numberFromEnv('ASSEMBLYAI_POLL_MS', 500);
+}
+
+function assemblyTimeoutMs() {
+  return numberFromEnv('ASSEMBLYAI_TIMEOUT_MS', 60000);
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+export const assemblyAiEars = {
+  id: 'assemblyai',
+  label: 'AssemblyAI Universal',
+  configured: () => hasSecret('ASSEMBLYAI_API_KEY'),
+  model: () => (process.env.ASSEMBLYAI_STT_MODEL || '').trim() || 'universal',
+  languages: ['es', 'fr', 'en'],
+  // Universal pay-as-you-go, per hour of audio, checked 2026-09-19.
+  pricePerMinute: () => numberFromEnv('ASSEMBLYAI_STT_PRICE_PER_MIN', 0.0025),
+  async transcribe(audio, { filename = 'voice.ogg', languageHint = null } = {}) {
+    const apiKey = readSecret('ASSEMBLYAI_API_KEY');
+    if (!apiKey) throw new Error('ASSEMBLYAI_API_KEY is not set');
+    const headers = { authorization: apiKey };
+
+    const uploaded = await fetch(`${ASSEMBLYAI_URL}/upload`, { method: 'POST', headers: { ...headers, 'Content-Type': mimeFor(filename) }, body: audio });
+    if (!uploaded.ok) throw await failure('AssemblyAI', uploaded);
+    const { upload_url: audioUrl } = await uploaded.json();
+    if (!audioUrl) throw new Error('AssemblyAI returned no upload URL');
+
+    const hint = normalizeLanguage(languageHint);
+    const body = { audio_url: audioUrl, speech_model: this.model() };
+    // Chosen beats detected, as with every ear here. No speaker labels and
+    // no sentiment or entity analysis: one speaker, and nothing about the
+    // person is wanted, only the words.
+    if (hint) body.language_code = hint;
+    else body.language_detection = true;
+
+    const created = await fetch(`${ASSEMBLYAI_URL}/transcript`, { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (!created.ok) throw await failure('AssemblyAI', created);
+    const { id } = await created.json();
+    if (!id) throw new Error('AssemblyAI returned no transcript id');
+
+    const deadline = Date.now() + assemblyTimeoutMs();
+    let data;
+    for (;;) {
+      const polled = await fetch(`${ASSEMBLYAI_URL}/transcript/${encodeURIComponent(id)}`, { headers });
+      if (!polled.ok) throw await failure('AssemblyAI', polled);
+      data = await polled.json();
+      if (data.status === 'completed') break;
+      if (data.status === 'error') throw new Error(`AssemblyAI transcription failed: ${String(data.error || 'unknown error').slice(0, 200)}`);
+      if (Date.now() > deadline) throw new Error('AssemblyAI transcription timed out');
+      await sleep(assemblyPollMs());
+    }
+
+    const durationSeconds = Number.isFinite(data?.audio_duration) ? data.audio_duration : null;
+    return {
+      text: (data?.text || '').trim(),
+      language: hint || normalizeLanguage(data?.language_code),
+      durationSeconds,
+      costUsd: ((durationSeconds ?? estimateSeconds(audio)) / 60) * this.pricePerMinute(),
+    };
+  },
+};
+
 // Preference order when nothing chose: the one that was already here first.
-export const EARS = [openaiEars, elevenLabsEars, deepgramEars];
+export const EARS = [openaiEars, elevenLabsEars, deepgramEars, assemblyAiEars];

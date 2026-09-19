@@ -451,6 +451,24 @@ async function probeDeepgram() {
   }
 }
 
+async function probeAssemblyAI() {
+  if (!hasSecret('ASSEMBLYAI_API_KEY')) {
+    return notConfigured('Not set — the advisor can still hear through OpenAI, ElevenLabs or Deepgram. This is the ear that follows a speaker who switches language mid-sentence.');
+  }
+  try {
+    // A transcript listing is the cheapest authenticated call there is.
+    const res = await withTimeout(
+      fetch('https://api.assemblyai.com/v2/transcript?limit=1', { headers: { authorization: readSecret('ASSEMBLYAI_API_KEY') } }),
+      'AssemblyAI'
+    );
+    if (res.status === 401 || res.status === 403) return { configured: true, ok: false, detail: 'Key rejected. Pick another ear or fix ASSEMBLYAI_API_KEY.' };
+    if (!res.ok) return { configured: true, ok: false, detail: `AssemblyAI returned ${res.status}.` };
+    return { configured: true, ok: true, detail: 'Key accepted — Universal can hear for the advisor, code-switching included.' };
+  } catch (err) {
+    return { configured: true, ok: false, detail: `Couldn't reach AssemblyAI: ${err.message}` };
+  }
+}
+
 async function probeIonos() {
   if (!isIonosConfigured()) {
     return notConfigured('Not set — the advisor thinks on Anthropic; IONOS is the EU-hosted alternative.');
@@ -488,7 +506,7 @@ function travelVoiceIntegration() {
 }
 
 export async function getIntegrationStatus() {
-  const [openrouter, honcho, whatsapp, openai, gemini, deepseek, amadeus, elevenlabs, deepgram, ionos] = await Promise.all([
+  const [openrouter, honcho, whatsapp, openai, gemini, deepseek, amadeus, elevenlabs, deepgram, ionos, assemblyai] = await Promise.all([
     probeOpenRouter(),
     probeHoncho(),
     probeWhatsApp(),
@@ -499,6 +517,7 @@ export async function getIntegrationStatus() {
     probeElevenLabs(),
     probeDeepgram(),
     probeIonos(),
+    probeAssemblyAI(),
   ]);
 
   return {
@@ -529,6 +548,7 @@ export async function getIntegrationStatus() {
     elevenlabs,
     deepgram,
     ionos,
+    assemblyai,
     travelVoice: travelVoiceIntegration(),
     // These two predate the probes and fail loudly at the point of use (an
     // action tool returns the reason), so presence is the useful signal.
