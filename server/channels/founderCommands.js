@@ -22,6 +22,7 @@
 // worst kind of helpful.
 
 import { pendingDrafts, releasableDrafts, getDraft, approveDraft, rejectDraft } from '../outreachDrafts.js';
+import { listSearches, searchBalance } from '../searchLog.js';
 import { haltRealActions, resumeRealActions } from '../killSwitch.js';
 import { getSpendSummary } from '../spend.js';
 import {
@@ -136,6 +137,9 @@ const COMMANDS = [
   // Outreach the team wrote and cannot send. Short ids because these are typed
   // on a phone: "SEND d7", not a uuid pasted from somewhere there is nothing
   // to paste from.
+  // What the team went looking for. The bias that matters lives in the
+  // queries, not the findings — see searchLog.js.
+  { kind: 'searches', re: /^searches?$/i },
   { kind: 'drafts', re: /^drafts?$/i },
   { kind: 'draft_show', re: /^draft\s+(d\d+)$/i, arg: 'draftId' },
   { kind: 'draft_send', re: /^send\s+(d\d+)$/i, arg: 'draftId' },
@@ -390,6 +394,7 @@ MCP <ventureId> <https://...> — where other people's agents can reach the prod
 MCP CLEAR <ventureId> — remove it
 DRYRUN <ventureId> <email> — rehearse the whole outreach path; the message comes to you, never to them
 DRYRUN <ventureId> <email> | subject | body — same, with your own words
+SEARCHES — what the team actually went looking for
 DRAFTS — outreach the team has written and is waiting on you
 DRAFT d1 — read one in full
 SEND d1 — release it (still passes every gate a normal send passes)
@@ -540,6 +545,20 @@ export async function runFounderCommand(command, deps = {}) {
     case 'unblock': {
       const venture = unblockContact(command.ventureId, command.email);
       return `${command.email.toLowerCase()} is no longer blocked on "${venture.title}".`;
+    }
+
+    case 'searches': {
+      const recent = listSearches({ limit: 25 });
+      if (!recent.length) return 'No searches on record yet. They are captured from the team\'s own turns, not self-reported.';
+      const { total, disconfirming } = searchBalance();
+      const lines = recent.map((entry) => `${entry.disconfirming ? '↯' : ' '} ${entry.agentId || '?'}: ${entry.query}`);
+      return [
+        `${total} search${total === 1 ? '' : 'es'} on record, ${disconfirming} of them looking for a reason something would not work (marked ↯).`,
+        '',
+        ...lines,
+        '',
+        'A pass with none of these produces supportive citations whether the idea is good or not — which is why the findings alone cannot tell you.',
+      ].join('\n');
     }
 
     case 'drafts': {

@@ -67,6 +67,11 @@ export function formatReportEmail(report) {
   const claims = describeUnsupportedClaims(report.unsupportedClaims);
   if (claims) lines.push('', claims);
 
+  // Also before the report, and for a related reason: how the research was
+  // shaped decides how much the conclusions are worth, and it cannot be
+  // recovered by reading them.
+  if (report.searchBalance) lines.push('', report.searchBalance);
+
   lines.push(
     '',
     '=== Leadership Sync (Executive Team) ===',

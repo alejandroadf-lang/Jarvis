@@ -3039,3 +3039,37 @@ that is still only a handle stays in the pipeline until someone finds one — an
 the refusal says exactly that rather than just "no". And the queue is in the
 agents' context, because a draft written yesterday is invisible to the turn
 that starts today, and an invisible draft gets written again every morning.
+
+## What the team went looking for
+
+The measured confirmation bias in research agents is not in how evidence gets
+interpreted. Across eleven models it sits in **which evidence gets selected** —
+agents propose searches that confirm rather than falsify. That is why reading
+the output cannot catch it: every citation shown genuinely supports the claim,
+because the disconfirming sources were never retrieved. Ten searches beginning
+"benefits of" and five beginning "why did X fail" produce write-ups that read
+identically.
+
+So `searchLog.js` records the queries. Captured from the model's own
+`server_tool_use` blocks in the runner, not reported by the agent — a
+self-reported search history is a claim, and the point of this file is to have
+something that is not. The query text exists nowhere else: the hosted
+`web_search` tool runs inside Anthropic's infrastructure and the agent never
+writes its queries into its own answer.
+
+`SEARCHES` shows the founder the last twenty-five with a `↯` against the ones
+that went looking for the counter-case, and the daily report carries the ratio
+above the report rather than after it, for the same reason the unsupported-claim
+warning does: how the research was shaped decides what the conclusions are
+worth, and it cannot be recovered by reading them.
+
+The one case named out loud is a pass with **no** disconfirming query: *"the
+citations would read the same way if the idea were bad."* That is the state the
+output is structurally incapable of revealing.
+
+Two deliberate limits. The classifier is crude regex matching, and it reports a
+ratio rather than a verdict — there is no correct percentage, since a pass that
+is *entirely* disconfirming never checked whether the thing works. And it is
+explicitly not a score anybody is judged on: an agent could satisfy a regex
+without changing what it looked for, and the day this becomes a target is the
+day it stops measuring anything.

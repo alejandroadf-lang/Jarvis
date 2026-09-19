@@ -25,6 +25,7 @@
 // one.
 
 import { unsupportedClaims } from './claimCheck.js';
+import { describeSearchBalance } from './searchLog.js';
 import { runAgent } from './agents/agentRunner.js';
 import { AGENTS as COMPANY_AGENTS, ROOT_AGENT_ID as COMPANY_ROOT } from './agents/orgChart.js';
 import { AGENTS as STUDIO_AGENTS, ROOT_AGENT_ID as STUDIO_ROOT } from './agents/ideationTeam.js';
@@ -391,6 +392,7 @@ quick daily check-in, not a full brainstorming session.`;
 export async function runDailyMeeting({ anthropic }) {
   const date = todayKey();
   const startedAt = Date.now();
+  const startedAtIso = new Date(startedAt).toISOString();
   const companyContext = buildCompanyContext();
 
   // Never throws: a GitHub outage must not take the morning down, and the
@@ -496,6 +498,9 @@ export async function runDailyMeeting({ anthropic }) {
       ...unsupportedClaims({ text: studio.text, trace: studio.trace }),
     ],
     proposedVentureIds,
+    // The shape of today's research, not only its conclusions. A pass with no
+    // disconfirming query reads identically whether the idea was good or bad.
+    searchBalance: describeSearchBalance({ since: startedAtIso }),
     business: { revenue, expenses, net },
     usage,
     costUsd: estimateCostUsd(usage),

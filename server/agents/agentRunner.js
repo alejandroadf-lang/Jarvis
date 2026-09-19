@@ -23,6 +23,7 @@
 // the dispatch loop below doesn't need to know these tools exist.
 
 import { agentSpan, toolSpan, newTraceId } from '../telemetry.js';
+import { recordSearchesFrom } from '../searchLog.js';
 import { getAgent } from './registry.js';
 import { assertUnderDailyCap, recordSpend } from '../spend.js';
 import { priceUsage, emptyUsage } from '../usage.js';
@@ -653,6 +654,17 @@ export async function runAgent({
     });
 
     addUsage(usage, response);
+
+    // What this agent searched for, taken from the response rather than from
+    // its own account of itself. The hosted web_search tool reports back as a
+    // server_tool_use block and the query text exists nowhere else — see
+    // searchLog.js for why the queries matter more than the findings.
+    try {
+      recordSearchesFrom(response.content, agent.id);
+    } catch (err) {
+      // Never fails a turn. This is an observation of the work, not part of it.
+      console.error('Could not record search queries:', err.message);
+    }
 
     const toolUses = response.content.filter((block) => block.type === 'tool_use');
 
