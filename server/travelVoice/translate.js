@@ -100,11 +100,47 @@ const PRESERVE = `Leave these EXACTLY as they appear, character for character, n
 - Numbers, prices, currencies, dates, times and flight numbers. A price or a date that changes in translation is worse than no translation at all.
 - Proper names of people and companies.`;
 
-export function translationPrompt(sourceLabel, targetLanguage) {
+// The trade's own words, as lemmas. Given to the model as terminology rather
+// than enforced as string substitution, because a verbatim glossary is the
+// documented way to break Spanish and French: "la localizador" is what you
+// get when a masculine noun is pasted into a feminine slot. The model is
+// told the term and told to inflect it.
+export const GLOSSARY = [
+  { en: 'record locator', es: 'localizador', fr: 'dossier (référence de réservation)' },
+  { en: 'booking', es: 'reserva', fr: 'réservation' },
+  { en: 'ticketing time limit', es: 'plazo de emisión', fr: "date limite d'émission" },
+  { en: 'issue (a ticket)', es: 'emitir', fr: 'émettre' },
+  { en: 'fare rules', es: 'condiciones de la tarifa', fr: 'conditions tarifaires' },
+  { en: 'fare basis', es: 'base tarifaria', fr: 'base tarifaire' },
+  { en: 'refund', es: 'reembolso', fr: 'remboursement' },
+  { en: 'exchange (reissue)', es: 'cambio (reemisión)', fr: 'échange (réémission)' },
+  { en: 'void', es: 'anulación (void)', fr: 'annulation (void)' },
+  { en: 'queue', es: 'cola', fr: 'queue' },
+  { en: 'validating carrier', es: 'compañía validadora', fr: 'compagnie émettrice' },
+  { en: 'segment', es: 'segmento', fr: 'segment' },
+  { en: 'waitlist', es: 'lista de espera', fr: "liste d'attente" },
+  { en: 'schedule change', es: 'cambio de horario', fr: "changement d'horaire" },
+  { en: 'package holiday', es: 'viaje combinado', fr: 'forfait touristique' },
+  { en: 'travel agency', es: 'agencia de viajes', fr: 'agence de voyages' },
+];
+
+function glossaryFor(targetLanguage) {
+  const lines = GLOSSARY.map((term) => `${term.en} = ${term[targetLanguage]}`);
+  return `TERMINOLOGY, as lemmas. Use these words for these things and inflect them for gender, number and person as the sentence needs. Never paste a term in verbatim where it does not agree.
+${lines.join('; ')}.`;
+}
+
+// What the model is told about the placeholders it will see when codes are
+// protected before the call (see protectCodes below).
+const PLACEHOLDERS = `Tokens of the form [[C1]], [[C2]] and so on are protected codes that were removed before you saw the text. Copy each one into the translation exactly as written, once, in the place the code belongs. Never translate, drop, renumber or invent one.`;
+
+export function translationPrompt(sourceLabel, targetLanguage, { placeholders = false } = {}) {
   const target = LANGUAGE_NAMES[targetLanguage];
   return `You are a translator working inside a travel agency. You are NOT an advisor and you do NOT answer, explain, comment on, summarise, improve or shorten anything. You render what you are given into ${target.english} (${target.native}) and nothing else.
 
 ${PRESERVE}
+${placeholders ? `\n${PLACEHOLDERS}\n` : ''}
+${glossaryFor(targetLanguage)}
 
 HOW TO RENDER
 - Produce ONLY the translation. No preamble, no "here is the translation", no notes, no quotation marks around it.
@@ -125,6 +161,76 @@ function maxTokens() {
   return Number.isFinite(value) && value > 0 ? value : 2000;
 }
 
+/** Whether codes are swapped for placeholders before the model sees them. On by default. */
+export function protectionEnabled() {
+  return (process.env.TRAVEL_VOICE_PROTECT_CODES || '').trim().toLowerCase() !== 'false';
+}
+
+/**
+ * Whether a Spanish-French translation goes through English. Off by
+ * default: it doubles the calls and the wait. It exists because a model's
+ * translation between two non-English languages measures lower than the
+ * same model's into and out of English, and for a pair where that shows,
+ * two good hops beat one weak one.
+ */
+export function pivotViaEnglish() {
+  return ['true', 'on', '1', 'yes'].includes((process.env.TRAVEL_VOICE_PIVOT_VIA_EN || '').trim().toLowerCase());
+}
+
+// --- protecting the codes ----------------------------------------------------
+
+// Which tokens are lifted out before translation: anything with a digit in
+// it (a locator, a flight number, a ticket, an entry like SS1Y2), and short
+// all-caps tokens (IATA codes, fare bases, entries like FXP). Longer all-caps
+// tokens are more likely to be a shouted word — URGENTE, GRACIAS — and a
+// shouted word wants translating.
+function shouldProtect(token) {
+  return /\d/.test(token) || token.length <= 5;
+}
+
+const PLACEHOLDER = /\[\[\s*C?(\d+)\s*\]\]/gi;
+
+/**
+ * Swaps every code for a numbered placeholder the translator is told to
+ * copy through. Returns the text to translate and the map to put it back.
+ *
+ * This is the boundary the whole cascade exists for. A native speech
+ * translation model has no such seam; here there is text on both sides of
+ * the model, and a locator that never enters the model cannot come out of
+ * it changed.
+ */
+export function protectCodes(text) {
+  const codes = codesIn(text).filter(shouldProtect);
+  const map = [];
+  let out = String(text || '');
+  codes.forEach((code, i) => {
+    const placeholder = `[[C${i + 1}]]`;
+    const pattern = new RegExp(`\\b${code.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'g');
+    if (pattern.test(out)) {
+      out = out.replace(pattern, placeholder);
+      map.push({ placeholder, code });
+    }
+  });
+  return { text: out, map };
+}
+
+/**
+ * Puts the codes back. Reports which placeholders the model lost, so the
+ * dropped-codes warning stays honest, and strips any it invented.
+ */
+export function restoreCodes(translated, map) {
+  const byIndex = new Map(map.map((entry, i) => [i + 1, entry.code]));
+  const seen = new Set();
+  const out = String(translated || '').replace(PLACEHOLDER, (m, n) => {
+    const index = Number(n);
+    if (!byIndex.has(index)) return '';
+    seen.add(index);
+    return byIndex.get(index);
+  });
+  const missing = map.filter((entry, i) => !seen.has(i + 1)).map((entry) => entry.code);
+  return { text: out.replace(/[ \t]{2,}/g, ' ').trim(), missing };
+}
+
 /**
  * Translates one message.
  *
@@ -138,33 +244,55 @@ function maxTokens() {
 export async function runTranslation({ anthropic, provider = null, text, target, source = null, brain }) {
   const to = normalizeLanguage(target) || DEFAULT_LANGUAGE;
   const from = normalizeLanguage(source);
-  const sourceLabel = from ? LANGUAGE_NAMES[from].english : null;
   const startedAt = Date.now();
 
-  const system = [
-    // The preserve rules are the same on every call, so they cache; the
-    // target language changes, so it sits in its own block after them.
-    { type: 'text', text: translationPrompt(sourceLabel, to), cache_control: { type: 'ephemeral' } },
-  ];
+  const protecting = protectionEnabled();
+  const protectedInput = protecting ? protectCodes(text) : { text: String(text), map: [] };
+  const usage = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
 
-  const response = await brain.create(
-    { model: brain.model(), max_tokens: maxTokens(), system, messages: [{ role: 'user', content: String(text) }] },
-    { anthropic }
-  );
+  async function hop(input, fromLang, toLang) {
+    const sourceLabel = fromLang ? LANGUAGE_NAMES[fromLang].english : null;
+    const system = [
+      // The preserve rules are the same on every call, so they cache; the
+      // target language changes, so it sits in its own block after them.
+      { type: 'text', text: translationPrompt(sourceLabel, toLang, { placeholders: protecting && protectedInput.map.length > 0 }), cache_control: { type: 'ephemeral' } },
+    ];
+    const response = await brain.create(
+      { model: brain.model(), max_tokens: maxTokens(), system, messages: [{ role: 'user', content: input }] },
+      { anthropic }
+    );
+    const u = response.usage || {};
+    for (const key of Object.keys(usage)) usage[key] += u[key] || 0;
+    return (response.content || [])
+      .filter((block) => block.type === 'text')
+      .map((block) => block.text)
+      .join('\n')
+      .trim();
+  }
 
-  const out = (response.content || [])
-    .filter((block) => block.type === 'text')
-    .map((block) => block.text)
-    .join('\n')
-    .trim();
+  // Two hops through English for a Spanish-French pair when asked; one
+  // hop otherwise. The placeholders ride through both.
+  const pivot = pivotViaEnglish() && from && from !== 'en' && to !== 'en' && from !== to;
+  let out;
+  if (pivot) {
+    const english = await hop(protectedInput.text, from, 'en');
+    out = await hop(english, 'en', to);
+  } else {
+    out = await hop(protectedInput.text, from, to);
+  }
+
+  const restored = protecting ? restoreCodes(out, protectedInput.map) : { text: out, missing: [] };
 
   return {
-    text: out,
+    text: restored.text,
     target: to,
     source: from,
-    usage: response.usage || {},
+    usage,
     provider: brain.id,
     model: brain.model(),
+    protectedCodes: protectedInput.map.map((entry) => entry.code),
+    lostPlaceholders: restored.missing,
+    pivot,
     ms: Date.now() - startedAt,
   };
 }
@@ -175,7 +303,10 @@ export async function runTranslation({ anthropic, provider = null, text, target,
 // airport code, a locator, a flight number, a price, a date. Deliberately
 // broad — a false positive costs one comparison, a false negative lets a
 // mistranslated locator reach an agent who acts on it.
-const CODE = /\b(?:[A-Z]{2,3}\d{1,4}[A-Z]?|[A-Z]{3,8}\*?\d*|\d{1,4}[A-Z]{2,6}|\d{3}-\d{6,})\b/g;
+// The first alternative is a six-character locator with at least one digit
+// in any position — X7K2PQ — which none of the letter-then-digit shapes
+// after it would catch.
+const CODE = /\b(?:(?=[A-Z0-9]{6}\b)(?=[A-Z0-9]*\d)[A-Z0-9]{6}|[A-Z]{2,3}\d{1,4}[A-Z]?|[A-Z]{3,8}\*?\d*|\d{1,4}[A-Z]{2,6}|\d{3}-\d{6,})\b/g;
 
 // Words that look like codes but are ordinary in the three languages, plus
 // the shouting people do in messages. Without this, "OK" and "PNR" get

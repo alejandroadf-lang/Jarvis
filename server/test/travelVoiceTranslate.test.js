@@ -286,3 +286,79 @@ test('a dropped code reaches the caller as a warning they can act on', async () 
   assert.ok(warning, 'the caller is told which reference went missing');
   assert.match(warning, /before you send it on/);
 });
+
+// --- protecting the codes -----------------------------------------------------
+
+test('codes are lifted out before the model sees them and put back after', () => {
+  const { text, map } = tr.protectCodes('Reserva ABC123 en IB3402 de MAD a CDG, tarifa ONNAZ. URGENTE por favor');
+  assert.equal(text, 'Reserva [[C1]] en [[C2]] de [[C3]] a [[C4]], tarifa [[C5]]. URGENTE por favor');
+  assert.deepEqual(map.map((m) => m.code), ['ABC123', 'IB3402', 'MAD', 'CDG', 'ONNAZ']);
+
+  const back = tr.restoreCodes('Booking [[C1]] on [[c2]] from [[ C3 ]] to [[C4]], fare [[C5]]. URGENT please', map);
+  assert.equal(back.text, 'Booking ABC123 on IB3402 from MAD to CDG, fare ONNAZ. URGENT please');
+  assert.deepEqual(back.missing, []);
+
+  const lost = tr.restoreCodes('Booking [[C1]] from [[C3]] to [[C4]], fare [[C5]] and [[C9]]', map);
+  assert.deepEqual(lost.missing, ['IB3402'], 'a placeholder the model dropped names the code it stood for');
+  assert.ok(!lost.text.includes('[[C9]]'), 'an invented placeholder is removed');
+});
+
+test('a translation goes through the model with placeholders and comes back with the codes', async () => {
+  const seen = [];
+  const brain = {
+    id: 'stub', model: () => 'stub-1', priceSpec: () => ({ inputPricePerMTok: 1, outputPricePerMTok: 1 }),
+    create: async (request) => {
+      seen.push(request);
+      const input = request.messages[0].content;
+      // A translator that copies placeholders and translates the words.
+      const text = input.replace('El localizador', 'The locator').replace('no valora', 'does not price').replace('en clase', 'in class');
+      return { content: [{ type: 'text', text }], usage: { input_tokens: 10, output_tokens: 5 } };
+    },
+  };
+  const done = await tr.runTranslation({ brain, text: 'El localizador X7K2PQ no valora en clase Y', target: 'en', source: 'es' });
+  assert.equal(seen[0].messages[0].content, 'El localizador [[C1]] no valora en clase Y', 'the model never saw the locator');
+  assert.match(seen[0].system[0].text, /protected codes/, 'and was told what the placeholders are');
+  assert.match(seen[0].system[0].text, /record locator = locator|TERMINOLOGY/, 'with the glossary');
+  assert.equal(done.text, 'The locator X7K2PQ does not price in class Y');
+  assert.deepEqual(done.protectedCodes, ['X7K2PQ']);
+  assert.deepEqual(done.lostPlaceholders, []);
+  assert.equal(done.pivot, false);
+  assert.deepEqual(tr.droppedCodes('El localizador X7K2PQ no valora en clase Y', done.text), []);
+});
+
+test('a Spanish-French translation pivots through English only when asked', async () => {
+  const hops = [];
+  const brain = {
+    id: 'stub', model: () => 'stub-1', priceSpec: () => ({ inputPricePerMTok: 1, outputPricePerMTok: 1 }),
+    create: async (request) => {
+      hops.push(request.system[0].text.match(/into (\w+)/)[1]);
+      return { content: [{ type: 'text', text: request.messages[0].content }], usage: { input_tokens: 10, output_tokens: 5 } };
+    },
+  };
+  await tr.runTranslation({ brain, text: 'Hola', target: 'fr', source: 'es' });
+  assert.deepEqual(hops, ['French']);
+
+  process.env.TRAVEL_VOICE_PIVOT_VIA_EN = 'true';
+  try {
+    hops.length = 0;
+    const done = await tr.runTranslation({ brain, text: 'Hola', target: 'fr', source: 'es' });
+    assert.deepEqual(hops, ['English', 'French']);
+    assert.equal(done.pivot, true);
+    assert.equal(done.usage.input_tokens, 20, 'both hops are metered');
+    hops.length = 0;
+    await tr.runTranslation({ brain, text: 'Hola', target: 'en', source: 'es' });
+    assert.deepEqual(hops, ['English'], 'into English needs no pivot');
+  } finally {
+    delete process.env.TRAVEL_VOICE_PIVOT_VIA_EN;
+  }
+});
+
+test('the glossary is given as lemmas to inflect, in the target language', () => {
+  const es = tr.translationPrompt('English', 'es');
+  assert.match(es, /record locator = localizador/);
+  assert.match(es, /inflect them for gender, number and person/);
+  const fr = tr.translationPrompt('English', 'fr');
+  assert.match(fr, /package holiday = forfait touristique/);
+  assert.ok(!fr.includes('[[C1]]'), 'placeholders are only explained when there are some');
+});
+

@@ -450,6 +450,8 @@ export async function runTranslateTurn({
     reply: done.text,
     translated: true,
     dropped,
+    protectedCodes: done.protectedCodes,
+    pivot: done.pivot,
     tooLong: check.tooLong,
     words: check.words,
     audio: speech ? { buffer: speech.buffer, mimeType: speech.mimeType, filename: speech.filename } : null,
@@ -621,6 +623,7 @@ export async function handleTravelVoiceMessage(message, { anthropic, phoneNumber
       providers: out.providers,
       timings: out.timings,
       ...(out.dropped.length ? { dropped: out.dropped } : {}),
+      ...(out.pivot ? { pivot: true } : {}),
       costUsd: out.costUsd,
       durationMs: Date.now() - startedAt,
     });
