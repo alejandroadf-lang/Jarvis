@@ -265,6 +265,14 @@ const STRINGS = {
     fr: 'Bonjour, je suis votre conseiller voyage. Je peux vous aider avec Amadeus, les tarifs, les réservations et tout sujet du secteur. Envoyez-moi un message vocal ou écrivez-moi.',
     en: "Hello, I'm your travel advisor. I can help with Amadeus, fares, bookings and anything in the industry. Send me a voice note or a message.",
   },
+  // A call cannot tell someone to send a voice note, and it has to hand
+  // the turn back explicitly — nobody knows when a machine has finished
+  // speaking unless it says so.
+  liveGreeting: {
+    es: 'Hola, soy tu asesor de viajes. Dime en qué puedo ayudarte.',
+    fr: 'Bonjour, je suis votre conseiller voyage. Dites-moi comment je peux vous aider.',
+    en: "Hello, I'm your travel advisor. Tell me how I can help.",
+  },
   emptyVoiceNote: {
     es: 'No he podido distinguir palabras en esa nota. ¿Puedes repetirla?',
     fr: "Je n'ai pas pu distinguer de mots dans ce message. Pouvez-vous le répéter ?",
