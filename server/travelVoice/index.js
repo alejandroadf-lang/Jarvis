@@ -33,6 +33,7 @@ import { transcribeWithLanguage, synthesizeSpeech, speakable, isSpeechConfigured
 import { isAmadeusConfigured, amadeusEnvironment } from './amadeus.js';
 import { describeProviders, hasProvider, resolveProvider } from './providers/index.js';
 import { checkReply } from './replyCheck.js';
+import { readBack } from './spoken.js';
 import { assertUnderDailyCap, recordSpend } from '../spend.js';
 import { priceUsage } from '../usage.js';
 import {
@@ -307,6 +308,11 @@ export async function runTravelVoiceTurn({
   const switched = requestedLanguageSwitch(transcript);
   const resolved = resolveLanguage({ chosen: switched || chosen, heard, text: transcript, previous });
   const history = sessionHistory(sessionId);
+  // A locator or ticket number heard in a voice note is read back before
+  // the answer, spelled in the caller's alphabet, so the one person who can
+  // catch a misheard letter gets the chance. A typed one needs no reading
+  // back: they can see what they typed.
+  const heardBack = audio ? readBack(transcript, resolved.language) : null;
 
   const turn = await runAdvisorTurn({ anthropic, provider: providers.llm, history, text: transcript, language: resolved.language });
   costUsd += turn.usage.costUsd;
@@ -325,7 +331,8 @@ export async function runTravelVoiceTurn({
   let audioError = null;
   if (wantAudio && turn.reply) {
     try {
-      speech = await synthesizeSpeech(speakable(turn.reply), { language: resolved.language, format: 'opus', provider: providers.tts });
+      const spokenReply = heardBack ? `${heardBack.spoken} ${turn.reply}` : turn.reply;
+      speech = await synthesizeSpeech(speakable(spokenReply, { language: resolved.language }), { language: resolved.language, format: 'opus', provider: providers.tts });
       costUsd += speech.costUsd;
       used.tts = speech.provider;
       timings.ttsMs = speech.ms;
@@ -339,6 +346,7 @@ export async function runTravelVoiceTurn({
     language: resolved.language,
     languageSource: switched ? 'switched' : resolved.source,
     reply: turn.reply,
+    readBack: heardBack,
     toolCalls: turn.toolCalls,
     audio: speech ? { buffer: speech.buffer, mimeType: speech.mimeType, filename: speech.filename } : null,
     audioError,
@@ -426,7 +434,7 @@ export async function runTranslateTurn({
   let audioError = null;
   if (wantAudio && done.text) {
     try {
-      speech = await synthesizeSpeech(speakable(done.text), { language: target, format: 'opus', provider: providers.tts });
+      speech = await synthesizeSpeech(speakable(done.text, { language: target }), { language: target, format: 'opus', provider: providers.tts });
       costUsd += speech.costUsd;
       used.tts = speech.provider;
       timings.ttsMs = speech.ms;
@@ -665,7 +673,11 @@ export async function handleTravelVoiceMessage(message, { anthropic, phoneNumber
     }
   }
   if (!spoke || textToo()) {
-    await send(result.reply || localized('answerFailed', result.language));
+    // The written twin: the answer with every code exactly as the model
+    // wrote it, and above it what was heard, so a wrong locator is visible
+    // as well as audible.
+    const written = result.reply || localized('answerFailed', result.language);
+    await send(result.readBack ? `${result.readBack.written}\n\n${written}` : written);
   }
 
   recordTurnLog({
@@ -681,6 +693,7 @@ export async function handleTravelVoiceMessage(message, { anthropic, phoneNumber
     toolCalls: result.toolCalls.map((t) => t.name),
     providers: result.providers,
     timings: result.timings,
+    ...(result.readBack ? { readBack: result.readBack.codes } : {}),
     // Only recorded when something was actually wrong with the answer, so a
     // scan down the log shows the bad turns rather than a column of nulls.
     ...(result.drift ? { drift: result.drift } : {}),

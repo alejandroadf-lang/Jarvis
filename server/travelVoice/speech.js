@@ -10,6 +10,7 @@
 import { assertUnderDailyCap, recordSpend } from '../spend.js';
 import { resolveProvider, hasProvider } from './providers/index.js';
 import { trimToSentence, spokenMaxWords } from './replyCheck.js';
+import { spokenForm } from './spoken.js';
 
 /** Whether the advisor can both hear and speak with what is configured. */
 export function isSpeechConfigured() {
@@ -84,12 +85,16 @@ export async function synthesizeSpeech(text, { language = 'en', format = 'opus',
  * alongside it carries the whole answer, so nothing the advisor said is lost
  * — it moves from the ear to the eye.
  *
+ * And when the language is known, the codes are spelled and the prices and
+ * dates said the way that language says them (see spoken.js) — the audio
+ * only; the written twin keeps every code exactly as the model wrote it.
+ *
  * @param {string} text
- * @param {{maxWords?: number}} [opts] maxWords of Infinity speaks it all,
- *   which is what the founder's own outreach message gets: their words, their
- *   call.
+ * @param {{maxWords?: number, language?: string}} [opts] maxWords of Infinity
+ *   speaks it all, which is what the founder's own outreach message gets:
+ *   their words, their call.
  */
-export function speakable(text, { maxWords = spokenMaxWords() } = {}) {
+export function speakable(text, { maxWords = spokenMaxWords(), language = null } = {}) {
   const cleaned = String(text || '')
     .replace(/```[\s\S]*?```/g, ' ')
     .replace(/[*_#>`]+/g, '')
@@ -99,7 +104,8 @@ export function speakable(text, { maxWords = spokenMaxWords() } = {}) {
     .replace(/[ \t]+/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
-  return Number.isFinite(maxWords) ? trimToSentence(cleaned, maxWords) : cleaned;
+  const spoken = language ? spokenForm(cleaned, language) : cleaned;
+  return Number.isFinite(maxWords) ? trimToSentence(spoken, maxWords) : spoken;
 }
 
 // Kept for the Integrations panel and status, which name the active voice.

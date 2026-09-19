@@ -1248,6 +1248,7 @@ app.post('/api/travel-voice/turn', audioBody, async (req, res) => {
       language: result.language,
       languageSource: result.languageSource,
       reply: result.reply,
+      readBack: result.readBack,
       toolCalls: result.toolCalls,
       audio: result.audio ? result.audio.buffer.toString('base64') : null,
       audioMimeType: result.audio ? result.audio.mimeType : null,

@@ -219,6 +219,30 @@ test('a WhatsApp voice note is answered with a voice note in the same language, 
   assert.ok(Number.isFinite(logged.timings.sttMs) && Number.isFinite(logged.timings.llmMs) && Number.isFinite(logged.timings.ttsMs));
 });
 
+test('a locator heard in a voice note is read back, spelled aloud and written as heard', async () => {
+  const outside = stubOutside({ transcript: 'No me valora el localizador X7K2PQ', heard: 'spanish' });
+  const anthropic = stubAnthropic('Pruebe FXP y revise el TST con TQT.');
+
+  await tv.handleTravelVoiceMessage(
+    { id: 'wamid.rb', from: '34600111222', type: 'audio', text: '', mediaId: 'media-1', phoneNumberId: '222' },
+    { anthropic, phoneNumberId: '222' }
+  );
+
+  // The audio: the read-back in the Spanish spelling alphabet, then the
+  // answer with its entries spelled letter by letter.
+  const spoken = JSON.parse(outside.find((c) => c.url.includes('/audio/speech')).init.body).input;
+  assert.match(spoken, /^He entendido: Localizador X de Xiquena, 7, K de Kilo, 2, P de París, Q de Querido\./);
+  assert.match(spoken, /F-X-P/);
+  assert.match(spoken, /T-Q-T/);
+
+  // The text: the code exactly as heard, then the answer exactly as written.
+  const [, text] = sends(outside);
+  assert.equal(text.text.body, 'He entendido — Localizador: X7K2PQ\n\nPruebe FXP y revise el TST con TQT.');
+
+  const [logged] = tv.recentTravelVoiceTurns();
+  assert.deepEqual(logged.readBack, ['X7K2PQ']);
+});
+
 test('a turn can name its ears, brain and voice, and reports which answered', async () => {
   process.env.ELEVENLABS_API_KEY = 'el';
   process.env.DEEPGRAM_API_KEY = 'dg';
