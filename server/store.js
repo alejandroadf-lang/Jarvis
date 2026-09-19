@@ -28,6 +28,13 @@ function ensureDataDir(dir) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 }
 
+/** The absolute path a data file lives at, for the few things that are not JSON. */
+export function dataPath(file) {
+  const dir = dataDir();
+  ensureDataDir(dir);
+  return path.join(dir, file);
+}
+
 export function readJson(file, fallback) {
   const dir = dataDir();
   ensureDataDir(dir);

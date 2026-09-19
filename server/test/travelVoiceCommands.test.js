@@ -459,3 +459,15 @@ test('the handoff commands parse a number and, for SAY, the message after it', (
   assert.equal(parse('travel say hello there'), null, 'no number, no command');
 });
 
+test('the metrics, review and sweep commands parse', () => {
+  assert.deepEqual(parse('TRAVEL METRICS'), { kind: 'metrics', days: 7 });
+  assert.deepEqual(parse('travel stats 30'), { kind: 'metrics', days: 30 });
+  assert.deepEqual(parse('TRAVEL REVIEW'), { kind: 'review', count: 3 });
+  assert.deepEqual(parse('travel review 5'), { kind: 'review', count: 5 });
+  assert.deepEqual(parse('TRAVEL REVIEWED rabc12 ok'), { kind: 'reviewed', id: 'rabc12', verdict: 'ok', note: '' });
+  assert.deepEqual(parse('travel reviewed rabc12 bad wrong category'), { kind: 'reviewed', id: 'rabc12', verdict: 'bad', note: 'wrong category' });
+  assert.deepEqual(parse('TRAVEL SWEEP'), { kind: 'sweep' });
+  assert.deepEqual(parse('TRAVEL CAP 2.5'), { kind: 'set', setting: 'cap', value: '2.5' });
+  assert.deepEqual(parse('TRAVEL SAMPLE 10'), { kind: 'set', setting: 'sample', value: '10' });
+});
+

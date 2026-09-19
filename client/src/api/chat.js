@@ -284,6 +284,12 @@ export async function fetchTravelVoiceStatus() {
   return data;
 }
 
+
+export async function fetchTravelVoiceMetrics(days = 7) {
+  const { data } = await axios.get('/api/travel-voice/metrics', { params: { days } });
+  return data;
+}
+
 // `providers` names the ears, brain and voice for this one turn ({ stt, llm,
 // tts }, each a provider id or blank for the deployment default). The server
 // refuses a named provider that has no key rather than swapping it, so a

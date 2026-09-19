@@ -126,6 +126,28 @@ export const SETTINGS = {
       return v;
     },
   },
+  cap: {
+    label: 'cap',
+    help: 'dollars one conversation may spend in a day',
+    envName: 'TRAVEL_VOICE_SESSION_CAP_USD',
+    fallback: 1,
+    parse: (value) => {
+      const n = Number(String(value).trim().replace(/^\$/, ''));
+      if (!Number.isFinite(n) || n <= 0 || n > 100) throw new Error('needs a dollar amount between 0.01 and 100');
+      return n;
+    },
+  },
+  sample: {
+    label: 'sample',
+    help: 'percent of answered turns copied for a person to review, 0 to 100',
+    envName: 'TRAVEL_VOICE_REVIEW_SAMPLE_PCT',
+    fallback: 3,
+    parse: (value) => {
+      const n = Number(String(value).trim().replace(/%$/, ''));
+      if (!Number.isFinite(n) || n < 0 || n > 100) throw new Error('needs a percentage between 0 and 100');
+      return n;
+    },
+  },
   limit: {
     label: 'limit',
     help: 'how many questions one caller may ask per hour',

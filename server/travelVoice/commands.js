@@ -54,13 +54,17 @@ const COMMANDS = [
   // "set" is optional: "travel length 90" reads better on a phone than
   // "travel set length 90", and both should work.
   { kind: 'consents', re: /^travel\s+consents$/i },
+  { kind: 'metrics', re: /^travel\s+(?:metrics|numbers|stats)(?:\s+(\d{1,3}))?$/i },
+  { kind: 'review', re: /^travel\s+review(?:\s+(\d{1,2}))?$/i },
+  { kind: 'reviewed', re: /^travel\s+reviewed\s+(r[a-z0-9]+)\s+(ok|good|bad|wrong)(?:\s+([\s\S]+))?$/i },
+  { kind: 'sweep', re: /^travel\s+(?:sweep|retention)$/i },
   { kind: 'handoffs', re: /^travel\s+(?:handoffs|escalations|humans?)$/i },
   // The number is greedy and ends on a digit, so "+34 600 111 222 Le llamo"
   // splits after the last digit rather than after the first six.
   { kind: 'say', re: /^travel\s+say\s+(\+?[\d\s()-]{5,}\d)\s*[:—-]?\s+(\S[\s\S]*)$/i },
   { kind: 'take', re: /^travel\s+(?:take|takeover)\s+(\+?[\d\s()-]{6,})$/i },
   { kind: 'resume', re: /^travel\s+(?:resume|release|handback)\s+(\+?[\d\s()-]{6,})$/i },
-  { kind: 'set', re: /^travel\s+(?:set\s+)?(voice|voiceid|language|lang|idioma|langue|length|words|effort|thinking|model|text|retry|limit|rate|tier|consent)\s+(.+)$/i },
+  { kind: 'set', re: /^travel\s+(?:set\s+)?(voice|voiceid|language|lang|idioma|langue|length|words|effort|thinking|model|text|retry|limit|rate|tier|consent|cap|sample)\s+(.+)$/i },
   { kind: 'guests', re: /^travel\s+guests$/i },
   { kind: 'guest_remove', re: /^travel\s+(?:guest\s+)?remove\s+(\+?[\d\s()-]{6,})$/i },
   { kind: 'guest_clear', re: /^travel\s+guests\s+clear$/i },
@@ -85,6 +89,9 @@ export function parseTravelCommand(text) {
     if (kind === 'invite') return { kind, number: match[1].trim(), language: normalizeLanguage(match[2]) };
     if (kind === 'guest_remove') return { kind, number: match[1].trim() };
     if (kind === 'say') return { kind, number: match[1].trim(), text: match[2].trim() };
+    if (kind === 'metrics') return { kind, days: match[1] ? Number(match[1]) : 7 };
+    if (kind === 'review') return { kind, count: match[1] ? Number(match[1]) : 3 };
+    if (kind === 'reviewed') return { kind, id: match[1], verdict: /^(ok|good)$/i.test(match[2]) ? 'ok' : 'bad', note: (match[3] || '').trim() };
     if (kind === 'take' || kind === 'resume') return { kind, number: match[1].trim() };
     return { kind };
   }
@@ -97,6 +104,10 @@ TRAVEL STATUS — what is live, and today's spend
 TRAVEL ON / OFF — talk to the advisor from this line, or stop
 TRAVEL INVITE <number> [es|fr|en] — let someone try it, and send them a spoken hello
 TRAVEL GUESTS — who is invited
+TRAVEL METRICS [days] — per language: answers, cost, wrong language, ungrounded, codes, handoffs; cost per resolved conversation
+TRAVEL REVIEW [n] — the next sampled conversations for you to read
+TRAVEL REVIEWED <id> ok|bad [note] — your verdict on one
+TRAVEL SWEEP — apply the retention clocks now
 TRAVEL HANDOFFS — conversations waiting for a person
 TRAVEL SAY <number> <message> — answer a caller yourself, from the advisor's number
 TRAVEL TAKE <number> — take a conversation over; the advisor goes quiet on it
@@ -171,6 +182,9 @@ export async function runTravelCommand(command, deps = {}) {
     localized: t,
     maskNumber = (n) => n,
     handoffs = null,
+    metrics = null,
+    review = null,
+    sweep = null,
   } = deps;
 
   switch (command.kind) {
@@ -278,6 +292,51 @@ export async function runTravelCommand(command, deps = {}) {
       setSetting(command.setting, parsed, scope);
       const where = scope ? ` for ${scope}` : '';
       return `${spec.label}${where}: ${format(parsed)}. Takes effect on the next message.`;
+    }
+
+    case 'metrics': {
+      if (!metrics) return 'Metrics are unavailable here.';
+      const m = metrics(command.days);
+      const pct = (v) => (v === null || v === undefined ? '—' : `${Math.round(v * 100)}%`);
+      const usd = (v) => (v === null || v === undefined ? '—' : formatUsd(v));
+      const line = (name, b) =>
+        `${name}: ${b.answered} answered (${b.voice} voice), ${usd(b.costPerAnswer)}/answer, ${b.avgLatencyMs ? `${(b.avgLatencyMs / 1000).toFixed(1)}s` : '—'}, wrong language ${pct(b.wrongLanguageRate)}, ungrounded ${pct(b.ungroundedRate)}, codes flagged ${pct(b.entityIssueRate)}, handoffs ${b.handoffs}, failed ${b.failed}`;
+      return [
+        `Last ${m.days} days — ${m.conversations} conversations, ${m.resolvedConversations} resolved, ${usd(m.costPerResolvedConversation)} per resolved conversation, ${formatUsd(m.total.costUsd)} in all.`,
+        line('es', m.languages.es),
+        line('fr', m.languages.fr),
+        line('en', m.languages.en),
+        `review: ${m.reviewQueue} waiting for you, ${m.reviewed} done. TRAVEL REVIEW reads the next.`,
+      ].join('\n');
+    }
+
+    case 'review': {
+      if (!review) return 'Review is unavailable here.';
+      const items = review.queue(command.count);
+      if (!items.length) return 'Nothing waiting for review. The sample rate is TRAVEL SAMPLE <percent>.';
+      return items
+        .map((item) => {
+          const flags = Object.keys(item.flags || {});
+          return [
+            `${item.id} · ${item.at.slice(0, 16).replace('T', ' ')} · ${item.language || '?'}${item.voice ? ' · voice' : ''}${flags.length ? ` · flags: ${flags.join(', ')}` : ''}`,
+            `Q: ${item.transcript.slice(0, 300)}`,
+            `A: ${item.reply.slice(0, 500)}`,
+          ].join('\n');
+        })
+        .concat([`Reply TRAVEL REVIEWED <id> ok|bad [note].`])
+        .join('\n\n');
+    }
+
+    case 'reviewed': {
+      if (!review) return 'Review is unavailable here.';
+      const done = review.mark(command.id, command.verdict, command.note);
+      return done ? `${command.id}: ${command.verdict}${command.note ? ` — ${command.note}` : ''}. Recorded.` : `No sampled turn ${command.id} is waiting.`;
+    }
+
+    case 'sweep': {
+      if (!sweep) return 'The sweep is unavailable here.';
+      const removed = sweep();
+      return `Retention applied: ${removed.conversations} conversations, ${removed.reviewItems} review items and ${removed.auditLines} audit lines removed.`;
     }
 
     case 'handoffs': {

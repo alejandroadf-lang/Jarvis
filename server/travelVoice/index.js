@@ -20,7 +20,7 @@
 // cap as everything else. A helpdesk nobody can ring is not a helpdesk.
 
 import { readJson, writeJson } from '../store.js';
-import { loadSessions, saveSession, trimHistory } from '../sessionStore.js';
+import { loadSessions, saveSession, deleteSession, trimHistory } from '../sessionStore.js';
 import { createVenture, listVentures } from '../finance/ventures.js';
 import {
   downloadMedia,
@@ -49,7 +49,21 @@ import {
   consentAnswer,
   parseConsentReply,
   isForgetRequest,
+  consentState,
 } from './consent.js';
+import {
+  recordAudit,
+  callerKey,
+  maybeSample,
+  sessionUnderCap,
+  sessionCapUsd,
+  recordSessionSpend,
+  sweepRetention,
+  metrics as auditMetrics,
+  reviewQueue,
+  markReviewed,
+  retentionDays,
+} from './audit.js';
 import {
   escalationNumbers,
   isHandoffRequest,
@@ -195,10 +209,11 @@ export function admitTurn(callerKey, now = Date.now()) {
 // --- state: languages, advisor mode, log ------------------------------------
 
 function loadState() {
-  const data = readJson(STATE_FILE, { languages: {}, advisorMode: {}, log: [] });
+  const data = readJson(STATE_FILE, { languages: {}, advisorMode: {}, log: [], lastSeen: {} });
   if (!data.languages) data.languages = {};
   if (!data.advisorMode) data.advisorMode = {};
   if (!Array.isArray(data.log)) data.log = [];
+  if (!data.lastSeen) data.lastSeen = {};
   return data;
 }
 
@@ -209,6 +224,9 @@ function saveState(data) {
 function rememberLanguage(sessionId, language) {
   const data = loadState();
   data.languages[sessionId] = language;
+  // When this conversation was last alive: the clock the retention sweep
+  // reads. A conversation nobody has touched in six months is forgotten.
+  data.lastSeen[sessionId] = new Date().toISOString();
   saveState(data);
 }
 
@@ -251,15 +269,33 @@ export function maskNumber(number) {
   return `…${digits.slice(-4)}`;
 }
 
+// What every log line carries about the caller: the masked number for the
+// founder's eye, the salted hash for the audit trail, and the consent
+// state at the moment of the turn — so the trail can show that a voice
+// note was processed only after the tap, not merely that a tap exists.
+function turnMeta(number) {
+  const state = consentState(number);
+  return {
+    caller: callerKey(number),
+    from: maskNumber(number),
+    consent: state?.consent || null,
+    disclosed: Boolean(state?.disclosedAt),
+  };
+}
+
 function recordTurnLog(entry) {
+  const at = new Date().toISOString();
   try {
     const data = loadState();
-    data.log.push({ at: new Date().toISOString(), ...entry });
+    data.log.push({ at, ...entry });
     if (data.log.length > MAX_LOG) data.log = data.log.slice(-MAX_LOG);
     saveState(data);
   } catch (err) {
     console.error('Travel voice: could not record a turn:', err.message);
   }
+  // The trail keeps everything but the words, for years; the log above
+  // keeps the last hundred with a preview, for the founder's phone.
+  recordAudit({ at, kind: 'turn', ...entry });
 }
 
 export function recentTravelVoiceTurns(limit = 50) {
@@ -375,7 +411,7 @@ export async function runTravelVoiceTurn({
   // Whether the brain answered in the language it was told to, and how long
   // it ran on. Carried out of the turn because it is the evidence behind
   // "this model cannot be trusted on a Spanish line" — see replyCheck.js.
-  const quality = { drift: turn.drift, grounding: turn.grounding, amounts: turn.amounts, handoff: turn.handoff, words: turn.words, tooLong: turn.tooLong };
+  const quality = { drift: turn.drift, grounding: turn.grounding, amounts: turn.amounts, handoff: turn.handoff, promptVersion: turn.promptVersion, words: turn.words, tooLong: turn.tooLong };
 
   const trimmed = trimHistory(turn.messages);
   saveSession(SESSION_KIND, sessionId, trimmed);
@@ -570,13 +606,13 @@ export async function handleTravelVoiceMessage(message, { anthropic, phoneNumber
   const tapped = parseConsentReply(message.buttonReply);
   if (tapped) {
     recordConsent(from, { granted: tapped.granted, messageId: message.id, buttonId: message.buttonReply.id });
-    recordTurnLog({ channel: 'whatsapp', from: maskNumber(from), stage: 'consent', language: previous, detail: tapped.granted ? 'granted' : 'declined' });
+    recordTurnLog({ channel: 'whatsapp', ...turnMeta(from), stage: 'consent', language: previous, detail: tapped.granted ? 'granted' : 'declined' });
     await send(consentAnswer(tapped.granted ? 'granted' : 'declined', previous));
     return { stage: 'consent', granted: tapped.granted };
   }
 
   if (!admitTurn(sessionId)) {
-    recordTurnLog({ channel: 'whatsapp', from: maskNumber(from), stage: 'rate_limited', language: previous });
+    recordTurnLog({ channel: 'whatsapp', ...turnMeta(from), stage: 'rate_limited', language: previous });
     await send(localized('rateLimited', previous));
     return { stage: 'rate_limited' };
   }
@@ -587,7 +623,7 @@ export async function handleTravelVoiceMessage(message, { anthropic, phoneNumber
     forgetConsent(from);
     resetTravelVoiceSession(sessionId);
     clearMode(sessionId);
-    recordTurnLog({ channel: 'whatsapp', from: maskNumber(from), stage: 'forgotten', language: previous });
+    recordTurnLog({ channel: 'whatsapp', ...turnMeta(from), stage: 'forgotten', language: previous });
     await send(consentAnswer('forgotten', previous));
     return { stage: 'forgotten' };
   }
@@ -601,7 +637,7 @@ export async function handleTravelVoiceMessage(message, { anthropic, phoneNumber
   // until it has been given; text is answered meanwhile.
   if (isVoiceNote(message) && !voiceAllowed(from)) {
     if (!firstContact) await send(consentAnswer('needed', previous));
-    recordTurnLog({ channel: 'whatsapp', from: maskNumber(from), stage: 'consent_required', language: previous });
+    recordTurnLog({ channel: 'whatsapp', ...turnMeta(from), stage: 'consent_required', language: previous });
     return { stage: 'consent_required' };
   }
 
@@ -609,7 +645,7 @@ export async function handleTravelVoiceMessage(message, { anthropic, phoneNumber
   let filename = 'voice.ogg';
   if (isVoiceNote(message) && message.mediaId) {
     if (!canHear()) {
-      recordTurnLog({ channel: 'whatsapp', from: maskNumber(from), stage: 'unsupported_type', language: previous, detail: 'voice note with no speech-to-text provider configured' });
+      recordTurnLog({ channel: 'whatsapp', ...turnMeta(from), stage: 'unsupported_type', language: previous, detail: 'voice note with no speech-to-text provider configured' });
       await send(localized('unsupportedType', previous));
       return { stage: 'unsupported_type' };
     }
@@ -618,12 +654,12 @@ export async function handleTravelVoiceMessage(message, { anthropic, phoneNumber
       audio = media.buffer;
       filename = media.filename;
     } catch (err) {
-      recordTurnLog({ channel: 'whatsapp', from: maskNumber(from), stage: 'failed', language: previous, detail: err.message });
+      recordTurnLog({ channel: 'whatsapp', ...turnMeta(from), stage: 'failed', language: previous, detail: err.message });
       await send(localized('transcriptionFailed', previous));
       return { stage: 'failed', error: err.message };
     }
   } else if (!message.text?.trim()) {
-    recordTurnLog({ channel: 'whatsapp', from: maskNumber(from), stage: 'unsupported_type', language: previous, detail: `type: ${message.type}` });
+    recordTurnLog({ channel: 'whatsapp', ...turnMeta(from), stage: 'unsupported_type', language: previous, detail: `type: ${message.type}` });
     await send(localized('unsupportedType', previous));
     return { stage: 'unsupported_type' };
   }
@@ -646,7 +682,7 @@ export async function handleTravelVoiceMessage(message, { anthropic, phoneNumber
     }
     recordForwarded(from, { text: said, voice });
     await notifyEscalation(`Caller +${normalizeNumber(from)}${voice ? ' (voice note)' : ''}: ${said || '(empty)'}`, { phoneNumberId });
-    recordTurnLog({ channel: 'whatsapp', from: maskNumber(from), stage: 'handoff_forwarded', language: previous, voice, transcript: said.slice(0, PREVIEW_CHARS) });
+    recordTurnLog({ channel: 'whatsapp', ...turnMeta(from), stage: 'handoff_forwarded', language: previous, voice, transcript: said.slice(0, PREVIEW_CHARS) });
     await send(handoffText('waiting', previous));
     return { stage: 'handoff_forwarded' };
   }
@@ -685,10 +721,19 @@ export async function handleTravelVoiceMessage(message, { anthropic, phoneNumber
         setMode(sessionId, { pair: command.pair });
         reply = replyFor('on_pair', lang, command.pair.map((l) => LANGUAGE_NAMES[l].native).join(' ↔ '));
       }
-      recordTurnLog({ channel: 'whatsapp', from: maskNumber(from), stage: 'translate_mode', language: lang, detail: command.kind });
+      recordTurnLog({ channel: 'whatsapp', ...turnMeta(from), stage: 'translate_mode', language: lang, detail: command.kind });
       await send(reply);
       return { stage: 'translate_mode', mode: command.kind };
     }
+  }
+
+  // One conversation may not spend more than its share of a day. The daily
+  // cap protects the bill from everyone at once; this protects it from one
+  // caller who found the number, and tells them so rather than going quiet.
+  if (!sessionUnderCap(sessionId)) {
+    recordTurnLog({ channel: 'whatsapp', ...turnMeta(from), stage: 'session_cap', language: previous, capUsd: sessionCapUsd() });
+    await send(localized('sessionCapReached', previous));
+    return { stage: 'session_cap' };
   }
 
   // In translation mode the advisor steps aside entirely. An advisor that
@@ -708,7 +753,7 @@ export async function handleTravelVoiceMessage(message, { anthropic, phoneNumber
         mode: translating,
       });
     } catch (err) {
-      recordTurnLog({ channel: 'whatsapp', from: maskNumber(from), stage: 'failed', language: previous, detail: `translate: ${err.message}` });
+      recordTurnLog({ channel: 'whatsapp', ...turnMeta(from), stage: 'failed', language: previous, detail: `translate: ${err.message}` });
       await send(localized('answerFailed', previous));
       return { stage: 'failed', error: err.message };
     }
@@ -734,9 +779,10 @@ export async function handleTravelVoiceMessage(message, { anthropic, phoneNumber
       await send(`⚠ Check these before you send it on: ${out.dropped.join(', ')}. They were in what you said and are not in the translation.`);
     }
 
+    recordSessionSpend(sessionId, out.costUsd);
     recordTurnLog({
       channel: 'whatsapp',
-      from: maskNumber(from),
+      ...turnMeta(from),
       stage: 'translated',
       language: out.language,
       source: out.source,
@@ -761,7 +807,7 @@ export async function handleTravelVoiceMessage(message, { anthropic, phoneNumber
   if (!audio && isBareGreeting(message.text)) {
     const lang = resolveLanguage({ text: message.text, previous: rememberedLanguage(sessionId) }).language;
     rememberLanguage(sessionId, lang);
-    recordTurnLog({ channel: 'whatsapp', from: maskNumber(from), stage: 'greeted', language: lang });
+    recordTurnLog({ channel: 'whatsapp', ...turnMeta(from), stage: 'greeted', language: lang });
     await send(localized('greeting', lang));
     return { stage: 'greeted', language: lang };
   }
@@ -778,13 +824,13 @@ export async function handleTravelVoiceMessage(message, { anthropic, phoneNumber
       wantAudio: Boolean(audio) && canSpeak(),
     });
   } catch (err) {
-    recordTurnLog({ channel: 'whatsapp', from: maskNumber(from), stage: 'failed', language: previous, detail: err.message, durationMs: Date.now() - startedAt });
+    recordTurnLog({ channel: 'whatsapp', ...turnMeta(from), stage: 'failed', language: previous, detail: err.message, durationMs: Date.now() - startedAt });
     await send(localized('answerFailed', previous));
     return { stage: 'failed', error: err.message };
   }
 
   if (result.empty) {
-    recordTurnLog({ channel: 'whatsapp', from: maskNumber(from), stage: 'empty', language: result.language });
+    recordTurnLog({ channel: 'whatsapp', ...turnMeta(from), stage: 'empty', language: result.language });
     await send(localized('emptyVoiceNote', result.language));
     return { stage: 'empty' };
   }
@@ -822,9 +868,27 @@ export async function handleTravelVoiceMessage(message, { anthropic, phoneNumber
     });
   }
 
+  recordSessionSpend(sessionId, result.costUsd);
+  // A few per cent of answered turns, words included, for a person to read.
+  maybeSample({
+    from,
+    language: result.language,
+    voice: Boolean(audio),
+    providers: result.providers,
+    model: result.model,
+    transcript: result.transcript,
+    reply: result.reply,
+    flags: {
+      ...(result.drift ? { drift: result.drift } : {}),
+      ...(result.grounding ? { grounding: result.grounding } : {}),
+      ...(result.readBack ? { readBack: result.readBack.codes } : {}),
+      ...(result.shortClip ? { shortClip: true } : {}),
+      ...(handoff ? { handoff: handoff.reason } : {}),
+    },
+  });
   recordTurnLog({
     channel: 'whatsapp',
-    from: maskNumber(from),
+    ...turnMeta(from),
     stage: 'answered',
     language: result.language,
     languageSource: result.languageSource,
@@ -834,6 +898,8 @@ export async function handleTravelVoiceMessage(message, { anthropic, phoneNumber
     reply: (result.reply || '').slice(0, PREVIEW_CHARS),
     toolCalls: result.toolCalls.map((t) => t.name),
     providers: result.providers,
+    model: result.model,
+    promptVersion: result.promptVersion,
     timings: result.timings,
     ...(result.readBack ? { readBack: result.readBack.codes } : {}),
     ...(result.shortClip ? { shortClip: true, durationSeconds: result.durationSeconds } : {}),
@@ -876,7 +942,7 @@ async function notifyEscalation(text, { phoneNumberId = null } = {}) {
 async function openHandoffAndTell(from, { by, reason, language, transcript, phoneNumberId, send }) {
   const entry = openHandoffFor(from, { by, reason, language, transcript });
   const reached = await notifyEscalation(notificationFor(entry, { from }), { phoneNumberId });
-  recordTurnLog({ channel: 'whatsapp', from: maskNumber(from), stage: 'handoff_opened', language, detail: `${by}: ${reason || ''}`.trim(), notified: reached.length });
+  recordTurnLog({ channel: 'whatsapp', ...turnMeta(from), stage: 'handoff_opened', language, detail: `${by}: ${reason || ''}`.trim(), notified: reached.length });
   await send(handoffText('opened', language));
   return { entry, reached };
 }
@@ -893,7 +959,7 @@ export async function sayAsHuman(number, text, { by, phoneNumberId = null } = {}
   // already: a person who answers is a person in charge.
   if (!isEscalated(digits)) openHandoffFor(digits, { by: 'founder', reason: 'A person answered.', language: rememberedLanguage(`whatsapp-${digits}`) });
   recordSaid(digits, { text: words, by });
-  recordTurnLog({ channel: 'whatsapp', from: maskNumber(digits), stage: 'handoff_said', language: rememberedLanguage(`whatsapp-${digits}`), reply: words.slice(0, PREVIEW_CHARS) });
+  recordTurnLog({ channel: 'whatsapp', ...turnMeta(digits), stage: 'handoff_said', language: rememberedLanguage(`whatsapp-${digits}`), reply: words.slice(0, PREVIEW_CHARS) });
   return { number: digits };
 }
 
@@ -904,7 +970,7 @@ export async function takeOver(number, { by, reason = 'Taken by a person.', phon
   const language = rememberedLanguage(`whatsapp-${digits}`) || languageFromNumber(digits) || DEFAULT_LANGUAGE;
   const from = travelVoicePhoneNumberId() || phoneNumberId || process.env.WHATSAPP_PHONE_NUMBER_ID;
   const entry = openHandoffFor(digits, { by: 'founder', reason, language });
-  recordTurnLog({ channel: 'whatsapp', from: maskNumber(digits), stage: 'handoff_opened', language, detail: `founder: ${reason}` });
+  recordTurnLog({ channel: 'whatsapp', ...turnMeta(digits), stage: 'handoff_opened', language, detail: `founder: ${reason}` });
   await sendWhatsAppMessage(digits, handoffText('opened', language), { phoneNumberId: from }).catch((err) =>
     console.warn(`Travel voice: could not tell ${maskNumber(digits)} a person took over: ${err.message}`)
   );
@@ -918,7 +984,7 @@ export async function resumeAdvisor(number, { by, phoneNumberId = null } = {}) {
   if (!closed) return null;
   const language = closed.language || rememberedLanguage(`whatsapp-${digits}`) || DEFAULT_LANGUAGE;
   const from = travelVoicePhoneNumberId() || phoneNumberId || process.env.WHATSAPP_PHONE_NUMBER_ID;
-  recordTurnLog({ channel: 'whatsapp', from: maskNumber(digits), stage: 'handoff_resumed', language });
+  recordTurnLog({ channel: 'whatsapp', ...turnMeta(digits), stage: 'handoff_resumed', language });
   await sendWhatsAppMessage(digits, handoffText('resumed', language), { phoneNumberId: from }).catch((err) =>
     console.warn(`Travel voice: could not tell ${maskNumber(digits)} the advisor is back: ${err.message}`)
   );
@@ -947,7 +1013,7 @@ export async function discloseTo(number, { language = DEFAULT_LANGUAGE, phoneNum
   const sent = await sendWhatsAppPayload(number, disclosurePayload(lang), { phoneNumberId });
   const messageId = sent?.messages?.[0]?.id || null;
   recordDisclosure(number, { language: lang, messageId, spoken: spoke });
-  recordTurnLog({ channel: 'whatsapp', from: maskNumber(number), stage: 'disclosed', language: lang, spoke, detail: consentMode() });
+  recordTurnLog({ channel: 'whatsapp', ...turnMeta(number), stage: 'disclosed', language: lang, spoke, detail: consentMode() });
   return { spoke, messageId };
 }
 
@@ -1002,7 +1068,7 @@ export async function startTravelVoiceOutreach(to, { phoneNumberId, language = D
     outcome.callId = callId;
   }
 
-  recordTurnLog({ channel: 'whatsapp', from: maskNumber(number), stage: 'outreach', language: lang, spoke: outcome.spoke, called: outcome.called });
+  recordTurnLog({ channel: 'whatsapp', ...turnMeta(number), stage: 'outreach', language: lang, spoke: outcome.spoke, called: outcome.called });
   return outcome;
 }
 
@@ -1064,7 +1130,7 @@ export async function inviteGuest(number, { language = null, phoneNumberId = nul
   // So their first real message is answered in the language they were
   // invited in, before anything has been heard from them.
   rememberLanguage(`whatsapp-${digits}`, lang);
-  recordTurnLog({ channel: 'whatsapp', from: maskNumber(digits), stage: 'invited', language: lang, spoke, detail: error || undefined });
+  recordTurnLog({ channel: 'whatsapp', ...turnMeta(digits), stage: 'invited', language: lang, spoke, detail: error || undefined });
   return { number: digits, language: lang, spoke, delivered, error };
 }
 
@@ -1083,6 +1149,9 @@ export function runTravelVoiceCommand(command, { from, phoneNumberId = null } = 
     inviteGuest: (number, opts) => inviteGuest(number, { ...opts, phoneNumberId }),
     localized,
     maskNumber,
+    metrics: (days) => auditMetrics({ days }),
+    review: { queue: reviewQueue, mark: (id, verdict, note) => markReviewed(id, { verdict, note, by: from }) },
+    sweep: () => runRetentionSweep(),
     handoffs: {
       list: listOpenHandoffs,
       recent: recentHandoffEvents,
@@ -1093,6 +1162,65 @@ export function runTravelVoiceCommand(command, { from, phoneNumberId = null } = 
     },
   });
 }
+
+// --- retention, review and the numbers --------------------------------------------
+
+/**
+ * Forgets what is older than the retention period: the turn log's
+ * previews, and every conversation nobody has touched since. The audit
+ * trail and the review queue have their own clocks in audit.js.
+ */
+function sweepConversations(cutoffMs) {
+  const data = loadState();
+  const before = data.log.length;
+  data.log = data.log.filter((entry) => Date.parse(entry.at) >= cutoffMs);
+  let removed = before - data.log.length;
+  const sessions = loadSessions(SESSION_KIND);
+  for (const sessionId of sessions.keys()) {
+    const seen = data.lastSeen[sessionId] ? Date.parse(data.lastSeen[sessionId]) : 0;
+    if (seen >= cutoffMs) continue;
+    deleteSession(SESSION_KIND, sessionId);
+    delete data.languages[sessionId];
+    delete data.lastSeen[sessionId];
+    clearMode(sessionId);
+    removed += 1;
+  }
+  saveState(data);
+  return removed;
+}
+
+/** Runs every retention clock now. Returns what was removed. */
+export function runRetentionSweep({ now = Date.now() } = {}) {
+  return sweepRetention({ now, sweepConversations });
+}
+
+let sweeper = null;
+
+/** Sweeps on start and once a day after that. */
+export function startRetentionSweeper() {
+  if (sweeper) return sweeper;
+  try {
+    const removed = runRetentionSweep();
+    console.log(`Travel voice: retention sweep — ${removed.conversations} conversations, ${removed.reviewItems} review items, ${removed.auditLines} audit lines removed (transcripts kept ${retentionDays()} days).`);
+  } catch (err) {
+    console.error('Travel voice: retention sweep failed:', err.message);
+  }
+  sweeper = setInterval(() => {
+    try {
+      runRetentionSweep();
+    } catch (err) {
+      console.error('Travel voice: retention sweep failed:', err.message);
+    }
+  }, 24 * 60 * 60 * 1000);
+  if (typeof sweeper.unref === 'function') sweeper.unref();
+  return sweeper;
+}
+
+export function travelVoiceMetrics({ days = 7 } = {}) {
+  return auditMetrics({ days });
+}
+
+export { reviewQueue as travelVoiceReviewQueue, markReviewed as markTravelVoiceReviewed };
 
 // --- the venture record -----------------------------------------------------
 
@@ -1152,6 +1280,7 @@ export function travelVoiceStatus() {
     },
     translation: { available: true, languages: SUPPORTED_LANGUAGES },
     handoffs: { open: listOpenHandoffs().map((h) => ({ number: maskNumber(h.number), openedAt: h.openedAt, by: h.by, reason: h.reason, language: h.language })), notifies: escalationNumbers().length },
+    retention: { transcriptDays: retentionDays(), sessionCapUsd: sessionCapUsd() },
     consent: {
       mode: consentMode(),
       disclosed: listConsents(maskNumber).length,

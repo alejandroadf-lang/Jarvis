@@ -6,6 +6,7 @@ import {
   resetTravelVoiceConversation,
   startTravelVoiceOutreach,
   registerTravelVoiceVenture,
+  fetchTravelVoiceMetrics,
 } from '../api/chat.js';
 
 // The travel advisor, in the browser. This is how the venture's product gets
@@ -123,6 +124,8 @@ export default function TravelVoiceView({ onVenturesChanged }) {
   const sessionId = useMemo(getSessionId, []);
   const [status, setStatus] = useState(null);
   const [statusError, setStatusError] = useState(null);
+  const [metrics, setMetrics] = useState(null);
+  const [metricsDays, setMetricsDays] = useState(7);
   const [language, setLanguage] = useState('');
   const [providers, setProviders] = useState({ stt: '', llm: '', tts: '' });
   const [messages, setMessages] = useState([]);
@@ -154,6 +157,18 @@ export default function TravelVoiceView({ onVenturesChanged }) {
   }, []);
 
   useEffect(loadStatus, [loadStatus]);
+
+  // The numbers per language. Regressions hide in aggregates, so the panel
+  // never shows a total without the three languages next to it.
+  useEffect(() => {
+    let cancelled = false;
+    fetchTravelVoiceMetrics(metricsDays)
+      .then((m) => !cancelled && setMetrics(m))
+      .catch(() => !cancelled && setMetrics(null));
+    return () => {
+      cancelled = true;
+    };
+  }, [metricsDays, messages.length]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -451,6 +466,65 @@ export default function TravelVoiceView({ onVenturesChanged }) {
                 </button>
                 {outreachResult && <p className="text-[11px] text-cyan-400/80">{outreachResult}</p>}
               </form>
+            )}
+
+            {metrics && (
+              <div className="border border-cyan-500/20 rounded-lg p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="text-[10px] uppercase tracking-wide text-cyan-400/70">Per language</div>
+                  <select
+                    value={metricsDays}
+                    onChange={(e) => setMetricsDays(Number(e.target.value))}
+                    className="bg-[#0b0d10] border border-cyan-500/20 rounded px-1 py-0.5 text-[10px]"
+                  >
+                    {[1, 7, 30, 90].map((d) => (
+                      <option key={d} value={d}>
+                        {d === 1 ? 'today' : `${d} days`}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <p className="text-[11px] text-cyan-50/80">
+                  {metrics.conversations} conversations, {metrics.resolvedConversations} resolved
+                  {metrics.costPerResolvedConversation !== null && ` · $${metrics.costPerResolvedConversation.toFixed(2)} per resolved`}
+                  {` · $${metrics.total.costUsd.toFixed(2)} in all`}
+                </p>
+                <table className="w-full text-[10px] text-cyan-50/80">
+                  <thead className="text-cyan-400/60">
+                    <tr>
+                      <th className="text-left font-normal">lang</th>
+                      <th className="text-right font-normal">answers</th>
+                      <th className="text-right font-normal">$/answer</th>
+                      <th className="text-right font-normal">latency</th>
+                      <th className="text-right font-normal">wrong lang</th>
+                      <th className="text-right font-normal">ungrounded</th>
+                      <th className="text-right font-normal">codes</th>
+                      <th className="text-right font-normal">handoffs</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {['es', 'fr', 'en'].map((l) => {
+                      const b = metrics.languages[l];
+                      const pct = (v) => (v === null || v === undefined ? '—' : `${Math.round(v * 100)}%`);
+                      return (
+                        <tr key={l} className="border-t border-cyan-500/10">
+                          <td>{l}</td>
+                          <td className="text-right">{b.answered}</td>
+                          <td className="text-right">{b.costPerAnswer === null ? '—' : `$${b.costPerAnswer.toFixed(3)}`}</td>
+                          <td className="text-right">{b.avgLatencyMs ? `${(b.avgLatencyMs / 1000).toFixed(1)}s` : '—'}</td>
+                          <td className="text-right">{pct(b.wrongLanguageRate)}</td>
+                          <td className="text-right">{pct(b.ungroundedRate)}</td>
+                          <td className="text-right">{pct(b.entityIssueRate)}</td>
+                          <td className="text-right">{b.handoffs}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                <p className="text-[10px] text-cyan-500/60">
+                  {metrics.reviewQueue} sampled turns waiting for a person, {metrics.reviewed} reviewed. From the phone: TRAVEL METRICS, TRAVEL REVIEW.
+                </p>
+              </div>
             )}
 
             {status.recentTurns?.length > 0 && (

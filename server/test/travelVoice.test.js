@@ -16,6 +16,7 @@ let whatsapp;
 let ventures;
 let consent;
 let escalation;
+let audit;
 let originalFetch;
 const saved = {};
 const KEYS = [
@@ -41,6 +42,8 @@ const KEYS = [
   'TRAVEL_VOICE_CONSENT',
   'TRAVEL_VOICE_ESCALATION_NUMBERS',
   'WHATSAPP_ALLOWED_NUMBERS',
+  'TRAVEL_VOICE_SESSION_CAP_USD',
+  'TRAVEL_VOICE_REVIEW_SAMPLE_PCT',
 ];
 
 before(async () => {
@@ -53,6 +56,7 @@ before(async () => {
   ventures = await import('../finance/ventures.js');
   consent = await import('../travelVoice/consent.js');
   escalation = await import('../travelVoice/escalation.js');
+  audit = await import('../travelVoice/audit.js');
 });
 
 after(() => {
@@ -76,6 +80,7 @@ beforeEach(() => {
   whatsapp.__resetDedupForTests();
   consent.__resetConsentForTests();
   escalation.__resetEscalationsForTests();
+  audit.__resetAuditForTests();
   // The tests of the advisor itself run with the notice off; the consent
   // flow has its own tests below, which turn it back on.
   process.env.TRAVEL_VOICE_CONSENT = 'off';
@@ -742,5 +747,107 @@ test('TRAVEL HANDOFFS lists what is waiting and warns when nobody would be told'
   const taken = await tv.runTravelVoiceCommand({ kind: 'take', number: '33600000000' }, { from: '111', phoneNumberId: '111' });
   assert.match(taken, /33600000000 is yours/);
   assert.equal(escalation.openHandoff('33600000000').by, 'founder');
+});
+
+// --- the trail, the cap, the sample, the clocks ---------------------------------------
+
+test('every turn leaves a line in the trail with the hash, the consent state, the prompt version and no words', async () => {
+  process.env.TRAVEL_VOICE_CONSENT = 'notice';
+  const outside = stubOutside({ transcript: 'SECRETO ¿cómo emito el billete?', heard: 'spanish' });
+  const anthropic = stubAnthropic('RESPUESTA con TTP.');
+  await tv.handleTravelVoiceMessage(
+    { id: 'wamid.t1', from: '34600111222', type: 'audio', text: '', mediaId: 'media-1', phoneNumberId: '222' },
+    { anthropic, phoneNumberId: '222' }
+  );
+  assert.ok(outside.length);
+  const lines = audit.readAudit();
+  const stages = lines.map((l) => l.stage);
+  assert.deepEqual(stages, ['disclosed', 'answered']);
+  const answered = lines[1];
+  assert.equal(answered.caller, audit.callerKey('34600111222'));
+  assert.equal(answered.from, '…1222');
+  assert.equal(answered.disclosed, true);
+  assert.equal(answered.consent, null, 'told, not yet agreed — notice mode');
+  assert.equal(answered.model, 'claude-opus-5');
+  assert.match(answered.promptVersion, /^[0-9a-f]{8}$/);
+  assert.deepEqual(answered.providers, { stt: 'openai', llm: 'anthropic', tts: 'openai' });
+  assert.ok(answered.costUsd > 0);
+  const raw = JSON.stringify(lines);
+  assert.ok(!raw.includes('SECRETO') && !raw.includes('RESPUESTA'), 'no words in the trail');
+  assert.ok(!raw.includes('34600111222'), 'no number in the trail');
+  // The founder's log keeps the preview; the two are different files.
+  assert.match(tv.recentTravelVoiceTurns()[0].transcript, /SECRETO/);
+});
+
+test('a conversation that has spent its daily share is told so, in its language', async () => {
+  process.env.TRAVEL_VOICE_SESSION_CAP_USD = '0.0001';
+  const anthropic = stubAnthropic('Sí.');
+  const first = stubOutside();
+  const a = await tv.handleTravelVoiceMessage(
+    { id: 'wamid.cap1', from: '34600111222', type: 'text', text: '¿Qué hace FXP?', mediaId: null, phoneNumberId: '222' },
+    { anthropic, phoneNumberId: '222' }
+  );
+  assert.equal(a.stage, 'answered');
+  assert.equal(sends(first).length, 1);
+  const second = stubOutside();
+  const b = await tv.handleTravelVoiceMessage(
+    { id: 'wamid.cap2', from: '34600111222', type: 'text', text: '¿Y TTP?', mediaId: null, phoneNumberId: '222' },
+    { anthropic, phoneNumberId: '222' }
+  );
+  assert.equal(b.stage, 'session_cap');
+  assert.equal(anthropic.calls.length, 1, 'the model was not asked again');
+  assert.match(sends(second)[0].text.body, /límite de uso por hoy/);
+  const other = stubOutside();
+  const c = await tv.handleTravelVoiceMessage(
+    { id: 'wamid.cap3', from: '33600000000', type: 'text', text: 'Bonjour, une question sur FXP', mediaId: null, phoneNumberId: '222' },
+    { anthropic, phoneNumberId: '222' }
+  );
+  assert.equal(c.stage, 'answered', 'another caller is unaffected');
+  assert.equal(sends(other).length, 1);
+});
+
+test('with the sample at 100% every answered turn reaches the review queue, and the commands read and clear it', async () => {
+  process.env.TRAVEL_VOICE_REVIEW_SAMPLE_PCT = '100';
+  stubOutside();
+  await tv.handleTravelVoiceMessage(
+    { id: 'wamid.r1', from: '34600111222', type: 'text', text: '¿Qué hace FXP?', mediaId: null, phoneNumberId: '222' },
+    { anthropic: stubAnthropic('Valora el PNR y crea el TST.'), phoneNumberId: '222' }
+  );
+  assert.equal(audit.reviewQueueSize(), 1);
+  const listed = await tv.runTravelVoiceCommand({ kind: 'review', count: 3 }, { from: '111' });
+  assert.match(listed, /Q: ¿Qué hace FXP\?/);
+  assert.match(listed, /A: Valora el PNR y crea el TST\./);
+  const id = listed.match(/^(r[a-z0-9]+) ·/m)[1];
+  const marked = await tv.runTravelVoiceCommand({ kind: 'reviewed', id, verdict: 'ok', note: 'fine' }, { from: '111' });
+  assert.match(marked, /Recorded/);
+  assert.equal(audit.reviewQueueSize(), 0);
+
+  const numbers = await tv.runTravelVoiceCommand({ kind: 'metrics', days: 7 }, { from: '111' });
+  assert.match(numbers, /Last 7 days — 1 conversations, 1 resolved/);
+  assert.match(numbers, /^es: 1 answered \(0 voice\)/m);
+  assert.match(numbers, /^fr: 0 answered/m);
+  assert.match(numbers, /review: 0 waiting for you, 1 done/);
+  assert.equal(tv.travelVoiceMetrics({ days: 7 }).languages.es.answered, 1);
+});
+
+test('the sweep forgets conversations older than the retention period and keeps the rest', async () => {
+  stubOutside();
+  await tv.handleTravelVoiceMessage(
+    { id: 'wamid.sw1', from: '34600111222', type: 'text', text: '¿Qué hace FXP?', mediaId: null, phoneNumberId: '222' },
+    { anthropic: stubAnthropic('Valora.'), phoneNumberId: '222' }
+  );
+  const sessions = await import('../sessionStore.js');
+  assert.equal(sessions.loadSessions('travel').has('whatsapp-34600111222'), true);
+  // Sessions left by earlier tests carry no last-seen date and are swept as
+  // orphans; the live one, seen a moment ago, stays.
+  tv.runRetentionSweep();
+  assert.equal(sessions.loadSessions('travel').has('whatsapp-34600111222'), true);
+  const later = tv.runRetentionSweep({ now: Date.now() + 200 * 24 * 3600 * 1000 });
+  assert.ok(later.conversations >= 1);
+  assert.equal(sessions.loadSessions('travel').has('whatsapp-34600111222'), false);
+  assert.equal(tv.recentTravelVoiceTurns().length, 0, 'and the previews with it');
+  const swept = await tv.runTravelVoiceCommand({ kind: 'sweep' }, { from: '111' });
+  assert.match(swept, /Retention applied/);
+  assert.equal(tv.travelVoiceStatus().retention.transcriptDays, 180);
 });
 

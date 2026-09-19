@@ -133,6 +133,9 @@ import {
   isGuest,
   parseTravelCommand,
   runTravelVoiceCommand,
+  travelVoiceMetrics,
+  travelVoiceReviewQueue,
+  startRetentionSweeper,
 } from './travelVoice/index.js';
 import { canHear } from './travelVoice/speech.js';
 import {
@@ -1304,6 +1307,17 @@ app.post('/api/travel-voice/outreach', async (req, res) => {
   }
 });
 
+// The numbers per language, and the sampled turns waiting for a person.
+app.get('/api/travel-voice/metrics', (req, res) => {
+  const days = Math.min(365, Math.max(1, Number(req.query.days) || 7));
+  res.json(travelVoiceMetrics({ days }));
+});
+
+app.get('/api/travel-voice/review', (req, res) => {
+  const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 10));
+  res.json({ queue: travelVoiceReviewQueue(limit) });
+});
+
 // Puts the advisor on the portfolio so the team can sell and report on it.
 app.post('/api/travel-voice/venture', (_req, res) => {
   res.json(ensureTravelVoiceVenture());
@@ -1609,4 +1623,5 @@ app.listen(PORT, () => {
   startDailyMeetingScheduler({ anthropic });
   startWeeklyReflectionScheduler({ anthropic });
   startInboxWatcher({ anthropic });
+  startRetentionSweeper();
 });

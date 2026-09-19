@@ -280,6 +280,11 @@ const STRINGS = {
     fr: "Je n'ai pas pu répondre pour le moment. Réessayez dans un instant.",
     en: "I couldn't answer that just now. Please try again in a moment.",
   },
+  sessionCapReached: {
+    es: 'Esta conversación ha alcanzado su límite de uso por hoy. Mañana puedes seguir, o escribe AGENTE para que te atienda una persona.',
+    fr: "Cette conversation a atteint sa limite d'utilisation pour aujourd'hui. Vous pourrez continuer demain, ou écrivez CONSEILLER pour être mis en relation avec une personne.",
+    en: 'This conversation has reached its usage limit for today. You can continue tomorrow, or send AGENT to reach a person.',
+  },
   rateLimited: {
     es: 'Has enviado muchas consultas en poco tiempo. Espera unos minutos y vuelve a intentarlo.',
     fr: 'Vous avez envoyé beaucoup de demandes en peu de temps. Attendez quelques minutes et réessayez.',

@@ -18,6 +18,7 @@
 // Where an answer depends on a specific airline's rule or a live price, the
 // advisor is told to say so and — when Amadeus credentials exist — to look.
 
+import crypto from 'node:crypto';
 import { priceUsage } from '../usage.js';
 import { assertUnderDailyCap, recordSpend } from '../spend.js';
 import { LANGUAGE_NAMES, normalizeLanguage, DEFAULT_LANGUAGE } from './languages.js';
@@ -81,6 +82,15 @@ const REGISTER = {
   fr: "Vouvoyez l'interlocuteur en toute circonstance, même s'il vous tutoie, et employez le vous naturellement plutôt que d'éviter la deuxième personne. Français standard.",
   en: 'Use a professional, courteous register, as a helpdesk colleague would. Address the caller directly rather than avoiding the second person.',
 };
+
+// A short fingerprint of the prompt, written into the audit trail with
+// every turn, so a change in the wording can be lined up against a change
+// in the numbers. Computed, not maintained by hand, so it cannot go stale.
+export const ADVISOR_PROMPT_VERSION = crypto
+  .createHash('sha256')
+  .update(DOMAIN_BRIEF + JSON.stringify(REGISTER))
+  .digest('hex')
+  .slice(0, 8);
 
 function languageInstruction(language) {
   const names = LANGUAGE_NAMES[language] || LANGUAGE_NAMES[DEFAULT_LANGUAGE];
@@ -319,6 +329,7 @@ export async function runAdvisorTurn({ anthropic = null, provider = null, histor
     drift,
     // Amounts with no source behind them, and whether the correction fixed it.
     grounding,
+    promptVersion: ADVISOR_PROMPT_VERSION,
     // The model asked for a person. The orchestrator opens the handoff.
     handoff: (() => {
       const asked = toolCalls.find((t) => t.name === REQUEST_HUMAN_TOOL.name);
