@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "node --watch index.js",
     "start": "node index.js",
-    "test": "node --test"
+    "test": "node --test",
+    "travel:qa": "node travelVoice/qa/run.js",
+    "travel:bench": "node travelVoice/bench/run.js"
   },
   "dependencies": {
     "@anthropic-ai/bedrock-sdk": "^0.33.7",
