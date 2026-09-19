@@ -185,6 +185,16 @@ and it is OpenAI for audio and Claude for the brain, as before. Keys:
 `ELEVENLABS_API_KEY`, `DEEPGRAM_API_KEY`, `IONOS_API_KEY` — details in
 `server/.env.example`, and the Integrations panel probes each one.
 
+**The brain is the cheapest part, so it is not where to economise.** On a
+voice channel, synthesising the reply costs several cents and thinking of it
+costs a fraction of one, so the model is around 2 to 5 percent of what an
+exchange costs. The advisor therefore has its own model default, Claude Opus
+5 at low effort, separate from the company's. Low effort on the stronger
+model is both faster and more accurate here than high effort on a weaker one,
+because the questions are bounded and the caller is holding a phone. Every
+other agent in the org chart is untouched. Override with `TRAVEL_VOICE_MODEL`
+and `TRAVEL_VOICE_EFFORT`.
+
 **Every reply is checked before it is spoken.** A weaker or cheaper brain
 sometimes ignores the instruction to answer in the caller's language, and on
 a voice channel that is a total loss rather than a degraded answer. So a

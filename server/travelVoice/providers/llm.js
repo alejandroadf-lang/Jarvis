@@ -17,7 +17,7 @@
 // API". Whether Llama on IONOS explains a fare rule as well as Claude does
 // is exactly the kind of thing the Travel Voice tab is for finding out.
 
-import { MODELS, DEFAULT_TIER, CHEAP_TIER, OPENAI_TIER, GEMINI_TIER, DEEPSEEK_TIER } from '../../agents/models.js';
+import { MODELS, CHEAP_TIER, OPENAI_TIER, GEMINI_TIER, DEEPSEEK_TIER } from '../../agents/models.js';
 import { hasSecret } from '../../env.js';
 import { isOpenAIConfigured, createCompletion as openaiCreate, chatModel as openaiModel } from '../../agents/openai.js';
 import { isIonosConfigured, createCompletion as ionosCreate, ionosModel, ionosPriceSpec } from '../../agents/ionos.js';
@@ -33,6 +33,44 @@ function flattenSystem(system) {
     .join('\n\n');
 }
 
+// The advisor's own default, deliberately not the company's.
+//
+// The rest of the org chart runs on the company's default tier and should keep
+// doing so. The advisor is the one agent talking to a paying stranger, and
+// the arithmetic of a voice channel is lopsided: synthesising a reply costs
+// several cents, thinking of one costs a fraction of one. The model is
+// roughly 2-5% of what an exchange costs, so saving money there saves
+// almost nothing and buys the failure this product can least afford — a
+// confidently invented fare rule that an agency acts on.
+const ADVISOR_MODEL = 'claude-opus-5';
+
+// Per million tokens, pinned by hand like every other price in this app, and
+// keyed by model because the advisor's model is a variable. Getting this
+// wrong does not cost money directly; it makes the daily cap meter the wrong
+// number, which is how a cap stops protecting anything (see usage.js for the
+// last time that happened here).
+const ANTHROPIC_PRICES = {
+  'claude-opus-5': { inputPricePerMTok: 5.0, outputPricePerMTok: 25.0 },
+  'claude-sonnet-5': { inputPricePerMTok: 2.0, outputPricePerMTok: 10.0 },
+  'claude-haiku-4-5': { inputPricePerMTok: 1.0, outputPricePerMTok: 5.0 },
+  'claude-fable-5-1': { inputPricePerMTok: 10.0, outputPricePerMTok: 50.0 },
+};
+
+// How hard the advisor thinks. Low by default, and that is the whole point of
+// affording the better model: a caller is holding a phone, and the question is
+// bounded — "what does this entry do", "which category holds the penalty" —
+// rather than the kind of open problem that repays deliberation. Low effort on
+// the stronger model beats high effort on a weaker one for both latency and
+// answer quality.
+//
+// Set TRAVEL_VOICE_EFFORT to empty to send no effort at all, which is what an
+// older model that predates the parameter needs.
+function advisorEffort() {
+  const raw = process.env.TRAVEL_VOICE_EFFORT;
+  if (raw !== undefined && raw.trim() === '') return null;
+  return (raw || '').trim() || 'low';
+}
+
 // Anthropic: the request passes through untouched, cache markers included.
 // `anthropic` is the SDK client index.js already holds, injected per call so
 // tests can hand in a stub.
@@ -40,11 +78,25 @@ export const anthropicBrain = {
   id: 'anthropic',
   label: 'Anthropic Claude',
   configured: () => hasSecret('ANTHROPIC_API_KEY'),
-  model: () => (process.env.TRAVEL_VOICE_MODEL || '').trim() || MODELS[DEFAULT_TIER].model,
-  priceSpec: () => MODELS[DEFAULT_TIER],
+  model: () => (process.env.TRAVEL_VOICE_MODEL || '').trim() || ADVISOR_MODEL,
+  priceSpec() {
+    const model = this.model();
+    // An unrecognised model is priced at the most expensive one known rather
+    // than the cheapest. A cap that fires early is an inconvenience; one that
+    // fires late is not a cap.
+    const price = ANTHROPIC_PRICES[model] || ANTHROPIC_PRICES['claude-fable-5-1'];
+    return { provider: 'anthropic', model, ...price };
+  },
   create(request, { anthropic }) {
     if (!anthropic) throw new Error('No Anthropic client was provided');
-    return anthropic.messages.create({ ...request, model: this.model() });
+    const effort = advisorEffort();
+    return anthropic.messages.create({
+      ...request,
+      model: this.model(),
+      // Anthropic-only, so it is added here rather than by the advisor: the
+      // OpenAI-compatible brains would either ignore the field or reject it.
+      ...(effort ? { output_config: { effort } } : {}),
+    });
   },
 };
 

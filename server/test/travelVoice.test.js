@@ -32,6 +32,8 @@ const KEYS = [
   'TRAVEL_VOICE_STT_PROVIDER',
   'TRAVEL_VOICE_LLM_PROVIDER',
   'TRAVEL_VOICE_TTS_PROVIDER',
+  'TRAVEL_VOICE_MODEL',
+  'TRAVEL_VOICE_EFFORT',
 ];
 
 before(async () => {
@@ -241,7 +243,7 @@ test('a turn can name its ears, brain and voice, and reports which answered', as
     assert.equal(r.transcript, 'Bonjour');
     assert.equal(r.language, 'fr', 'Scribe’s three-letter code is understood');
     assert.deepEqual(r.providers, { stt: 'elevenlabs', llm: 'anthropic', tts: 'deepgram' });
-    assert.equal(r.model, 'claude-sonnet-5');
+    assert.equal(r.model, 'claude-opus-5');
     assert.ok(r.audio, 'spoken by Deepgram');
     assert.equal(hit.filter((u) => u.includes('openai.com')).length, 0, 'OpenAI was not used for anything');
   } finally {

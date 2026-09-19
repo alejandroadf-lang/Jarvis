@@ -846,6 +846,33 @@ booking question go" is a question they ask. The other brains already spoke
 the OpenAI protocol this app translates tool calls through, so IONOS is a
 URL, a key and a model default, and the advisor's tools work on it unchanged.
 
+### Where the money actually goes on a voice channel
+
+The instinct carried over from the rest of this company — the mixed-model
+routing above, the cheap tier for leaf agents — is to economise on the model.
+On the advisor that instinct is precisely wrong, and the arithmetic says so.
+For one exchange of a twenty-second question and a hundred-and-fifty-word
+answer, synthesising the reply costs a few cents, hearing it costs a fifth of
+one, and thinking it costs well under one. The model is roughly 2 to 5
+percent of the total.
+
+So the advisor keeps its own model default rather than inheriting the
+company's, and that default is the strongest model at low effort. The extra
+fraction of a cent buys the failure this product can least afford: a travel
+agent who is told a refund penalty that does not exist, acts on it, and never
+comes back. Low effort is not a concession on that — the questions are
+bounded ("what does this entry do", "which category holds the penalty")
+rather than open problems that repay deliberation, and low effort on a
+stronger model beats high effort on a weaker one for latency and accuracy
+together. Every other agent in the chart is untouched by this; the change is
+scoped to the one agent that talks to customers.
+
+The same arithmetic decides the voice, in the opposite direction. The voice
+is what an agency owner judges before they have read a word, so it is worth
+paying for while there are agencies to win — and it is the first thing to
+move once they are won, because it is the line that scales with use. That is
+a dropdown, not a rewrite.
+
 ### The advisor checks its own answer
 
 Opening the brain slot to open models created a failure the Anthropic-only

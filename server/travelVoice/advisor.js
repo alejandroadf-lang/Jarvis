@@ -27,9 +27,16 @@ import { checkReply, correctionPrompt, languageRetryEnabled } from './replyCheck
 
 const MAX_TOOL_ROUNDS = 4;
 
+// Headroom, not a brevity control.
+//
+// This was 700, which was the right number for a model that answers straight
+// away and the wrong one for a model that thinks first: thinking tokens come
+// out of the same budget, so a low cap truncates the answer rather than
+// shortening it. Brevity is the prompt's job ("roughly 60 to 150 words") and
+// the trim in replyCheck.js is the backstop for when the prompt is ignored.
 function maxTokens() {
   const value = Number(process.env.TRAVEL_VOICE_MAX_TOKENS);
-  return Number.isFinite(value) && value > 0 ? value : 700;
+  return Number.isFinite(value) && value > 0 ? value : 2000;
 }
 
 /** The model the default brain answers with, for status displays. */

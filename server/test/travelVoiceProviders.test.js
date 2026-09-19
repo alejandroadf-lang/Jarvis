@@ -32,6 +32,8 @@ const KEYS = [
   'TRAVEL_VOICE_STT_PROVIDER',
   'TRAVEL_VOICE_LLM_PROVIDER',
   'TRAVEL_VOICE_TTS_PROVIDER',
+  'TRAVEL_VOICE_MODEL',
+  'TRAVEL_VOICE_EFFORT',
 ];
 
 before(async () => {
@@ -228,8 +230,54 @@ test('the Anthropic brain passes the request through untouched, cache markers in
   const system = [{ type: 'text', text: 'brief', cache_control: { type: 'ephemeral' } }];
   await llm.anthropicBrain.create({ system, messages: [], max_tokens: 5, tools: [{ name: 't' }] }, { anthropic });
   assert.equal(seen.system, system);
-  assert.equal(seen.model, 'claude-sonnet-5');
+  assert.equal(seen.model, 'claude-opus-5');
   assert.deepEqual(seen.tools, [{ name: 't' }]);
+});
+
+test('the advisor gets its own model default, priced at that model rather than the company tier', () => {
+  // The company's other agents stay on their own default; only the advisor
+  // moves, and the cap must meter it at the price it actually costs.
+  assert.equal(llm.anthropicBrain.model(), 'claude-opus-5');
+  assert.deepEqual(llm.anthropicBrain.priceSpec(), {
+    provider: 'anthropic',
+    model: 'claude-opus-5',
+    inputPricePerMTok: 5.0,
+    outputPricePerMTok: 25.0,
+  });
+
+  process.env.TRAVEL_VOICE_MODEL = 'claude-sonnet-5';
+  assert.equal(llm.anthropicBrain.priceSpec().inputPricePerMTok, 2.0, 'a cheaper model is metered cheaper');
+
+  process.env.TRAVEL_VOICE_MODEL = 'claude-something-unreleased';
+  assert.equal(llm.anthropicBrain.priceSpec().inputPricePerMTok, 10.0, 'an unknown model is priced at the top rate, so the cap fires early rather than late');
+});
+
+test('the advisor thinks at low effort by default, and effort is tunable or removable', async () => {
+  process.env.ANTHROPIC_API_KEY = 'an';
+  const seen = [];
+  const anthropic = { messages: { create: async (req) => { seen.push(req); return { content: [] }; } } };
+  const request = { system: 'S', messages: [], max_tokens: 2000 };
+
+  await llm.anthropicBrain.create(request, { anthropic });
+  assert.deepEqual(seen[0].output_config, { effort: 'low' }, 'a caller is holding a phone');
+  assert.equal(seen[0].thinking, undefined, 'thinking is left at the model default rather than disabled');
+
+  process.env.TRAVEL_VOICE_EFFORT = 'medium';
+  await llm.anthropicBrain.create(request, { anthropic });
+  assert.deepEqual(seen[1].output_config, { effort: 'medium' });
+
+  process.env.TRAVEL_VOICE_EFFORT = '';
+  await llm.anthropicBrain.create(request, { anthropic });
+  assert.equal(seen[2].output_config, undefined, 'an older model that predates the parameter gets nothing');
+});
+
+test('effort never reaches a brain that would not understand it', async () => {
+  process.env.IONOS_API_KEY = 'io';
+  const seen = capture({ ok: true, json: async () => ({ choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }], usage: {} }) });
+  await llm.ionosBrain.create({ system: 'S', messages: [{ role: 'user', content: 'x' }], max_tokens: 10 });
+  const body = JSON.parse(seen[0].init.body);
+  assert.equal(body.output_config, undefined);
+  assert.equal(body.effort, undefined);
 });
 
 // --- picking ----------------------------------------------------------------
