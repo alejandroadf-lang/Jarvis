@@ -50,6 +50,20 @@ import {
   parseConsentReply,
   isForgetRequest,
 } from './consent.js';
+import {
+  escalationNumbers,
+  isHandoffRequest,
+  isEscalated,
+  openHandoff,
+  openHandoffFor,
+  recordForwarded,
+  recordSaid,
+  closeHandoff,
+  listOpenHandoffs,
+  recentHandoffEvents,
+  handoffText,
+  notificationFor,
+} from './escalation.js';
 import { assertUnderDailyCap, recordSpend } from '../spend.js';
 import { priceUsage } from '../usage.js';
 import {
@@ -361,7 +375,7 @@ export async function runTravelVoiceTurn({
   // Whether the brain answered in the language it was told to, and how long
   // it ran on. Carried out of the turn because it is the evidence behind
   // "this model cannot be trusted on a Spanish line" — see replyCheck.js.
-  const quality = { drift: turn.drift, grounding: turn.grounding, amounts: turn.amounts, words: turn.words, tooLong: turn.tooLong };
+  const quality = { drift: turn.drift, grounding: turn.grounding, amounts: turn.amounts, handoff: turn.handoff, words: turn.words, tooLong: turn.tooLong };
 
   const trimmed = trimHistory(turn.messages);
   saveSession(SESSION_KIND, sessionId, trimmed);
@@ -614,6 +628,36 @@ export async function handleTravelVoiceMessage(message, { anthropic, phoneNumber
     return { stage: 'unsupported_type' };
   }
 
+  // A person is in charge of this conversation. Nothing goes to a model;
+  // what the caller sent goes to the people on the escalation list, and
+  // the caller is told it arrived. A voice note is transcribed so a person
+  // can read it — they may be in a meeting — and that is all.
+  if (isEscalated(from)) {
+    let said = message.text?.trim() || '';
+    let voice = false;
+    if (audio) {
+      voice = true;
+      try {
+        const heard = await transcribeWithLanguage(audio, { filename, languageHint: previous });
+        said = heard.text;
+      } catch (err) {
+        said = `(voice note, could not be transcribed: ${err.message})`;
+      }
+    }
+    recordForwarded(from, { text: said, voice });
+    await notifyEscalation(`Caller +${normalizeNumber(from)}${voice ? ' (voice note)' : ''}: ${said || '(empty)'}`, { phoneNumberId });
+    recordTurnLog({ channel: 'whatsapp', from: maskNumber(from), stage: 'handoff_forwarded', language: previous, voice, transcript: said.slice(0, PREVIEW_CHARS) });
+    await send(handoffText('waiting', previous));
+    return { stage: 'handoff_forwarded' };
+  }
+
+  // The caller asks for a person, in so many words. Decided here, before
+  // any model, so nobody has to argue with the machine to reach a human.
+  if (!audio && isHandoffRequest(message.text)) {
+    await openHandoffAndTell(from, { by: 'caller', reason: 'The caller asked for a person.', language: previous, transcript: message.text, phoneNumberId, send });
+    return { stage: 'handoff_opened', by: 'caller' };
+  }
+
   // TRANSLATE / TRADUCIR / TRADUIRE. Caller-facing on purpose: this is a
   // feature of the product, not an admin control. It changes this one
   // conversation and reaches nothing else, so a guest running it is exactly
@@ -764,6 +808,20 @@ export async function handleTravelVoiceMessage(message, { anthropic, phoneNumber
     await send(result.readBack ? `${result.readBack.written}\n\n${written}` : written);
   }
 
+  // The advisor asked for a person, or the voice note did. The answer has
+  // gone out; the handoff opens on top of it.
+  const handoff = result.handoff || (audio && isHandoffRequest(result.transcript) ? { reason: 'The caller asked for a person.' } : null);
+  if (handoff) {
+    await openHandoffAndTell(from, {
+      by: result.handoff ? 'advisor' : 'caller',
+      reason: handoff.reason,
+      language: result.language,
+      transcript: result.transcript,
+      phoneNumberId,
+      send,
+    });
+  }
+
   recordTurnLog({
     channel: 'whatsapp',
     from: maskNumber(from),
@@ -783,11 +841,88 @@ export async function handleTravelVoiceMessage(message, { anthropic, phoneNumber
     // scan down the log shows the bad turns rather than a column of nulls.
     ...(result.drift ? { drift: result.drift } : {}),
     ...(result.grounding ? { grounding: result.grounding } : {}),
+    ...(handoff ? { handoff: handoff.reason } : {}),
     ...(result.tooLong ? { words: result.words } : {}),
     costUsd: result.costUsd,
     durationMs: Date.now() - startedAt,
   });
-  return { stage: 'answered', spoke, language: result.language };
+  return { stage: 'answered', spoke, language: result.language, ...(handoff ? { handoff: true } : {}) };
+}
+
+// --- a person -------------------------------------------------------------------
+
+/** Sends a line to everyone on the escalation list; a failure is logged, not thrown. */
+async function notifyEscalation(text, { phoneNumberId = null } = {}) {
+  const targets = escalationNumbers();
+  const sender = process.env.WHATSAPP_PHONE_NUMBER_ID || phoneNumberId;
+  const reached = [];
+  for (const number of targets) {
+    try {
+      await sendWhatsAppMessage(number, text, { phoneNumberId: sender });
+      reached.push(number);
+    } catch (err) {
+      console.warn(`Travel voice: could not reach ${maskNumber(number)} for a handoff: ${err.message}`);
+    }
+  }
+  if (!targets.length) console.warn('Travel voice: a handoff opened but TRAVEL_VOICE_ESCALATION_NUMBERS and WHATSAPP_ALLOWED_NUMBERS are both empty — nobody was told.');
+  return reached;
+}
+
+/**
+ * Opens the handoff, tells the people who can take it, and tells the
+ * caller. The caller hears it in their language; the people on the list
+ * get the number itself, because they need to be able to ring it.
+ */
+async function openHandoffAndTell(from, { by, reason, language, transcript, phoneNumberId, send }) {
+  const entry = openHandoffFor(from, { by, reason, language, transcript });
+  const reached = await notifyEscalation(notificationFor(entry, { from }), { phoneNumberId });
+  recordTurnLog({ channel: 'whatsapp', from: maskNumber(from), stage: 'handoff_opened', language, detail: `${by}: ${reason || ''}`.trim(), notified: reached.length });
+  await send(handoffText('opened', language));
+  return { entry, reached };
+}
+
+/** A person answers through the advisor's number. The override, logged. */
+export async function sayAsHuman(number, text, { by, phoneNumberId = null } = {}) {
+  const digits = normalizeNumber(number);
+  if (!digits) throw new Error('A phone number is required');
+  const words = String(text || '').trim();
+  if (!words) throw new Error('Nothing to say');
+  const from = travelVoicePhoneNumberId() || phoneNumberId || process.env.WHATSAPP_PHONE_NUMBER_ID;
+  await sendWhatsAppMessage(digits, words, { phoneNumberId: from });
+  // Saying something to a caller takes the conversation over if it was not
+  // already: a person who answers is a person in charge.
+  if (!isEscalated(digits)) openHandoffFor(digits, { by: 'founder', reason: 'A person answered.', language: rememberedLanguage(`whatsapp-${digits}`) });
+  recordSaid(digits, { text: words, by });
+  recordTurnLog({ channel: 'whatsapp', from: maskNumber(digits), stage: 'handoff_said', language: rememberedLanguage(`whatsapp-${digits}`), reply: words.slice(0, PREVIEW_CHARS) });
+  return { number: digits };
+}
+
+/** A person takes a conversation without waiting to be asked. */
+export async function takeOver(number, { by, reason = 'Taken by a person.', phoneNumberId = null } = {}) {
+  const digits = normalizeNumber(number);
+  if (!digits) throw new Error('A phone number is required');
+  const language = rememberedLanguage(`whatsapp-${digits}`) || languageFromNumber(digits) || DEFAULT_LANGUAGE;
+  const from = travelVoicePhoneNumberId() || phoneNumberId || process.env.WHATSAPP_PHONE_NUMBER_ID;
+  const entry = openHandoffFor(digits, { by: 'founder', reason, language });
+  recordTurnLog({ channel: 'whatsapp', from: maskNumber(digits), stage: 'handoff_opened', language, detail: `founder: ${reason}` });
+  await sendWhatsAppMessage(digits, handoffText('opened', language), { phoneNumberId: from }).catch((err) =>
+    console.warn(`Travel voice: could not tell ${maskNumber(digits)} a person took over: ${err.message}`)
+  );
+  return entry;
+}
+
+/** Hands a conversation back to the advisor and tells the caller. */
+export async function resumeAdvisor(number, { by, phoneNumberId = null } = {}) {
+  const digits = normalizeNumber(number);
+  const closed = closeHandoff(digits, { by });
+  if (!closed) return null;
+  const language = closed.language || rememberedLanguage(`whatsapp-${digits}`) || DEFAULT_LANGUAGE;
+  const from = travelVoicePhoneNumberId() || phoneNumberId || process.env.WHATSAPP_PHONE_NUMBER_ID;
+  recordTurnLog({ channel: 'whatsapp', from: maskNumber(digits), stage: 'handoff_resumed', language });
+  await sendWhatsAppMessage(digits, handoffText('resumed', language), { phoneNumberId: from }).catch((err) =>
+    console.warn(`Travel voice: could not tell ${maskNumber(digits)} the advisor is back: ${err.message}`)
+  );
+  return closed;
 }
 
 /**
@@ -948,6 +1083,14 @@ export function runTravelVoiceCommand(command, { from, phoneNumberId = null } = 
     inviteGuest: (number, opts) => inviteGuest(number, { ...opts, phoneNumberId }),
     localized,
     maskNumber,
+    handoffs: {
+      list: listOpenHandoffs,
+      recent: recentHandoffEvents,
+      say: (number, text) => sayAsHuman(number, text, { by: from, phoneNumberId }),
+      take: (number) => takeOver(number, { by: from, phoneNumberId }),
+      resume: (number) => resumeAdvisor(number, { by: from, phoneNumberId }),
+      numbers: escalationNumbers,
+    },
   });
 }
 
@@ -1008,6 +1151,7 @@ export function travelVoiceStatus() {
       liveCalls: capabilities.liveCalls,
     },
     translation: { available: true, languages: SUPPORTED_LANGUAGES },
+    handoffs: { open: listOpenHandoffs().map((h) => ({ number: maskNumber(h.number), openedAt: h.openedAt, by: h.by, reason: h.reason, language: h.language })), notifies: escalationNumbers().length },
     consent: {
       mode: consentMode(),
       disclosed: listConsents(maskNumber).length,

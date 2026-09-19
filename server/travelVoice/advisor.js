@@ -25,6 +25,7 @@ import { isAmadeusConfigured, lookupLocations, searchFlightOffers, amadeusEnviro
 import { resolveProvider } from './providers/index.js';
 import { checkReply, correctionPrompt, languageRetryEnabled } from './replyCheck.js';
 import { groundingCheck, groundingCorrectionPrompt, groundingRetryEnabled } from './grounding.js';
+import { REQUEST_HUMAN_TOOL } from './escalation.js';
 
 const MAX_TOOL_ROUNDS = 4;
 
@@ -89,8 +90,11 @@ REGISTER: ${register}`;
 }
 
 function toolsAvailable() {
-  if (!isAmadeusConfigured()) return [];
-  return [
+  // Handing over to a person is always available; the read-only Amadeus
+  // tools only with credentials. See escalation.js for the first.
+  const tools = [REQUEST_HUMAN_TOOL];
+  if (!isAmadeusConfigured()) return tools;
+  return tools.concat([
     {
       name: 'lookup_location',
       description:
@@ -119,12 +123,15 @@ function toolsAvailable() {
         required: ['origin', 'destination', 'departureDate'],
       },
     },
-  ];
+  ]);
 }
 
 async function runTool(name, input) {
   if (name === 'lookup_location') return lookupLocations(input.keyword);
   if (name === 'search_flight_offers') return searchFlightOffers(input);
+  // The handoff itself is done by the orchestrator once the turn returns;
+  // here the model is told it is in hand so it finishes its sentence.
+  if (name === 'request_human') return { handoff: 'requested', note: 'A person will continue this conversation. Tell the caller briefly, in their language, and stop.' };
   throw new Error(`Unknown tool: ${name}`);
 }
 
@@ -222,7 +229,10 @@ export async function runAdvisorTurn({ anthropic = null, provider = null, histor
     for (const use of toolUses) {
       toolCalls.push({ name: use.name, input: use.input });
       try {
-        const output = await tools(use.name, use.input || {});
+        // The handoff tool is answered here whatever executor was injected:
+        // it is not a lookup, and a test's fake Amadeus should not have to
+        // know about it.
+        const output = use.name === REQUEST_HUMAN_TOOL.name ? await runTool(use.name, use.input || {}) : await tools(use.name, use.input || {});
         const content = JSON.stringify(output).slice(0, 12000);
         toolOutputs.push(content);
         results.push({ type: 'tool_result', tool_use_id: use.id, content });
@@ -309,6 +319,11 @@ export async function runAdvisorTurn({ anthropic = null, provider = null, histor
     drift,
     // Amounts with no source behind them, and whether the correction fixed it.
     grounding,
+    // The model asked for a person. The orchestrator opens the handoff.
+    handoff: (() => {
+      const asked = toolCalls.find((t) => t.name === REQUEST_HUMAN_TOOL.name);
+      return asked ? { reason: String(asked.input?.reason || '').slice(0, 300) } : null;
+    })(),
     amounts: ground.amounts.map((a) => a.text),
     words: check.words,
     tooLong: check.tooLong,

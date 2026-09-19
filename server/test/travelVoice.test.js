@@ -15,6 +15,7 @@ let tv;
 let whatsapp;
 let ventures;
 let consent;
+let escalation;
 let originalFetch;
 const saved = {};
 const KEYS = [
@@ -38,6 +39,8 @@ const KEYS = [
   'TRAVEL_VOICE_EFFORT',
   'TRAVEL_VOICE_SHORT_CLIP_SECONDS',
   'TRAVEL_VOICE_CONSENT',
+  'TRAVEL_VOICE_ESCALATION_NUMBERS',
+  'WHATSAPP_ALLOWED_NUMBERS',
 ];
 
 before(async () => {
@@ -49,6 +52,7 @@ before(async () => {
   whatsapp = await import('../channels/whatsapp.js');
   ventures = await import('../finance/ventures.js');
   consent = await import('../travelVoice/consent.js');
+  escalation = await import('../travelVoice/escalation.js');
 });
 
 after(() => {
@@ -71,6 +75,7 @@ beforeEach(() => {
   tv.__resetTravelVoiceForTests();
   whatsapp.__resetDedupForTests();
   consent.__resetConsentForTests();
+  escalation.__resetEscalationsForTests();
   // The tests of the advisor itself run with the notice off; the consent
   // flow has its own tests below, which turn it back on.
   process.env.TRAVEL_VOICE_CONSENT = 'off';
@@ -616,5 +621,126 @@ test('the status and the founder commands report the consent mode', async () => 
   const listed = await tv.runTravelVoiceCommand({ kind: 'consents' }, { from: '111' });
   assert.match(listed, /…1222 granted/);
   assert.ok(!listed.includes('34600111222'), 'numbers are masked');
+});
+
+// --- a person ------------------------------------------------------------------------
+
+test('AGENTE opens a handoff: the founder is told with the number, the caller is told, and the advisor goes quiet', async () => {
+  process.env.WHATSAPP_ALLOWED_NUMBERS = '447700900123';
+  const anthropic = stubAnthropic('No debería responder.');
+
+  const outside = stubOutside();
+  const opened = await tv.handleTravelVoiceMessage(
+    { id: 'wamid.h1', from: '34600111222', type: 'text', text: 'quiero hablar con una persona', mediaId: null, phoneNumberId: '222' },
+    { anthropic, phoneNumberId: '222' }
+  );
+  assert.deepEqual(opened, { stage: 'handoff_opened', by: 'caller' });
+  assert.equal(anthropic.calls.length, 0, 'no model was asked');
+  const [toFounder, toCaller] = sends(outside);
+  assert.equal(toFounder.to, '447700900123');
+  assert.match(toFounder.text.body, /Caller: \+34600111222/);
+  assert.match(toFounder.text.body, /Last message: "quiero hablar con una persona"/);
+  assert.ok(outside.find((c) => /\/111\/messages$/.test(c.url)), 'the founder is reached from the company line');
+  assert.equal(toCaller.to, '34600111222');
+  assert.match(toCaller.text.body, /paso tu conversación a una persona/);
+  assert.equal(escalation.isEscalated('34600111222'), true);
+
+  // Everything the caller sends now is forwarded, not answered.
+  const forwarded = stubOutside();
+  const next = await tv.handleTravelVoiceMessage(
+    { id: 'wamid.h2', from: '34600111222', type: 'text', text: 'es sobre el localizador X7K2PQ', mediaId: null, phoneNumberId: '222' },
+    { anthropic, phoneNumberId: '222' }
+  );
+  assert.equal(next.stage, 'handoff_forwarded');
+  assert.equal(anthropic.calls.length, 0);
+  const [relay, ack] = sends(forwarded);
+  assert.match(relay.text.body, /^Caller \+34600111222: es sobre el localizador X7K2PQ/);
+  assert.match(ack.text.body, /ha llegado a la persona/);
+
+  // The person answers through the advisor's number, then hands back.
+  const said = stubOutside();
+  const reply = await tv.runTravelVoiceCommand({ kind: 'say', number: '+34 600 111 222', text: 'Soy Alejandro, le llamo en cinco minutos.' }, { from: '447700900123', phoneNumberId: '111' });
+  assert.match(reply, /Sent to \+34 600 111 222 from the advisor's number/);
+  const [human] = sends(said);
+  assert.equal(human.to, '34600111222');
+  assert.equal(human.text.body, 'Soy Alejandro, le llamo en cinco minutos.');
+  assert.ok(said.find((c) => /\/222\/messages$/.test(c.url)), 'from the advisor number, not the company line');
+
+  const back = stubOutside();
+  const resumed = await tv.runTravelVoiceCommand({ kind: 'resume', number: '34600111222' }, { from: '447700900123', phoneNumberId: '111' });
+  assert.match(resumed, /back with the advisor/);
+  assert.match(sends(back)[0].text.body, /Vuelves a hablar con el asistente automático/);
+  assert.equal(escalation.isEscalated('34600111222'), false);
+
+  // And the advisor answers again.
+  stubOutside();
+  const again = await tv.handleTravelVoiceMessage(
+    { id: 'wamid.h3', from: '34600111222', type: 'text', text: '¿Y cómo valoro?', mediaId: null, phoneNumberId: '222' },
+    { anthropic, phoneNumberId: '222' }
+  );
+  assert.equal(again.stage, 'answered');
+  assert.equal(anthropic.calls.length, 1);
+
+  const stages = tv.recentTravelVoiceTurns().map((t) => t.stage).reverse();
+  assert.deepEqual(stages, ['handoff_opened', 'handoff_forwarded', 'handoff_said', 'handoff_resumed', 'answered']);
+});
+
+test('the advisor can hand over mid-answer, and a voice note asking for a person is honoured after the answer', async () => {
+  process.env.TRAVEL_VOICE_ESCALATION_NUMBERS = '34600000009';
+  const client = {
+    calls: [],
+    messages: {
+      create: async (request) => {
+        client.calls.push(request);
+        if (client.calls.length === 1) {
+          return { stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'tu_h', name: 'request_human', input: { reason: 'ADM dispute needs a decision.' } }], usage: { input_tokens: 5, output_tokens: 5 } };
+        }
+        return { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Paso su caso a una persona.' }], usage: { input_tokens: 5, output_tokens: 5 } };
+      },
+    },
+  };
+  const outside = stubOutside();
+  const outcome = await tv.handleTravelVoiceMessage(
+    { id: 'wamid.a1', from: '34600111222', type: 'text', text: 'No acepto este ADM y quiero reclamarlo', mediaId: null, phoneNumberId: '222' },
+    { anthropic: client, phoneNumberId: '222' }
+  );
+  assert.equal(outcome.stage, 'answered');
+  assert.equal(outcome.handoff, true);
+  const bodies = sends(outside).map((m) => [m.to, m.text.body]);
+  assert.deepEqual(bodies[0], ['34600111222', 'Paso su caso a una persona.'], 'the answer goes first');
+  assert.equal(bodies[1][0], '34600000009');
+  assert.match(bodies[1][1], /Asked by: the advisor — ADM dispute needs a decision\./);
+  assert.match(bodies[2][1], /paso tu conversación a una persona/);
+  assert.equal(escalation.openHandoff('34600111222').by, 'advisor');
+
+  // A voice note from someone else asking for a person, in French.
+  escalation.__resetEscalationsForTests();
+  const voice = stubOutside({ transcript: 'je veux parler à un conseiller', heard: 'french' });
+  const anthropic = stubAnthropic('Bien sûr, je transmets.');
+  const spoken = await tv.handleTravelVoiceMessage(
+    { id: 'wamid.a2', from: '33600000000', type: 'audio', text: '', mediaId: 'media-1', phoneNumberId: '222' },
+    { anthropic, phoneNumberId: '222' }
+  );
+  assert.equal(spoken.handoff, true);
+  assert.equal(escalation.openHandoff('33600000000').by, 'caller');
+  assert.match(sends(voice).at(-1).text.body, /transmets votre conversation/);
+});
+
+test('TRAVEL HANDOFFS lists what is waiting and warns when nobody would be told', async () => {
+  const empty = await tv.runTravelVoiceCommand({ kind: 'handoffs' }, { from: '111' });
+  assert.match(empty, /WARNING: nobody is on the escalation list/);
+  process.env.TRAVEL_VOICE_ESCALATION_NUMBERS = '34600000009';
+  escalation.openHandoffFor('34600111222', { by: 'caller', reason: 'asked', language: 'es' });
+  escalation.recordForwarded('34600111222', { text: 'hola?' });
+  const listed = await tv.runTravelVoiceCommand({ kind: 'handoffs' }, { from: '111' });
+  assert.match(listed, /Handoffs go to 1 number\./);
+  assert.match(listed, /\+34600111222 \(es\)/);
+  assert.match(listed, /1 message since/);
+  assert.deepEqual(tv.travelVoiceStatus().handoffs.open.map((h) => h.number), ['…1222']);
+
+  stubOutside();
+  const taken = await tv.runTravelVoiceCommand({ kind: 'take', number: '33600000000' }, { from: '111', phoneNumberId: '111' });
+  assert.match(taken, /33600000000 is yours/);
+  assert.equal(escalation.openHandoff('33600000000').by, 'founder');
 });
 

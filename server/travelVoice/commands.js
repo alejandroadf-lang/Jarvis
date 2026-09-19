@@ -54,6 +54,12 @@ const COMMANDS = [
   // "set" is optional: "travel length 90" reads better on a phone than
   // "travel set length 90", and both should work.
   { kind: 'consents', re: /^travel\s+consents$/i },
+  { kind: 'handoffs', re: /^travel\s+(?:handoffs|escalations|humans?)$/i },
+  // The number is greedy and ends on a digit, so "+34 600 111 222 Le llamo"
+  // splits after the last digit rather than after the first six.
+  { kind: 'say', re: /^travel\s+say\s+(\+?[\d\s()-]{5,}\d)\s*[:—-]?\s+(\S[\s\S]*)$/i },
+  { kind: 'take', re: /^travel\s+(?:take|takeover)\s+(\+?[\d\s()-]{6,})$/i },
+  { kind: 'resume', re: /^travel\s+(?:resume|release|handback)\s+(\+?[\d\s()-]{6,})$/i },
   { kind: 'set', re: /^travel\s+(?:set\s+)?(voice|voiceid|language|lang|idioma|langue|length|words|effort|thinking|model|text|retry|limit|rate|tier|consent)\s+(.+)$/i },
   { kind: 'guests', re: /^travel\s+guests$/i },
   { kind: 'guest_remove', re: /^travel\s+(?:guest\s+)?remove\s+(\+?[\d\s()-]{6,})$/i },
@@ -78,6 +84,8 @@ export function parseTravelCommand(text) {
     if (kind === 'set') return { kind, setting: findSetting(match[1]), value: match[2].trim() };
     if (kind === 'invite') return { kind, number: match[1].trim(), language: normalizeLanguage(match[2]) };
     if (kind === 'guest_remove') return { kind, number: match[1].trim() };
+    if (kind === 'say') return { kind, number: match[1].trim(), text: match[2].trim() };
+    if (kind === 'take' || kind === 'resume') return { kind, number: match[1].trim() };
     return { kind };
   }
   return null;
@@ -89,6 +97,10 @@ TRAVEL STATUS — what is live, and today's spend
 TRAVEL ON / OFF — talk to the advisor from this line, or stop
 TRAVEL INVITE <number> [es|fr|en] — let someone try it, and send them a spoken hello
 TRAVEL GUESTS — who is invited
+TRAVEL HANDOFFS — conversations waiting for a person
+TRAVEL SAY <number> <message> — answer a caller yourself, from the advisor's number
+TRAVEL TAKE <number> — take a conversation over; the advisor goes quiet on it
+TRAVEL RESUME <number> — hand it back to the advisor
 TRAVEL CONSENTS — who has seen the AI notice and what they answered
 TRAVEL CONSENT required|notice|off — ask before hearing voice, only disclose, or neither
 TRAVEL REMOVE <number> — take someone off the list
@@ -158,6 +170,7 @@ export async function runTravelCommand(command, deps = {}) {
     inviteGuest,
     localized: t,
     maskNumber = (n) => n,
+    handoffs = null,
   } = deps;
 
   switch (command.kind) {
@@ -265,6 +278,36 @@ export async function runTravelCommand(command, deps = {}) {
       setSetting(command.setting, parsed, scope);
       const where = scope ? ` for ${scope}` : '';
       return `${spec.label}${where}: ${format(parsed)}. Takes effect on the next message.`;
+    }
+
+    case 'handoffs': {
+      if (!handoffs) return 'Handoffs are unavailable here.';
+      const open = handoffs.list();
+      const who = handoffs.numbers();
+      const head = who.length ? `Handoffs go to ${who.length} number${who.length === 1 ? '' : 's'}.` : 'WARNING: nobody is on the escalation list — set TRAVEL_VOICE_ESCALATION_NUMBERS.';
+      if (!open.length) return `${head} No conversation is waiting for a person.`;
+      return [head, `${open.length} waiting for a person:`]
+        .concat(open.map((h) => `  +${h.number} (${h.language || '?'}) since ${h.openedAt.slice(11, 16)} — ${h.by}: ${h.reason || ''}${h.forwarded.length ? ` · ${h.forwarded.length} message${h.forwarded.length === 1 ? '' : 's'} since` : ''}`))
+        .concat(['', 'TRAVEL SAY <number> <message> answers; TRAVEL RESUME <number> hands back.'])
+        .join('\n');
+    }
+
+    case 'say': {
+      if (!handoffs) return 'Handoffs are unavailable here.';
+      await handoffs.say(command.number, command.text);
+      return `Sent to ${command.number} from the advisor's number. The advisor stays quiet on that conversation until TRAVEL RESUME ${command.number}.`;
+    }
+
+    case 'take': {
+      if (!handoffs) return 'Handoffs are unavailable here.';
+      await handoffs.take(command.number);
+      return `${command.number} is yours. They have been told a person is on it. TRAVEL SAY ${command.number} <message> answers them; TRAVEL RESUME ${command.number} hands back.`;
+    }
+
+    case 'resume': {
+      if (!handoffs) return 'Handoffs are unavailable here.';
+      const closed = await handoffs.resume(command.number);
+      return closed ? `${command.number} is back with the advisor, and has been told.` : `${command.number} was not with a person.`;
     }
 
     case 'consents': {

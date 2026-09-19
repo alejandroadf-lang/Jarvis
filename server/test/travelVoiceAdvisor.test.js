@@ -68,7 +68,7 @@ test('the language is stated in the system prompt, and the reply comes back', as
   const system = client.calls[0].system.map((b) => b.text).join('\n');
   assert.match(system, /Reply entirely in Spanish \(Español\)/);
   assert.match(system, /Amadeus/);
-  assert.equal(client.calls[0].tools, undefined, 'no tools without Amadeus credentials');
+  assert.deepEqual(client.calls[0].tools.map((t) => t.name), ['request_human'], 'only the handoff tool without Amadeus credentials');
   assert.ok(spend.getSpendToday() > before, 'the call is metered');
   assert.equal(result.messages.length, 2, 'user turn plus assistant turn');
   assert.equal(result.messages[0].content, '¿Cómo valoro el PNR?');
@@ -127,8 +127,8 @@ test('with Amadeus credentials the tools are offered and a tool round closes wit
 
   const result = await advisor.runAdvisorTurn({ anthropic: client, text: 'Cheapest MAD to CDG on 1 October?', language: 'en', tools });
 
-  assert.equal(client.calls[0].tools.length, 2);
-  assert.deepEqual(client.calls[0].tools.map((t) => t.name), ['lookup_location', 'search_flight_offers']);
+  assert.equal(client.calls[0].tools.length, 3);
+  assert.deepEqual(client.calls[0].tools.map((t) => t.name), ['request_human', 'lookup_location', 'search_flight_offers']);
   assert.equal(result.reply, 'The cheapest is 189.40 euros with Iberia, non-stop.');
   assert.deepEqual(result.toolCalls, [{ name: 'search_flight_offers', input: { origin: 'MAD', destination: 'CDG', departureDate: '2026-10-01' } }]);
   assert.equal(result.usage.inputTokens, 300, 'both rounds are counted');
@@ -200,7 +200,7 @@ test('a named brain is used for the turn, and its model is reported', async () =
     assert.match(seen.body.messages[0].content, /Reply entirely in French/);
     assert.match(seen.body.messages[0].content, /Amadeus/);
     assert.equal(seen.body.messages[1].content, 'Comment valoriser ?');
-    assert.equal(seen.body.tools, undefined);
+    assert.deepEqual(seen.body.tools.map((t) => t.function.name), ['request_human'], 'the handoff tool travels to every brain');
     assert.ok(result.usage.costUsd > 0, 'priced at the IONOS rate');
   } finally {
     global.fetch = originalFetch;
@@ -285,3 +285,26 @@ test('the prompt pins the formal register and forbids reading the person', () =>
   assert.match(advisor.__testing.DOMAIN_BRIEF, /Never assert that a particular passenger is or is not entitled/);
   assert.match(advisor.__testing.DOMAIN_BRIEF, /Never infer, mention or act on the caller's emotional state/);
 });
+
+test('the advisor can ask for a person, and the turn says so', async () => {
+  const client = stubClient([
+    {
+      stop_reason: 'tool_use',
+      content: [
+        { type: 'text', text: 'Entiendo que quiere reclamar.' },
+        { type: 'tool_use', id: 'tu_h', name: 'request_human', input: { reason: 'Caller disputes an ADM and wants a decision.' } },
+      ],
+      usage: { input_tokens: 10, output_tokens: 5 },
+    },
+    (request) => {
+      const last = request.messages[request.messages.length - 1];
+      assert.equal(last.content[0].type, 'tool_result');
+      assert.match(last.content[0].content, /A person will continue/);
+      return textResponse('Paso su caso a una persona que le responderá por aquí.');
+    },
+  ]);
+  const result = await advisor.runAdvisorTurn({ anthropic: client, text: 'Quiero reclamar este ADM', language: 'es', tools: async () => { throw new Error('should not be called'); } });
+  assert.deepEqual(result.handoff, { reason: 'Caller disputes an ADM and wants a decision.' });
+  assert.match(result.reply, /una persona/);
+});
+

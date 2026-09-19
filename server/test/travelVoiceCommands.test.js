@@ -448,3 +448,14 @@ test('a bare hello is greeted in the caller’s language without asking the mode
   assert.equal(sent[0].text.body, languages.localized('greeting', 'es'));
   assert.equal(tv.recentTravelVoiceTurns()[0].stage, 'greeted');
 });
+
+test('the handoff commands parse a number and, for SAY, the message after it', () => {
+  assert.deepEqual(parse('TRAVEL HANDOFFS'), { kind: 'handoffs' });
+  assert.deepEqual(parse('travel humans'), { kind: 'handoffs' });
+  assert.deepEqual(parse('TRAVEL SAY +34 600 111 222 Le llamo en cinco minutos'), { kind: 'say', number: '+34 600 111 222', text: 'Le llamo en cinco minutos' });
+  assert.deepEqual(parse('travel say 34600111222: ok, un momento'), { kind: 'say', number: '34600111222', text: 'ok, un momento' });
+  assert.deepEqual(parse('TRAVEL TAKE +34600111222'), { kind: 'take', number: '+34600111222' });
+  assert.deepEqual(parse('TRAVEL RESUME 34600111222'), { kind: 'resume', number: '34600111222' });
+  assert.equal(parse('travel say hello there'), null, 'no number, no command');
+});
+
