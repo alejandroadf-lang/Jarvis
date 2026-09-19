@@ -2945,3 +2945,49 @@ flagged it."* A week went into building auth that was already written. Same
 disease, engineering lane, and the read-the-repo tools that should have caught
 it landed only recently. Worth watching whether the next instance is caught by
 them or by accident.
+
+## The week spent building what was already committed
+
+From the same report that prompted the section above, filed as good news:
+
+> Bonus find: full API-key auth + FastAPI layer already exists — nobody had
+> flagged it.
+
+A week went into writing an auth layer that was in the repo the whole time.
+Nobody had flagged it, and nobody could have. `list_repo_files` had existed for
+a while — but **a tool only helps an agent that already suspects it needs one**,
+and an agent about to write a file from scratch has no reason to suspect
+anything. The capability was present; the door was one nobody thought to open.
+Eighth instance.
+
+A guard on the commit would not have caught this. The team never got as far as
+committing — they spent the week failing to create a file that already existed.
+The catch has to land before the work starts, not at the write.
+
+So the file list stops being an answer to a question and becomes a fact in the
+room. `buildRepoManifests()` lists every file in every linked repo, once per
+cycle, and `buildPerAgentContext` hands it to the three agents that build —
+Engineering Lead, CTO, Solutions Architect. Nobody else pays tokens for it.
+With `src/auth.py` on the screen, "let's build auth.py" is not a sentence
+anyone can write.
+
+### The distinction the whole thing turns on
+
+An unreachable repo must never read as an empty one. Those are the same
+sentence to a reader — a blank list — and one of them means *go ahead and build
+it*. So the four states are four different messages:
+
+| State | What it says |
+|---|---|
+| Files found | the list, plus "open it with `read_repo_file` first" |
+| Repo genuinely empty (409) | "exists and is empty. Nothing has been built yet." |
+| Branch missing (404) | "a list of nothing, not an empty repo. Check the branch." |
+| Call failed | "could not be listed. Treat what is in it as unknown — **not as empty**." |
+
+A truncated listing says so too, so an absent path is never read as proof of
+absence. Each of those is a test, because the failure they prevent is the one
+that already cost a week and it does not announce itself.
+
+One repo failing does not lose the others, and the whole call is caught at both
+call sites: a GitHub outage must not take the morning down, since this is
+context rather than a gate.

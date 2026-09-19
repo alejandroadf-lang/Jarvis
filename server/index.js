@@ -21,7 +21,7 @@ import {
   linkOutreachScope,
   setOutreachEnabled,
 } from './finance/ventures.js';
-import { buildCompanyContext, buildStudioContext, buildPerAgentContext } from './finance/context.js';
+import { buildCompanyContext, buildStudioContext, buildPerAgentContext, buildRepoManifests } from './finance/context.js';
 import { recordExchange, buildFounderContext } from './memory/honcho.js';
 import { readFounderSteering } from './workspace/vault.js';
 import {
@@ -264,6 +264,12 @@ function joinContext(...parts) {
 
 async function runCompanyTurn(sessionId, message, { deadlineAt = null, image = null } = {}) {
   const history = companySessions.get(sessionId) || [];
+  // What is already committed, for the agents that build. One call per repo,
+  // never fatal — see buildRepoManifests for the week that bought this.
+  const repoManifests = await buildRepoManifests().catch((err) => {
+    console.error('Could not list the linked repos for context:', err.message);
+    return '';
+  });
   // An image goes to the CEO as a real image block. Delegation downstream is
   // text, which is the right shape anyway: the orchestrator looks at the
   // picture and tells its specialists what is in it, exactly as a person
@@ -384,7 +390,7 @@ async function runCompanyTurn(sessionId, message, { deadlineAt = null, image = n
       log_contact_note: handleLogContactNote,
     },
     extraContext: joinContext(buildCompanyContext(), steering, founderContext),
-    perAgentContext: buildPerAgentContext,
+    perAgentContext: (agentId) => buildPerAgentContext(agentId, { repoManifests }),
   });
 
   // The image itself is not kept in history. Every later turn would resend

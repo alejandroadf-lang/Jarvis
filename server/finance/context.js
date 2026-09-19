@@ -8,6 +8,7 @@ import { usageSummary } from '../ventureUsage.js';
 import { economicsLast30 } from '../spend.js';
 import { buildKnowledgeContext } from '../workspace/knowledge.js';
 import { listVentures, listContacts, listReplies, describePricing, pipelineSummary, listObjectives } from './ventures.js';
+import { listFiles } from '../deploy/github.js';
 import { getLatestWeeklyReflection } from '../weeklyReflections.js';
 import { getAgentEarnings, sharePct } from './profitShare.js';
 import { buildOperationsContext } from '../agents/operations.js';
@@ -369,8 +370,72 @@ export function describeSharePolicy() {
 // block of numbers that would be noise in a Marketing Manager's prompt — and
 // because an agent reasoning about the org chart while doing its actual job
 // is exactly the distraction this company does not need.
-export function buildPerAgentContext(agentId) {
+// Which agents are told what is already in the repo. The ones that can write
+// to it, plus the one that decides what gets built.
+const NEEDS_REPO_MANIFEST = new Set(['engineering_lead', 'cto', 'solutions_architect']);
+
+export function buildPerAgentContext(agentId, { repoManifests = null } = {}) {
   const parts = [buildEarningsContext(agentId)];
   if (agentId === 'agent_operations_engineer') parts.push(buildOperationsContext());
+  if (repoManifests && NEEDS_REPO_MANIFEST.has(agentId)) parts.push(repoManifests);
   return parts.filter((p) => p && p.trim()).join('\n\n');
+}
+
+/**
+ * Every file already in every linked repo, as context rather than as a tool
+ * call somebody has to think to make.
+ *
+ * This exists because of one week. The team set out to build `auth.py`, spent
+ * five turns failing to commit it against caps and plan gates, and only
+ * afterwards discovered — as a "bonus find" in a status report — that a full
+ * API-key auth layer was already in the repo. Nobody had flagged it. Nobody
+ * could have: `list_repo_files` has existed for a while, but a tool only helps
+ * an agent who already suspects it needs it, and an agent about to write a file
+ * from scratch has no reason to suspect anything.
+ *
+ * So the manifest stops being an answer and becomes a fact in the room. It is
+ * one git-trees call per repo per cycle, and it makes "let us build auth.py"
+ * impossible to say with `src/auth.py` on the screen.
+ *
+ * Failures are reported, never thrown and never silently empty: an empty file
+ * list and an unreachable repo look identical to a reader, and one of them
+ * means "go ahead and build it".
+ */
+export async function buildRepoManifests() {
+  const linked = listVentures().filter((v) => v.status === 'active' && v.repo);
+  if (!linked.length) return '';
+
+  const sections = await Promise.all(
+    linked.map(async (venture) => {
+      const { owner, name, branch } = venture.repo;
+      const head = `"${venture.title}" — ${owner}/${name}`;
+      try {
+        const { files, total, truncated, state } = await listFiles({ owner, repo: name, branch });
+        if (state === 'empty') return `${head}: the repo exists and is empty. Nothing has been built yet.`;
+        if (state === 'no-such-ref') {
+          return `${head}: branch "${branch || 'main'}" does not exist — so this is a list of nothing, not an empty repo. Check the branch before concluding anything is missing.`;
+        }
+        if (!files.length) return `${head}: no files on ${branch || 'main'}.`;
+        const listing = files.map((file) => `  ${file.path}`).join('\n');
+        return [
+          `${head} — ${total} file${total === 1 ? '' : 's'}${truncated ? ' (truncated; there are more)' : ''}:`,
+          listing,
+        ].join('\n');
+      } catch (err) {
+        return `${head}: could not be listed (${err.message}). Treat what is in it as unknown — not as empty.`;
+      }
+    })
+  );
+
+  return [
+    'WHAT IS ALREADY IN THE REPOS',
+    '',
+    'Read this before planning to build anything. A week of this company\'s life went',
+    'into writing an auth layer that was already committed, because the file list was',
+    'a tool call nobody thought to make rather than something on the screen. If what',
+    'you are about to build appears below, open it with read_repo_file first: the job',
+    'is probably to finish or fix it, not to start it.',
+    '',
+    sections.join('\n\n'),
+  ].join('\n');
 }

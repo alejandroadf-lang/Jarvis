@@ -28,7 +28,7 @@ import { unsupportedClaims } from './claimCheck.js';
 import { runAgent } from './agents/agentRunner.js';
 import { AGENTS as COMPANY_AGENTS, ROOT_AGENT_ID as COMPANY_ROOT } from './agents/orgChart.js';
 import { AGENTS as STUDIO_AGENTS, ROOT_AGENT_ID as STUDIO_ROOT } from './agents/ideationTeam.js';
-import { buildCompanyContext, buildStudioContext, buildPerAgentContext } from './finance/context.js';
+import { buildCompanyContext, buildStudioContext, buildPerAgentContext, buildRepoManifests } from './finance/context.js';
 import { getLedger } from './finance/ledger.js';
 import { listVentures } from './finance/ventures.js';
 import { planSyncScope } from './movement.js';
@@ -384,6 +384,13 @@ export async function runDailyMeeting({ anthropic }) {
   const date = todayKey();
   const startedAt = Date.now();
   const companyContext = buildCompanyContext();
+
+  // Never throws: a GitHub outage must not take the morning down, and the
+  // manifest is context rather than a gate.
+  const repoManifests = await buildRepoManifests().catch((err) => {
+    console.error('Could not list the linked repos for context:', err.message);
+    return '';
+  });
   // Standing direction matters most here: an unattended run is exactly when
   // the founder isn't around to say "focus on X this week".
   const steering = await readFounderSteering();
@@ -416,7 +423,10 @@ export async function runDailyMeeting({ anthropic }) {
       // when the book-keeping and venture-status actions still aren't.
       actionHandlers: dailyCycleActionHandlers(),
       extraContext: [companyContext, steering].filter(Boolean).join('\n\n'),
-      perAgentContext: buildPerAgentContext,
+      // Fetched once for the whole run rather than per agent, and handed only
+      // to the agents that build. See buildRepoManifests for the week that
+      // paid for this.
+      perAgentContext: (agentId) => buildPerAgentContext(agentId, { repoManifests }),
     });
   } catch (err) {
     leadershipFailed = true;
