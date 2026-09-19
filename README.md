@@ -268,6 +268,64 @@ repository does not carry. Until one is registered through
 declined and the caller is told, in their language, to send a voice note.
 Voice notes are the product today; live calls are the fourth milestone.
 
+**What the research changed.** A deep research pass in September 2026 —
+what the leading voice companies run, the state of real-time speech, and what
+Deloitte, PwC, EY and KPMG advise on enterprise voice agents, applied to this
+product (`reports/Voice AI stack for travel advisor.md`) — recommended keeping
+the cascade and hardening its boundaries. Every recommendation is built:
+
+- *Codes survive the voice.* A locator heard in a voice note is read back in
+  the caller's spelling alphabet ("X de Xiquena, 7, K de Kilo") before the
+  answer; IATA codes and entries are spelled letter by letter, prices and dates
+  said the way each language says them, and the written twin keeps every code
+  exactly as the model wrote it (`spoken.js`). In translation, codes are swapped
+  for placeholders before the model sees the text and put back after
+  (`translate.js`).
+- *Money only from a source.* Every fare, fee or compensation figure is checked
+  against the turn's tool results and the caller's words; one with no source
+  gets one correction and is recorded (`grounding.js`). The prompt pins the
+  formal register (usted, vous), keeps EU261 to the case and the band, and
+  forbids inferring anything about the person. A test walks every ear's
+  requests to confirm none asks for speaker identification or sentiment.
+- *First contact is disclosed, and voice waits for consent.* The first message
+  from any number gets a spoken and written AI notice with two reply buttons;
+  by default a voice note is not downloaded until the caller taps agree, and
+  text is answered meanwhile. The tap is kept with Meta's message id.
+  `BORRAR` / `SUPPRIMER` / `DELETE` forgets them. Every synthesised note carries
+  an AI-generated marker inside the file (`consent.js`, `ogg.js`).
+- *A person, with the authority to overrule.* `AGENTE` / `CONSEILLER` /
+  `AGENT`, the advisor's own `request_human` tool, or `TRAVEL TAKE` hands a
+  conversation to `TRAVEL_VOICE_ESCALATION_NUMBERS`; `TRAVEL SAY` answers through
+  the advisor's number and `TRAVEL RESUME` hands back. Everything is logged
+  (`escalation.js`).
+- *An audit trail, retention clocks, a sample a person reads, numbers per
+  language.* Every turn leaves a wordless line in an append-only trail with a
+  salted caller hash, the consent state, the providers, model and prompt
+  fingerprint, cost, timings and every quality flag. Transcripts are forgotten
+  after 180 days, the review sample after a year, the trail after five. A few
+  per cent of turns go to `TRAVEL REVIEW`. `TRAVEL METRICS` and the tab's panel
+  give answers, cost, latency, wrong-language, ungrounded, code and handoff
+  rates per language, and cost per resolved conversation (`audit.js`).
+- *Residency.* `TRAVEL_VOICE_RESIDENCY=eu` refuses any provider not declared
+  EU-hosted; Claude runs in the EU through `ANTHROPIC_GATEWAY=bedrock|vertex`
+  in an EU region without changing the brain (`residency.js`,
+  `agents/anthropicClient.js`). A fourth ear, AssemblyAI, is there for
+  code-switched speech; Deepgram can be told the Amadeus vocabulary; a clip
+  under two seconds cannot switch a conversation's language; ElevenLabs is
+  asked not to log and `TRAVEL TIER FAST` moves it to the low-latency model.
+- *Simulate, then judge.* `npm run travel:qa` plays six callers through the
+  advisor as it ships, applies deterministic rules and has a judge model score
+  each conversation; `npm run travel:bench -- fixtures/` runs every ear over
+  your own voice notes and reports word error rate, chrF and entity error rate
+  per ear per language (`qa/`, `bench/`). A pre-filled data protection impact
+  assessment is at `docs/travel-voice-dpia.md`.
+
+What the research could not settle is left as it is: the WebRTC/SIP media
+bridge stays unbuilt until the WhatsApp Calling API is confirmed to stream
+media to a machine agent, and an in-signal audio watermark needs a vendor with
+one. Each default above is the safe one; every one can be lowered from the
+phone, and `TRAVEL STATUS` says when it has been.
+
 ### Voice experience
 
 Jarvis mode streams Claude's reply as it's generated and speaks it
