@@ -22,6 +22,8 @@ const KEYS = [
   'ELEVENLABS_OUTPUT_FORMAT',
   'DEEPGRAM_API_KEY',
   'DEEPGRAM_TTS_VOICE_FR',
+  'DEEPGRAM_TTS_VOICE_ES',
+  'DEEPGRAM_TTS_VOICE_EN',
   'IONOS_API_KEY',
   'IONOS_MODEL',
   'IONOS_BASE_URL',
@@ -56,6 +58,7 @@ after(() => {
 beforeEach(() => {
   for (const k of KEYS) delete process.env[k];
   global.fetch = originalFetch;
+  tts.__resetDeepgramVoicesForTests();
 });
 
 function capture(reply) {
@@ -167,6 +170,76 @@ test('ElevenLabs voice: the Flash model gets the language code, a custom voice i
   assert.equal(result.mimeType, 'audio/mpeg');
 });
 
+test('Deepgram Aura: French works once the catalogue is asked, without pinning a guess', async () => {
+  process.env.DEEPGRAM_API_KEY = 'dg-key';
+  tts.__resetDeepgramVoicesForTests();
+
+  // Before asking, French has no voice: it was never pinned, because a
+  // guessed id would 404 the first time a French caller spoke.
+  assert.equal(tts.deepgramVoiceName('fr'), '');
+  assert.deepEqual(tts.deepgramVoice.languages, ['es', 'en']);
+
+  const seen = capture((url) => {
+    if (String(url).includes('/v1/models')) {
+      return { ok: true, json: async () => ({
+        tts: [
+          { canonical_name: 'aura-2-thalia-en', languages: ['en'] },
+          { canonical_name: 'aura-2-celeste-es', languages: ['es'] },
+          { canonical_name: 'aura-2-pandora-fr', languages: ['fr'] },
+        ],
+      }) };
+    }
+    return { ok: true, arrayBuffer: async () => new ArrayBuffer(2) };
+  });
+
+  await tts.deepgramVoice.synthesize('Bonjour', { language: 'fr' });
+
+  assert.ok(seen[0].url.includes('/v1/models'), 'it asks before it refuses');
+  assert.equal(new URL(seen[1].url).searchParams.get('model'), 'aura-2-pandora-fr');
+  assert.equal(tts.deepgramVoiceName('fr'), 'aura-2-pandora-fr');
+  assert.deepEqual(tts.deepgramVoice.languages, ['es', 'fr', 'en'], 'all three now');
+
+  seen.length = 0;
+  await tts.deepgramVoice.synthesize('Encore', { language: 'fr' });
+  assert.ok(!seen.some((c) => c.url.includes('/v1/models')), 'and asks only once');
+});
+
+test('an explicit French voice beats whatever the catalogue offers', async () => {
+  process.env.DEEPGRAM_API_KEY = 'dg-key';
+  process.env.DEEPGRAM_TTS_VOICE_FR = 'aura-2-mine-fr';
+  tts.__resetDeepgramVoicesForTests();
+  const seen = capture({ ok: true, arrayBuffer: async () => new ArrayBuffer(2) });
+
+  await tts.deepgramVoice.synthesize('Bonjour', { language: 'fr' });
+  assert.equal(new URL(seen[0].url).searchParams.get('model'), 'aura-2-mine-fr');
+  assert.ok(!seen.some((c) => c.url.includes('/v1/models')), 'no need to ask when it was told');
+});
+
+test('a catalogue with no French leaves a refusal that names the fix', async () => {
+  process.env.DEEPGRAM_API_KEY = 'dg-key';
+  tts.__resetDeepgramVoicesForTests();
+  capture((url) => String(url).includes('/v1/models')
+    ? { ok: true, json: async () => ({ tts: [{ canonical_name: 'aura-2-thalia-en', languages: ['en'] }] }) }
+    : { ok: true, arrayBuffer: async () => new ArrayBuffer(2) });
+
+  await assert.rejects(
+    () => tts.deepgramVoice.synthesize('Bonjour', { language: 'fr' }),
+    /no fr voice[\s\S]*DEEPGRAM_TTS_VOICE_FR/
+  );
+});
+
+test('a catalogue that cannot be reached falls back to the pinned names rather than breaking', async () => {
+  process.env.DEEPGRAM_API_KEY = 'dg-key';
+  tts.__resetDeepgramVoicesForTests();
+  const seen = capture((url) => String(url).includes('/v1/models')
+    ? { ok: false, status: 500, text: async () => 'down' }
+    : { ok: true, arrayBuffer: async () => new ArrayBuffer(2) });
+
+  // Spanish still speaks, because its name was pinned all along.
+  await tts.deepgramVoice.synthesize('Hola', { language: 'es' });
+  assert.equal(new URL(seen[seen.length - 1].url).searchParams.get('model'), 'aura-2-celeste-es');
+});
+
 test('Deepgram Aura: a per-language voice, Opus in an Ogg container, and no French until a voice is named', async () => {
   process.env.DEEPGRAM_API_KEY = 'dg-key';
   const seen = capture({ ok: true, arrayBuffer: async () => new ArrayBuffer(2) });
@@ -180,8 +253,8 @@ test('Deepgram Aura: a per-language voice, Opus in an Ogg container, and no Fren
   assert.equal(seen[0].init.headers.Authorization, 'Token dg-key');
   assert.deepEqual(JSON.parse(seen[0].init.body), { text: 'Hola' });
 
-  assert.deepEqual(tts.deepgramVoice.languages, ['es', 'en'], 'French is not offered until a voice is set');
-  await assert.rejects(() => tts.deepgramVoice.synthesize('Bonjour', { language: 'fr' }), /DEEPGRAM_TTS_VOICE_FR/);
+  tts.__resetDeepgramVoicesForTests();
+  assert.deepEqual(tts.deepgramVoice.languages, ['es', 'en'], 'French is not offered until a voice is set or found');
 
   process.env.DEEPGRAM_TTS_VOICE_FR = 'aura-2-some-fr';
   assert.deepEqual(tts.deepgramVoice.languages, ['es', 'fr', 'en']);

@@ -204,6 +204,14 @@ you can see which brain needs it. An overlong reply is not retried, since the
 text message carries the words intact. Only the audio is cut, at the last
 full sentence that fits.
 
+**All three languages work on every provider.** One subtlety is worth knowing:
+a Deepgram Aura voice id carries its own language, so each language needs a
+named voice or it cannot be spoken. Rather than pin a French id that might not
+exist, the advisor asks Deepgram which voices your key can see and picks one.
+That means a language Deepgram adds works without a redeploy, and the
+Integrations panel tells you which languages Aura can really speak rather than
+assuming all three.
+
 **It also translates.** Anyone talking to the advisor can send `TRANSLATE EN`
 and every message after that comes back in English, spoken and written, ready
 to forward to an airline desk. `TRANSLATE ES FR` opens a two-way channel, so

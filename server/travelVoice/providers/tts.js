@@ -148,14 +148,104 @@ export const elevenLabsVoice = {
 
 const DEEPGRAM_URL = 'https://api.deepgram.com/v1/speak';
 
-// Aura voices are per language, so there is one to name for each of the
-// three. The English and Spanish defaults are stock Aura-2 voices; French
-// arrived later and its voice ids are read from the variable so a wrong guess
-// here cannot fail every French reply.
+// Aura voices are per language, and the language is part of the voice id:
+// aura-2-thalia-en speaks English and nothing else. So each of the three
+// needs its own name, and a missing one means that language cannot be
+// spoken at all.
+//
+// French was the gap. Deepgram added French to Aura-2 after the English and
+// Spanish voices were pinned here, and pinning a guessed French id would
+// have produced the worst possible failure: a name that looks right, passes
+// review, and 404s the first time a French agency speaks into the demo.
+//
+// So rather than guess, the voice list is asked for. Deepgram publishes the
+// models its key can see, which makes this self-healing in both directions —
+// a French voice appears without a redeploy, and a retired English one stops
+// silently breaking every reply. The pinned names below stay as the answer
+// when discovery has not run or could not reach anyone, and an explicit
+// variable still beats both.
+const PINNED = { en: 'aura-2-thalia-en', es: 'aura-2-celeste-es', fr: '' };
+const ENV_NAME = { en: 'DEEPGRAM_TTS_VOICE_EN', es: 'DEEPGRAM_TTS_VOICE_ES', fr: 'DEEPGRAM_TTS_VOICE_FR' };
+
+// language -> voice id, filled by discovery. Kept for the life of the
+// process: a voice catalogue does not change during a demo, and re-asking on
+// every reply would add a network round trip to the thing being measured.
+let discovered = null;
+let discovering = null;
+
 function deepgramVoiceFor(language) {
-  const defaults = { en: 'aura-2-thalia-en', es: 'aura-2-celeste-es', fr: '' };
-  const envName = { en: 'DEEPGRAM_TTS_VOICE_EN', es: 'DEEPGRAM_TTS_VOICE_ES', fr: 'DEEPGRAM_TTS_VOICE_FR' }[language];
-  return (process.env[envName] || '').trim() || defaults[language];
+  const fromEnv = (process.env[ENV_NAME[language]] || '').trim();
+  if (fromEnv) return fromEnv;
+  if (discovered && discovered[language]) return discovered[language];
+  return PINNED[language];
+}
+
+/**
+ * Asks Deepgram which voices this key can actually use.
+ *
+ * Never throws and never blocks a reply that already has a voice: a failure
+ * here leaves the pinned names in place, which is exactly where they were
+ * before. Returns the map it found, for the integration panel to report.
+ */
+export async function discoverDeepgramVoices() {
+  if (discovered) return discovered;
+  if (discovering) return discovering;
+  const apiKey = readSecret('DEEPGRAM_API_KEY');
+  if (!apiKey) return null;
+
+  discovering = (async () => {
+    try {
+      const res = await fetch('https://api.deepgram.com/v1/models', {
+        headers: { Authorization: `Token ${apiKey}` },
+      });
+      if (!res.ok) throw new Error(`Deepgram returned ${res.status}`);
+      const body = await res.json();
+
+      // The catalogue is a list of models somewhere in the response; each
+      // carries a name and the languages it speaks. Walking for that shape
+      // rather than a fixed path keeps this working if the envelope changes.
+      const models = [];
+      const walk = (node) => {
+        if (Array.isArray(node)) return node.forEach(walk);
+        if (!node || typeof node !== 'object') return;
+        const name = node.canonical_name || node.name;
+        if (typeof name === 'string' && Array.isArray(node.languages)) models.push({ name, languages: node.languages });
+        Object.values(node).forEach(walk);
+      };
+      walk(body);
+
+      const found = {};
+      for (const language of SUPPORTED_LANGUAGES) {
+        // The id ends in the language, which is the reliable signal; the
+        // declared `languages` list is the corroborating one.
+        const match = models.find(
+          (m) => /^aura/i.test(m.name) &&
+                 (m.name.toLowerCase().endsWith(`-${language}`) ||
+                  m.languages.some((l) => String(l).toLowerCase().split('-')[0] === language))
+        );
+        if (match) found[language] = match.name;
+      }
+      discovered = found;
+      return found;
+    } catch (err) {
+      console.warn(`Travel voice: could not ask Deepgram which voices it has (${err.message}). Using the pinned names.`);
+      discovered = {};
+      return discovered;
+    } finally {
+      discovering = null;
+    }
+  })();
+  return discovering;
+}
+
+/** The voice this language would use right now, or '' when it has none. */
+export function deepgramVoiceName(language) {
+  return deepgramVoiceFor(language);
+}
+
+export function __resetDeepgramVoicesForTests() {
+  discovered = null;
+  discovering = null;
 }
 
 export const deepgramVoice = {
@@ -172,9 +262,19 @@ export const deepgramVoice = {
   async synthesize(text, { language = 'en', format = 'opus' } = {}) {
     const apiKey = readSecret('DEEPGRAM_API_KEY');
     if (!apiKey) throw new Error('DEEPGRAM_API_KEY is not set');
-    const voice = deepgramVoiceFor(lang(language));
+    const wanted = lang(language);
+    let voice = deepgramVoiceFor(wanted);
+    // Nothing pinned for this language: ask before refusing. This is the
+    // path French takes on a fresh deployment.
     if (!voice) {
-      throw new Error(`Deepgram has no voice set for ${lang(language)} — set DEEPGRAM_TTS_VOICE_${lang(language).toUpperCase()} to an Aura voice id`);
+      await discoverDeepgramVoices();
+      voice = deepgramVoiceFor(wanted);
+    }
+    if (!voice) {
+      throw new Error(
+        `Deepgram has no ${wanted} voice. Its catalogue offered none ending in "-${wanted}" — ` +
+          `set ${ENV_NAME[wanted]} to an Aura voice id, or use another speech provider for ${wanted}.`
+      );
     }
     const spec = FORMATS[format] || FORMATS.opus;
     const input = text.slice(0, 2000); // Aura's per-request ceiling

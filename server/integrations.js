@@ -32,6 +32,8 @@ import { travelVoiceCapabilities, travelVoicePhoneNumberId } from './travelVoice
 import { isAmadeusConfigured, amadeusEnvironment, amadeusHost } from './travelVoice/amadeus.js';
 import { isIonosConfigured, ionosModel, listModelsUrl as ionosModelsUrl } from './agents/ionos.js';
 import { describeProviders } from './travelVoice/providers/index.js';
+import { discoverDeepgramVoices, deepgramVoiceName } from './travelVoice/providers/tts.js';
+import { SUPPORTED_LANGUAGES } from './travelVoice/languages.js';
 
 // A probe must never hang a page load. Both services are normally fast; if
 // one isn't, "couldn't reach it" is a more useful answer than a spinner.
@@ -428,7 +430,22 @@ async function probeDeepgram() {
     );
     if (res.status === 401 || res.status === 403) return { configured: true, ok: false, detail: 'Key rejected. Pick another provider or fix DEEPGRAM_API_KEY.' };
     if (!res.ok) return { configured: true, ok: false, detail: `Deepgram returned ${res.status}.` };
-    return { configured: true, ok: true, detail: 'Key accepted — Nova can hear and Aura can speak for the advisor.' };
+
+    // Which languages Aura can actually speak for this key. Asked rather
+    // than assumed, because a missing voice for one language is invisible
+    // until a caller speaks it — which is how French was broken here.
+    const voices = (await discoverDeepgramVoices()) || {};
+    const speaks = SUPPORTED_LANGUAGES.filter((l) => voices[l] || deepgramVoiceName(l));
+    const missing = SUPPORTED_LANGUAGES.filter((l) => !speaks.includes(l));
+    if (missing.length) {
+      return {
+        configured: true,
+        ok: false,
+        detail: `Key accepted and Nova can hear, but Aura has no voice for ${missing.join(', ')}. ` +
+          `Set DEEPGRAM_TTS_VOICE_${missing[0].toUpperCase()}, or use another speech provider for that language.`,
+      };
+    }
+    return { configured: true, ok: true, detail: `Key accepted — Nova hears and Aura speaks all three: ${speaks.join(', ')}.` };
   } catch (err) {
     return { configured: true, ok: false, detail: `Couldn't reach Deepgram: ${err.message}` };
   }

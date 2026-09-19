@@ -817,6 +817,34 @@ entry is easier to copy than to remember from audio. Audio is billed by the
 minute and the character rather than the token, so it is metered into the
 daily spend cap with its own prices, pinned by hand like every price here.
 
+### The language that was quietly missing
+
+French was one of the three from the first day, and it worked everywhere
+except one place nobody would notice until it mattered. An Aura voice id
+carries its own language — `aura-2-thalia-en` speaks English and nothing
+else — so a speech provider needs a named voice per language or that
+language simply cannot be spoken. English and Spanish had pinned names.
+French had an empty string, because Deepgram added French to Aura after
+those were written.
+
+The tempting fix was to pin a French id too. That would have produced the
+worst failure available: a name that looks right, reads fine in review, and
+404s the first time a French agency speaks into the demo. A wrong pinned
+name is worse than an empty one, because the empty one refuses honestly.
+
+So the voice list is asked for instead. Deepgram publishes the models a key
+can see; the advisor reads that, picks the one ending in the language it
+needs, and remembers it for the life of the process. This is self-healing in
+both directions — a language Deepgram adds works without a redeploy, and a
+voice Deepgram retires stops silently breaking every reply. An explicit
+variable still beats the catalogue, for choosing a particular accent, and a
+catalogue that cannot be reached leaves the pinned names exactly where they
+were, so the failure is never worse than before.
+
+The Integrations panel now says which languages Aura can actually speak for
+your key rather than assuming three, because a missing voice for one language
+is invisible until someone speaks it.
+
 ### Three slots, several providers each
 
 Whether a Spanish agency owner trusts a synthetic voice with their clients,
