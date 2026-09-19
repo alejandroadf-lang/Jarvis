@@ -403,7 +403,8 @@ test('the registry describes every option so the tab can show what a choice woul
   process.env.ELEVENLABS_API_KEY = 'el';
   const described = registry.describeProviders();
 
-  assert.deepEqual(Object.keys(described), ['stt', 'llm', 'tts']);
+  assert.deepEqual(Object.keys(described), ['residency', 'stt', 'llm', 'tts']);
+  assert.equal(described.residency, 'any');
   assert.equal(described.stt.active, 'elevenlabs');
   assert.equal(described.llm.active, 'anthropic');
   assert.equal(described.tts.active, 'elevenlabs');

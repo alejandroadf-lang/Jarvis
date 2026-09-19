@@ -138,6 +138,7 @@ import {
   startRetentionSweeper,
 } from './travelVoice/index.js';
 import { canHear } from './travelVoice/speech.js';
+import { createAnthropicClient } from './agents/anthropicClient.js';
 import {
   parseTranslateCommand,
   modeFor as translateModeFor,
@@ -163,7 +164,9 @@ const SLOW_TURN_MS = Number(process.env.SLOW_TURN_MS) > 0 ? Number(process.env.S
 // it goes to the deep-dive queue and comes back properly later.
 const TURN_DEADLINE_MS = Number(process.env.TURN_DEADLINE_MS) > 0 ? Number(process.env.TURN_DEADLINE_MS) : 120000;
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+// Built through agents/anthropicClient.js so ANTHROPIC_GATEWAY can point it
+// at an EU region of Bedrock or Vertex; the direct API is the default.
+const anthropic = await createAnthropicClient();
 
 const SYSTEM_PROMPT = `You are Jarvis, a personal AI assistant. You are helpful, concise,
 and quietly witty — never rambling. Address the user directly and skip unnecessary

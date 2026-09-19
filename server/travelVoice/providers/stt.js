@@ -21,6 +21,7 @@
 import { readSecret, hasSecret } from '../../env.js';
 import { transcribeModel } from '../../agents/openai.js';
 import { normalizeLanguage } from '../languages.js';
+import { declaredResidency } from '../residency.js';
 
 function numberFromEnv(name, fallback) {
   const value = Number(process.env[name]);
@@ -57,6 +58,7 @@ function whisperReportsLanguage(model) {
 }
 
 export const openaiEars = {
+  residency: () => declaredResidency('OPENAI_RESIDENCY'),
   id: 'openai',
   label: 'OpenAI Whisper',
   configured: () => hasSecret('OPENAI_API_KEY'),
@@ -93,6 +95,7 @@ export const openaiEars = {
 const ELEVENLABS_STT_URL = 'https://api.elevenlabs.io/v1/speech-to-text';
 
 export const elevenLabsEars = {
+  residency: () => declaredResidency('ELEVENLABS_RESIDENCY'),
   id: 'elevenlabs',
   label: 'ElevenLabs Scribe',
   configured: () => hasSecret('ELEVENLABS_API_KEY'),
@@ -142,6 +145,7 @@ export const elevenLabsEars = {
 const DEEPGRAM_STT_URL = 'https://api.deepgram.com/v1/listen';
 
 export const deepgramEars = {
+  residency: () => declaredResidency('DEEPGRAM_RESIDENCY'),
   id: 'deepgram',
   label: 'Deepgram Nova',
   configured: () => hasSecret('DEEPGRAM_API_KEY'),
@@ -216,6 +220,7 @@ function assemblyTimeoutMs() {
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export const assemblyAiEars = {
+  residency: () => declaredResidency('ASSEMBLYAI_RESIDENCY'),
   id: 'assemblyai',
   label: 'AssemblyAI Universal',
   configured: () => hasSecret('ASSEMBLYAI_API_KEY'),

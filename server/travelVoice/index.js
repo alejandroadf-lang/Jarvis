@@ -36,6 +36,8 @@ import { describeProviders, hasProvider, resolveProvider } from './providers/ind
 import { checkReply } from './replyCheck.js';
 import { readBack } from './spoken.js';
 import { oggOpusDurationSeconds } from './ogg.js';
+import { residencyMode } from './residency.js';
+import { describeAnthropicGateway } from '../agents/anthropicClient.js';
 import {
   consentMode,
   needsDisclosure,
@@ -1280,6 +1282,7 @@ export function travelVoiceStatus() {
     },
     translation: { available: true, languages: SUPPORTED_LANGUAGES },
     handoffs: { open: listOpenHandoffs().map((h) => ({ number: maskNumber(h.number), openedAt: h.openedAt, by: h.by, reason: h.reason, language: h.language })), notifies: escalationNumbers().length },
+    residency: { mode: residencyMode(), anthropic: describeAnthropicGateway() },
     retention: { transcriptDays: retentionDays(), sessionCapUsd: sessionCapUsd() },
     consent: {
       mode: consentMode(),

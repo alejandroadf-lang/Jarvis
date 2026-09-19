@@ -24,6 +24,7 @@ import { EARS } from './stt.js';
 import { BRAINS } from './llm.js';
 import { VOICES } from './tts.js';
 import { overrideFor } from '../providerPrefs.js';
+import { allowedHere, residencyOf, residencyMode, refusal } from '../residency.js';
 
 export const SLOTS = {
   stt: { label: 'Ears (speech to text)', providers: EARS, envName: 'TRAVEL_VOICE_STT_PROVIDER' },
@@ -56,11 +57,12 @@ export function defaultProviderId(kind) {
  * 'none'.
  */
 export function providerSource(kind) {
+  const usable = (p) => p && p.configured() && allowedHere(p);
   const pinned = overrideFor(kind);
-  if (pinned && findProvider(kind, pinned)?.configured()) return 'pinned';
+  if (pinned && usable(findProvider(kind, pinned))) return 'pinned';
   const preset = defaultProviderId(kind);
-  if (preset && findProvider(kind, preset)?.configured()) return 'env';
-  return listProviders(kind).some((p) => p.configured()) ? 'first' : 'none';
+  if (preset && usable(findProvider(kind, preset))) return 'env';
+  return listProviders(kind).some(usable) ? 'first' : 'none';
 }
 
 /**
@@ -75,28 +77,36 @@ export function resolveProvider(kind, requested = null) {
     const chosen = findProvider(kind, requested);
     if (!chosen) throw new Error(`Unknown ${kind} provider "${requested}". Options: ${providers.map((p) => p.id).join(', ')}.`);
     if (!chosen.configured()) throw new Error(`${chosen.label} is not configured — see server/.env.example for what it needs.`);
+    // Named outright and not EU-hosted while residency is eu: refused with
+    // the reason, never swapped. See residency.js.
+    if (!allowedHere(chosen)) throw new Error(refusal(chosen, kind));
     return chosen;
   }
 
+  const usable = (p) => p && p.configured() && allowedHere(p);
+
   // A pin set from a phone. Same fall-through as the environment default: a
   // pin whose key was later removed must not take the demo down, it must
-  // quietly stop applying and say so in the log.
+  // quietly stop applying and say so in the log. A pin that residency now
+  // forbids falls through the same way, and says why.
   const pinned = overrideFor(kind);
   if (pinned) {
     const chosen = findProvider(kind, pinned);
-    if (chosen && chosen.configured()) return chosen;
-    console.warn(`Travel voice: the ${kind} slot is pinned to "${pinned}", which is unknown or has no key; falling through.`);
+    if (usable(chosen)) return chosen;
+    if (chosen && chosen.configured()) console.warn(`Travel voice: the ${kind} slot is pinned to "${pinned}", which is not EU-hosted and residency is eu; falling through.`);
+    else console.warn(`Travel voice: the ${kind} slot is pinned to "${pinned}", which is unknown or has no key; falling through.`);
   }
 
   const preset = defaultProviderId(kind);
   if (preset) {
     const chosen = findProvider(kind, preset);
-    if (chosen && chosen.configured()) return chosen;
-    if (chosen) console.warn(`Travel voice: ${envName}=${preset} is set but ${chosen.label} has no key; using the first configured provider instead.`);
+    if (usable(chosen)) return chosen;
+    if (chosen && chosen.configured()) console.warn(`Travel voice: ${envName}=${preset} is set but ${chosen.label} is not EU-hosted and residency is eu; using the first EU-hosted provider instead.`);
+    else if (chosen) console.warn(`Travel voice: ${envName}=${preset} is set but ${chosen.label} has no key; using the first configured provider instead.`);
     else console.warn(`Travel voice: ${envName}=${preset} names no known provider; using the first configured one instead.`);
   }
 
-  return providers.find((p) => p.configured()) || null;
+  return providers.find(usable) || null;
 }
 
 export function hasProvider(kind) {
@@ -105,7 +115,7 @@ export function hasProvider(kind) {
 
 /** What the tab shows: every option in every slot, and which one is active. */
 export function describeProviders() {
-  const out = {};
+  const out = { residency: residencyMode() };
   for (const [kind, { label }] of Object.entries(SLOTS)) {
     const active = resolveProvider(kind);
     out[kind] = {
@@ -117,6 +127,8 @@ export function describeProviders() {
         id: p.id,
         label: p.label,
         configured: p.configured(),
+        residency: residencyOf(p),
+        allowed: allowedHere(p),
         model: safe(() => p.model()),
         voice: typeof p.voice === 'function' ? safe(() => p.voice()) : undefined,
         languages: p.languages,

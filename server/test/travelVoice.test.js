@@ -250,10 +250,14 @@ test('a clip under two seconds cannot switch the language of a conversation', as
   // Then "oui, merci": one second, and Whisper reports French with no duration
   // of its own — the Ogg pages give it.
   const outside = stubOutside({ transcript: 'oui merci', heard: 'french' });
+  // One buffer, sliced by its own offsets: Buffer.concat draws from a pool,
+  // so three separate fakeOpus() calls do not share a byteOffset.
+  const clip = fakeOpus(1.1);
+  const clipBytes = clip.buffer.slice(clip.byteOffset, clip.byteOffset + clip.length);
   const inner = global.fetch;
   global.fetch = async (url, init) => {
     const u = String(url);
-    if (u === 'https://lookaside/blob') return { ok: true, arrayBuffer: async () => fakeOpus(1.1).buffer.slice(fakeOpus(1.1).byteOffset, fakeOpus(1.1).byteOffset + fakeOpus(1.1).length) };
+    if (u === 'https://lookaside/blob') return { ok: true, arrayBuffer: async () => clipBytes };
     if (u.includes('/audio/transcriptions')) return { ok: true, json: async () => ({ text: 'oui merci', language: 'french' }) };
     return inner(url, init);
   };

@@ -19,6 +19,8 @@
 
 import { MODELS, CHEAP_TIER, OPENAI_TIER, GEMINI_TIER, DEEPSEEK_TIER } from '../../agents/models.js';
 import { hasSecret } from '../../env.js';
+import { anthropicConfigured, anthropicResidency, modelForGateway } from '../../agents/anthropicClient.js';
+import { declaredResidency } from '../residency.js';
 import { override as settingOverride } from '../settings.js';
 import { isOpenAIConfigured, createCompletion as openaiCreate, chatModel as openaiModel } from '../../agents/openai.js';
 import { isIonosConfigured, createCompletion as ionosCreate, ionosModel, ionosPriceSpec } from '../../agents/ionos.js';
@@ -82,7 +84,9 @@ function advisorEffort() {
 export const anthropicBrain = {
   id: 'anthropic',
   label: 'Anthropic Claude',
-  configured: () => hasSecret('ANTHROPIC_API_KEY'),
+  // EU only through an EU region of Bedrock or Vertex; see agents/anthropicClient.js.
+  residency: anthropicResidency,
+  configured: anthropicConfigured,
   model: () => settingOverride('model') || (process.env.TRAVEL_VOICE_MODEL || '').trim() || ADVISOR_MODEL,
   priceSpec() {
     const model = this.model();
@@ -97,7 +101,7 @@ export const anthropicBrain = {
     const effort = advisorEffort();
     return anthropic.messages.create({
       ...request,
-      model: this.model(),
+      model: modelForGateway(this.model()),
       // Anthropic-only, so it is added here rather than by the advisor: the
       // OpenAI-compatible brains would either ignore the field or reject it.
       ...(effort ? { output_config: { effort } } : {}),
@@ -105,10 +109,11 @@ export const anthropicBrain = {
   },
 };
 
-function compatibleBrain({ id, label, configured, model, priceSpec, call }) {
+function compatibleBrain({ id, label, configured, model, priceSpec, call, residency = () => 'unknown' }) {
   return {
     id,
     label,
+    residency,
     configured,
     model,
     priceSpec,
@@ -127,6 +132,8 @@ function compatibleBrain({ id, label, configured, model, priceSpec, call }) {
 export const ionosBrain = compatibleBrain({
   id: 'ionos',
   label: 'IONOS AI Model Hub (EU)',
+  // EU by construction: the Model Hub runs in IONOS's German data centres.
+  residency: () => 'eu',
   configured: isIonosConfigured,
   model: ionosModel,
   priceSpec: ionosPriceSpec,
@@ -136,6 +143,7 @@ export const ionosBrain = compatibleBrain({
 export const openaiBrain = compatibleBrain({
   id: 'openai',
   label: 'OpenAI',
+  residency: () => declaredResidency('OPENAI_RESIDENCY'),
   configured: isOpenAIConfigured,
   model: openaiModel,
   priceSpec: () => MODELS[OPENAI_TIER],
@@ -145,6 +153,7 @@ export const openaiBrain = compatibleBrain({
 export const geminiBrain = compatibleBrain({
   id: 'gemini',
   label: 'Google Gemini',
+  residency: () => declaredResidency('GEMINI_RESIDENCY', { fallback: 'global' }),
   configured: isGeminiConfigured,
   model: geminiModel,
   priceSpec: () => MODELS[GEMINI_TIER],
@@ -154,6 +163,7 @@ export const geminiBrain = compatibleBrain({
 export const deepseekBrain = compatibleBrain({
   id: 'deepseek',
   label: 'DeepSeek',
+  residency: () => declaredResidency('DEEPSEEK_RESIDENCY', { fallback: 'unknown' }),
   configured: isDeepSeekConfigured,
   model: deepSeekModel,
   priceSpec: () => MODELS[DEEPSEEK_TIER],
@@ -163,6 +173,7 @@ export const deepseekBrain = compatibleBrain({
 export const openrouterBrain = compatibleBrain({
   id: 'openrouter',
   label: 'OpenRouter',
+  residency: () => declaredResidency('OPENROUTER_RESIDENCY', { fallback: 'unknown' }),
   configured: isOpenRouterConfigured,
   model: () => MODELS[CHEAP_TIER].model,
   priceSpec: () => MODELS[CHEAP_TIER],
@@ -170,5 +181,22 @@ export const openrouterBrain = compatibleBrain({
 });
 
 export const BRAINS = [anthropicBrain, ionosBrain, openaiBrain, geminiBrain, deepseekBrain, openrouterBrain];
+
+// The second tier: the model that judges, offline, what the live path said.
+//
+// Two tiers is the shape every review of production voice agents ends up
+// recommending: a live path that answers in the time a caller will wait,
+// and a stronger, slower judge that reads samples and simulated
+// conversations afterwards and says what went wrong. The judge runs on
+// the same Anthropic client and gateway; its model is its own variable so
+// the live model can be cut for cost without cutting the eyes on it.
+export function judgeModel() {
+  return (process.env.TRAVEL_VOICE_JUDGE_MODEL || '').trim() || 'claude-opus-5';
+}
+
+export function judgePriceSpec() {
+  const model = judgeModel();
+  return { provider: 'anthropic', model, ...(ANTHROPIC_PRICES[model] || ANTHROPIC_PRICES['claude-fable-5-1']) };
+}
 
 export const __testing = { flattenSystem };

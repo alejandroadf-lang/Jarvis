@@ -9,7 +9,9 @@
     "test": "node --test"
   },
   "dependencies": {
+    "@anthropic-ai/bedrock-sdk": "^0.33.7",
     "@anthropic-ai/sdk": "^0.32.1",
+    "@anthropic-ai/vertex-sdk": "^0.19.10",
     "@honcho-ai/sdk": "^2.4.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",

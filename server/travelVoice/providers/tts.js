@@ -20,6 +20,7 @@
 import { readSecret, hasSecret } from '../../env.js';
 import { SUPPORTED_LANGUAGES } from '../languages.js';
 import { override as settingOverride } from '../settings.js';
+import { declaredResidency } from '../residency.js';
 
 const FORMATS = {
   opus: { mimeType: 'audio/ogg', filename: 'reply.ogg' },
@@ -56,6 +57,7 @@ const OPENAI_INSTRUCTIONS = {
 };
 
 export const openaiVoice = {
+  residency: () => declaredResidency('OPENAI_RESIDENCY'),
   id: 'openai',
   label: 'OpenAI',
   configured: () => hasSecret('OPENAI_API_KEY'),
@@ -123,6 +125,7 @@ export function elevenLabsZeroRetention() {
 }
 
 export const elevenLabsVoice = {
+  residency: () => declaredResidency('ELEVENLABS_RESIDENCY'),
   id: 'elevenlabs',
   label: 'ElevenLabs',
   configured: () => hasSecret('ELEVENLABS_API_KEY'),
@@ -271,6 +274,7 @@ export function __resetDeepgramVoicesForTests() {
 }
 
 export const deepgramVoice = {
+  residency: () => declaredResidency('DEEPGRAM_RESIDENCY'),
   id: 'deepgram',
   label: 'Deepgram Aura',
   configured: () => hasSecret('DEEPGRAM_API_KEY'),

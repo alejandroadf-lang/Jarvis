@@ -115,6 +115,17 @@ export const SETTINGS = {
     fallback: true,
     parse: bool,
   },
+  residency: {
+    label: 'residency',
+    help: 'eu to refuse any provider not hosted in the European Union, any to allow all',
+    envName: 'TRAVEL_VOICE_RESIDENCY',
+    fallback: 'any',
+    parse: (value) => {
+      const v = String(value).trim().toLowerCase();
+      if (!['any', 'eu'].includes(v)) throw new Error('needs to be eu or any');
+      return v;
+    },
+  },
   consent: {
     label: 'consent',
     help: 'required to ask before hearing a voice note, notice to only disclose, off for a demo on your own phone',

@@ -64,7 +64,7 @@ const COMMANDS = [
   { kind: 'say', re: /^travel\s+say\s+(\+?[\d\s()-]{5,}\d)\s*[:—-]?\s+(\S[\s\S]*)$/i },
   { kind: 'take', re: /^travel\s+(?:take|takeover)\s+(\+?[\d\s()-]{6,})$/i },
   { kind: 'resume', re: /^travel\s+(?:resume|release|handback)\s+(\+?[\d\s()-]{6,})$/i },
-  { kind: 'set', re: /^travel\s+(?:set\s+)?(voice|voiceid|language|lang|idioma|langue|length|words|effort|thinking|model|text|retry|limit|rate|tier|consent|cap|sample)\s+(.+)$/i },
+  { kind: 'set', re: /^travel\s+(?:set\s+)?(voice|voiceid|language|lang|idioma|langue|length|words|effort|thinking|model|text|retry|limit|rate|tier|consent|cap|sample|residency)\s+(.+)$/i },
   { kind: 'guests', re: /^travel\s+guests$/i },
   { kind: 'guest_remove', re: /^travel\s+(?:guest\s+)?remove\s+(\+?[\d\s()-]{6,})$/i },
   { kind: 'guest_clear', re: /^travel\s+guests\s+clear$/i },
@@ -114,6 +114,7 @@ TRAVEL TAKE <number> — take a conversation over; the advisor goes quiet on it
 TRAVEL RESUME <number> — hand it back to the advisor
 TRAVEL CONSENTS — who has seen the AI notice and what they answered
 TRAVEL CONSENT required|notice|off — ask before hearing voice, only disclose, or neither
+TRAVEL RESIDENCY eu|any — refuse any provider not hosted in the EU, or allow all
 TRAVEL REMOVE <number> — take someone off the list
 TRAVEL EARS|BRAIN|VOICE <provider> — switch one mid-demo
 TRAVEL SETTINGS — every dial and what it is on
@@ -203,6 +204,7 @@ export async function runTravelCommand(command, deps = {}) {
         `spend today: ${formatUsd(spend.spentUsd)} of ${formatUsd(spend.capUsd)}${spend.overCap ? ' — CAP REACHED, nothing will answer' : ''}`,
         `guests invited: ${guests}`,
         `consent: ${consentMode()}`,
+        `residency: ${described.residency}${described.residency === 'eu' ? ' (only EU-hosted providers answer)' : ''}`,
       ].join('\n');
     }
 
