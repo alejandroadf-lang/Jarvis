@@ -220,3 +220,68 @@ test('the domain brief covers what agencies actually ring about', () => {
   assert.match(brief, /Spanish, French and English/);
   assert.match(brief, /Never invent/);
 });
+
+// --- money only from a source ---------------------------------------------------
+
+test('an amount with no tool result and no caller mention behind it is corrected once', async () => {
+  const client = stubClient([
+    textResponse('The change fee is 150 euros plus the fare difference.'),
+    (request) => {
+      const last = request.messages[request.messages.length - 1];
+      assert.equal(last.role, 'user');
+      assert.match(last.content, /150 euros/, 'the correction names the invented amount');
+      assert.match(last.content, /came from no search result/);
+      assert.equal(request.tools, undefined, 'no tools on the correction');
+      return textResponse('The change fee is set by the fare rule: check FQN on category 31 and quote what it returns, plus any fare difference.');
+    },
+  ]);
+
+  const result = await advisor.runAdvisorTurn({ anthropic: client, text: 'What is the change fee on this ticket?', language: 'en' });
+
+  assert.equal(client.calls.length, 2);
+  assert.deepEqual(result.grounding, { ungrounded: ['150 euros'], corrected: true, stillUngrounded: [] });
+  assert.match(result.reply, /category 31/);
+});
+
+test('an amount the caller said, or a tool returned, is not questioned', async () => {
+  const echoed = stubClient([textResponse('Sí, los 300 euros que pagó el cliente se reembolsan según la categoría 33.')]);
+  const a = await advisor.runAdvisorTurn({ anthropic: echoed, text: 'El cliente pagó 300 € y quiere el reembolso', language: 'es' });
+  assert.equal(echoed.calls.length, 1, 'no correction');
+  assert.equal(a.grounding, null);
+  assert.deepEqual(a.amounts, ['300 euros']);
+
+  process.env.AMADEUS_CLIENT_ID = 'id';
+  process.env.AMADEUS_CLIENT_SECRET = 'secret';
+  const searched = stubClient([
+    { stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'tu_1', name: 'search_flight_offers', input: { origin: 'MAD', destination: 'CDG', departureDate: '2026-10-01' } }], usage: { input_tokens: 1, output_tokens: 1 } },
+    textResponse('La más barata sale a 189,40 € con Iberia.'),
+  ]);
+  const b = await advisor.runAdvisorTurn({
+    anthropic: searched, text: 'La más barata MAD CDG', language: 'es',
+    tools: async () => [{ price: { total: '189.40', currency: 'EUR' } }],
+  });
+  assert.equal(searched.calls.length, 2, 'the tool round and the answer, nothing more');
+  assert.equal(b.grounding, null);
+});
+
+test('the correction can be switched off, and the ungrounded amount is still recorded', async () => {
+  process.env.TRAVEL_VOICE_GROUNDING_RETRY = 'false';
+  try {
+    const client = stubClient([textResponse('Compensation is €600 for that route.')]);
+    const result = await advisor.runAdvisorTurn({ anthropic: client, text: 'Delayed 5 hours MAD to JFK, what compensation?', language: 'en' });
+    assert.equal(client.calls.length, 1);
+    assert.deepEqual(result.grounding, { ungrounded: ['€600'], corrected: false });
+  } finally {
+    delete process.env.TRAVEL_VOICE_GROUNDING_RETRY;
+  }
+});
+
+test('the prompt pins the formal register and forbids reading the person', () => {
+  const es = advisor.__testing.languageInstruction('es');
+  assert.match(es, /de usted en todo momento/);
+  const fr = advisor.__testing.languageInstruction('fr');
+  assert.match(fr, /Vouvoyez/);
+  assert.match(advisor.__testing.DOMAIN_BRIEF, /MONEY ONLY FROM A SOURCE/);
+  assert.match(advisor.__testing.DOMAIN_BRIEF, /Never assert that a particular passenger is or is not entitled/);
+  assert.match(advisor.__testing.DOMAIN_BRIEF, /Never infer, mention or act on the caller's emotional state/);
+});

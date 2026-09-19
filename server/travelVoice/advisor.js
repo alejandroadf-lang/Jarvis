@@ -24,6 +24,7 @@ import { LANGUAGE_NAMES, normalizeLanguage, DEFAULT_LANGUAGE } from './languages
 import { isAmadeusConfigured, lookupLocations, searchFlightOffers, amadeusEnvironment } from './amadeus.js';
 import { resolveProvider } from './providers/index.js';
 import { checkReply, correctionPrompt, languageRetryEnabled } from './replyCheck.js';
+import { groundingCheck, groundingCorrectionPrompt, groundingRetryEnabled } from './grounding.js';
 
 const MAX_TOOL_ROUNDS = 4;
 
@@ -62,13 +63,29 @@ HOW YOU ANSWER
 - You are usually being heard, not read. Keep replies to what fits in a spoken voice note: roughly 60 to 150 words. No markdown, no bullet lists, no tables — say "first, second, third" instead. Spell out entries as they would be typed, e.g. "F X P" is not needed; say the entry as text: FXP.
 - If the question is ambiguous, ask ONE precise question rather than answering three versions.
 - Never invent a specific fare, a rule for a named airline, or a schedule. Where a rule depends on the carrier or the fare, say which category to check (for example FQN on category 16) and that the fare rule wins. Where a live price is asked for and you have a search tool, use it; where you have none, say plainly that you cannot see live fares and explain how the agent can check.
+- MONEY ONLY FROM A SOURCE. Every fare, fee, penalty, tax or compensation amount you state must come from a tool result of this conversation or from the caller's own words. Quote a searched price exactly as returned — currency and cents included — and say which search it came from. If you have no source for an amount, do not estimate one: name the entry or the rule category that gives it.
+- EU261 AND PASSENGER RIGHTS. Say which case applies (delay, cancellation, denied boarding), what the regulation provides in outline and which distance band and cause it turns on. Never assert that a particular passenger is or is not entitled to compensation: extraordinary circumstances, connections and rebooking decide that, and the agent should confirm with the carrier or the national enforcement body.
+- NOTHING ABOUT THE PERSON. You respond to what was asked. Never infer, mention or act on the caller's emotional state, mood, age, gender, health, origin or identity from their voice, accent or words, and never try to recognise who is speaking.
 - When you use a tool, read the results back the way a colleague would over the phone: the cheapest option first with its total price, airline, stops and rough timings, then one alternative. Do not list more than three itineraries.
 - You give industry guidance, not legal advice. For disputes, say what the documented rule is and recommend the agent confirm with the carrier or their BSP/IATA contact.
 - Stay in the travel and Amadeus domain. If asked something unrelated, say briefly that this line is for travel and GDS questions and offer to help with one.`;
 
+// The register of a professional line, pinned per language rather than
+// left to the model. A model translating "you" into Spanish or French
+// picks tú/tu far more often than an agency would, and — the documented
+// failure — hedges on the formal register by avoiding the second person
+// altogether, which reads as evasive. So the form is stated.
+const REGISTER = {
+  es: 'Trate al interlocutor de usted en todo momento, incluso si él le tutea, y use el usted de forma natural en lugar de evitar la segunda persona. Español neutro, sin regionalismos marcados salvo que el interlocutor los use.',
+  fr: "Vouvoyez l'interlocuteur en toute circonstance, même s'il vous tutoie, et employez le vous naturellement plutôt que d'éviter la deuxième personne. Français standard.",
+  en: 'Use a professional, courteous register, as a helpdesk colleague would. Address the caller directly rather than avoiding the second person.',
+};
+
 function languageInstruction(language) {
   const names = LANGUAGE_NAMES[language] || LANGUAGE_NAMES[DEFAULT_LANGUAGE];
-  return `LANGUAGE: Reply entirely in ${names.english} (${names.native}). The caller is using it. Do not switch unless they explicitly ask you to, and if they ask, switch for the rest of the conversation. Keep IATA codes, airline names and Amadeus entries as they are.`;
+  const register = REGISTER[language] || REGISTER[DEFAULT_LANGUAGE];
+  return `LANGUAGE: Reply entirely in ${names.english} (${names.native}). The caller is using it. Do not switch unless they explicitly ask you to, and if they ask, switch for the rest of the conversation. Keep IATA codes, airline names and Amadeus entries as they are.
+REGISTER: ${register}`;
 }
 
 function toolsAvailable() {
@@ -152,6 +169,10 @@ export async function runAdvisorTurn({ anthropic = null, provider = null, histor
   const messages = [...history, { role: 'user', content: String(text) }];
   const usage = { inputTokens: 0, outputTokens: 0, cacheWriteTokens: 0, cacheReadTokens: 0, costUsd: 0 };
   const toolCalls = [];
+  // What every amount in the answer will be checked against: the tool
+  // results of this turn and the caller's own words, this turn and before.
+  const toolOutputs = [];
+  const callerText = [String(text), ...history.filter((m) => m.role === 'user' && typeof m.content === 'string').map((m) => m.content)];
 
   // One call, metered. Shared by the tool loop and the language correction
   // below so both are billed and capped the same way — a correction that
@@ -202,7 +223,9 @@ export async function runAdvisorTurn({ anthropic = null, provider = null, histor
       toolCalls.push({ name: use.name, input: use.input });
       try {
         const output = await tools(use.name, use.input || {});
-        results.push({ type: 'tool_result', tool_use_id: use.id, content: JSON.stringify(output).slice(0, 12000) });
+        const content = JSON.stringify(output).slice(0, 12000);
+        toolOutputs.push(content);
+        results.push({ type: 'tool_result', tool_use_id: use.id, content });
       } catch (err) {
         results.push({ type: 'tool_result', tool_use_id: use.id, is_error: true, content: err.message });
       }
@@ -243,6 +266,35 @@ export async function runAdvisorTurn({ anthropic = null, provider = null, histor
     }
   }
 
+  // Is every amount in it backed by a tool result or by the caller? An
+  // invented fare gets the same treatment as a wrong language: one
+  // correction, recorded either way. See grounding.js.
+  let ground = groundingCheck(reply, { toolOutputs, callerText });
+  let grounding = null;
+  if (ground.ungrounded.length) {
+    grounding = { ungrounded: ground.ungrounded.map((a) => a.text), corrected: false };
+    if (groundingRetryEnabled()) {
+      messages.push({ role: 'user', content: groundingCorrectionPrompt(lang, ground.ungrounded) });
+      try {
+        const { content } = await ask({ withTools: false });
+        const rewritten = textOf(content);
+        if (rewritten) {
+          const recheck = groundingCheck(rewritten, { toolOutputs, callerText });
+          // Kept even if still ungrounded: the amounts are recorded and the
+          // founder sees them in the log; the alternative is silence.
+          reply = rewritten;
+          check = checkReply(reply, { language: lang });
+          ground = recheck;
+          grounding.corrected = recheck.ungrounded.length === 0;
+          grounding.stillUngrounded = recheck.ungrounded.map((a) => a.text);
+        }
+      } catch (err) {
+        grounding.error = err.message;
+        if (String(err?.message || '').startsWith('Daily spend cap reached')) grounding.error = 'daily spend cap reached before the correction could run';
+      }
+    }
+  }
+
   return {
     reply,
     messages,
@@ -255,6 +307,9 @@ export async function runAdvisorTurn({ anthropic = null, provider = null, histor
     // in the wrong language and had to be asked again, and how long it ran.
     // The numbers that say which brain can be trusted with a phone call.
     drift,
+    // Amounts with no source behind them, and whether the correction fixed it.
+    grounding,
+    amounts: ground.amounts.map((a) => a.text),
     words: check.words,
     tooLong: check.tooLong,
     ms: Date.now() - startedAt,

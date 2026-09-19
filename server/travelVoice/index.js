@@ -321,7 +321,7 @@ export async function runTravelVoiceTurn({
   // Whether the brain answered in the language it was told to, and how long
   // it ran on. Carried out of the turn because it is the evidence behind
   // "this model cannot be trusted on a Spanish line" — see replyCheck.js.
-  const quality = { drift: turn.drift, words: turn.words, tooLong: turn.tooLong };
+  const quality = { drift: turn.drift, grounding: turn.grounding, amounts: turn.amounts, words: turn.words, tooLong: turn.tooLong };
 
   const trimmed = trimHistory(turn.messages);
   saveSession(SESSION_KIND, sessionId, trimmed);
@@ -700,6 +700,7 @@ export async function handleTravelVoiceMessage(message, { anthropic, phoneNumber
     // Only recorded when something was actually wrong with the answer, so a
     // scan down the log shows the bad turns rather than a column of nulls.
     ...(result.drift ? { drift: result.drift } : {}),
+    ...(result.grounding ? { grounding: result.grounding } : {}),
     ...(result.tooLong ? { words: result.words } : {}),
     costUsd: result.costUsd,
     durationMs: Date.now() - startedAt,
