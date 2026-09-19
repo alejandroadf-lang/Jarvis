@@ -28,6 +28,8 @@ import { MODELS, CHEAP_TIER } from './agents/models.js';
 import { readSecret } from './env.js';
 import { getStorageStatus } from './storage.js';
 import { accessStatus } from './auth.js';
+import { travelVoiceCapabilities, travelVoicePhoneNumberId } from './travelVoice/index.js';
+import { isAmadeusConfigured, amadeusEnvironment, amadeusHost } from './travelVoice/amadeus.js';
 
 // A probe must never hang a page load. Both services are normally fast; if
 // one isn't, "couldn't reach it" is a more useful answer than a spinner.
@@ -354,14 +356,58 @@ async function probeDeepSeek() {
   }
 }
 
+/**
+ * Asks Amadeus for a token — the one call that proves the client id and
+ * secret are accepted, and it returns no fares, so it costs nothing against
+ * the sandbox quota.
+ */
+async function probeAmadeus() {
+  if (!isAmadeusConfigured()) {
+    return notConfigured('Not set — the travel advisor explains Amadeus but cannot quote live fares.');
+  }
+  try {
+    const body = new URLSearchParams({
+      grant_type: 'client_credentials',
+      client_id: readSecret('AMADEUS_CLIENT_ID'),
+      client_secret: readSecret('AMADEUS_CLIENT_SECRET'),
+    });
+    const res = await withTimeout(
+      fetch(`${amadeusHost()}/v1/security/oauth2/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body,
+      }),
+      'Amadeus'
+    );
+    if (res.status === 401 || res.status === 400) {
+      return { configured: true, ok: false, detail: 'Credentials rejected. Check AMADEUS_CLIENT_ID and AMADEUS_CLIENT_SECRET, and that AMADEUS_ENV matches the app they belong to.' };
+    }
+    if (!res.ok) return { configured: true, ok: false, detail: `Amadeus returned ${res.status}.` };
+    return { configured: true, ok: true, detail: `Credentials accepted — the advisor can search live flight offers on the ${amadeusEnvironment()} environment.` };
+  } catch (err) {
+    return { configured: true, ok: false, detail: `Couldn't reach Amadeus: ${err.message}` };
+  }
+}
+
+function travelVoiceIntegration() {
+  const caps = travelVoiceCapabilities();
+  if (!caps.text) return notConfigured('Needs ANTHROPIC_API_KEY.');
+  const parts = [];
+  parts.push(caps.voice ? 'voice in and out' : 'text only (set OPENAI_API_KEY for voice)');
+  parts.push(caps.whatsapp ? `on WhatsApp number ${travelVoicePhoneNumberId()}` : 'browser only (set TRAVEL_VOICE_PHONE_NUMBER_ID for WhatsApp)');
+  parts.push(caps.liveCalls ? 'live calls on' : 'voice notes, not live calls');
+  return { configured: true, ok: caps.voice ? true : null, detail: `Spanish, French and English — ${parts.join('; ')}.` };
+}
+
 export async function getIntegrationStatus() {
-  const [openrouter, honcho, whatsapp, openai, gemini, deepseek] = await Promise.all([
+  const [openrouter, honcho, whatsapp, openai, gemini, deepseek, amadeus] = await Promise.all([
     probeOpenRouter(),
     probeHoncho(),
     probeWhatsApp(),
     probeOpenAI(),
     probeGemini(),
     probeDeepSeek(),
+    probeAmadeus(),
   ]);
 
   return {
@@ -388,6 +434,8 @@ export async function getIntegrationStatus() {
     deepseek,
     honcho,
     whatsapp,
+    amadeus,
+    travelVoice: travelVoiceIntegration(),
     // These two predate the probes and fail loudly at the point of use (an
     // action tool returns the reason), so presence is the useful signal.
     email: {

@@ -97,6 +97,22 @@ export function extractMessage(body) {
     id: message.id,
     from: message.from,
     type: message.type,
+    // Which business number this arrived on. One Meta app can own several,
+    // and the travel advisor answers on its own (see travelVoice/index.js),
+    // so the webhook routes on this rather than assuming every message is
+    // for the founder's company line.
+    phoneNumberId: value?.metadata?.phone_number_id || null,
+    // A caller answering a call-permission request (see travelVoice/calls.js)
+    // arrives as an interactive message. Surfaced here so the caller of
+    // extractMessage never has to know the interactive payload's shape.
+    callPermission:
+      message.type === 'interactive' && message.interactive?.type === 'call_permission_reply'
+        ? {
+            response: message.interactive.call_permission_reply?.response || null,
+            expiresAt: message.interactive.call_permission_reply?.expiration_timestamp || null,
+            permanent: Boolean(message.interactive.call_permission_reply?.is_permanent),
+          }
+        : null,
     // An image can carry a caption, and the caption is usually the actual
     // question — "is this the right setting?" over a screenshot. Treated as
     // the message text so everything downstream works unchanged.
@@ -158,11 +174,12 @@ export async function downloadMedia(mediaId) {
  * Sends a message back. Long replies are split: WhatsApp rejects bodies over
  * 4096 characters, and a synthesised team answer can exceed that.
  */
-export async function sendWhatsAppMessage(to, text) {
-  if (!process.env.WHATSAPP_TOKEN || !process.env.WHATSAPP_PHONE_NUMBER_ID) return false;
+export async function sendWhatsAppMessage(to, text, { phoneNumberId = null } = {}) {
+  const from = phoneNumberId || process.env.WHATSAPP_PHONE_NUMBER_ID;
+  if (!process.env.WHATSAPP_TOKEN || !from) return false;
 
   for (const chunk of splitForWhatsApp(text)) {
-    const res = await fetch(`${GRAPH_API}/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`, {
+    const res = await fetch(`${GRAPH_API}/${from}/messages`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
@@ -204,6 +221,92 @@ export function splitForWhatsApp(text) {
   return chunks.map((c, i) => (chunks.length > 1 ? `(${i + 1}/${chunks.length}) ${c}` : c));
 }
 
+/**
+ * Uploads a media file so it can be sent. Meta's Send API takes a media id,
+ * never bytes, so every voice reply is two calls: upload, then send.
+ *
+ * @returns {Promise<string>} the media id
+ */
+export async function uploadMedia(buffer, { mimeType, filename = 'file', phoneNumberId = null } = {}) {
+  const token = process.env.WHATSAPP_TOKEN;
+  const from = phoneNumberId || process.env.WHATSAPP_PHONE_NUMBER_ID;
+  if (!token || !from) throw new Error('WhatsApp is not configured (token or phone number id missing)');
+
+  const form = new FormData();
+  form.append('messaging_product', 'whatsapp');
+  form.append('type', mimeType);
+  form.append('file', new Blob([buffer], { type: mimeType }), filename);
+
+  const res = await fetch(`${GRAPH_API}/${from}/media`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: form, // no Content-Type: fetch sets the multipart boundary itself
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '');
+    throw new Error(`WhatsApp media upload failed (${res.status}): ${detail.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  if (!data?.id) throw new Error('WhatsApp returned no media id for the upload');
+  return data.id;
+}
+
+/**
+ * Sends a voice note. WhatsApp renders Ogg Opus as a playable note with a
+ * waveform; other audio types arrive as a file attachment, which is why the
+ * advisor synthesises Opus (see travelVoice/speech.js).
+ */
+export async function sendWhatsAppAudio(to, buffer, { mimeType = 'audio/ogg', filename = 'reply.ogg', phoneNumberId = null } = {}) {
+  const from = phoneNumberId || process.env.WHATSAPP_PHONE_NUMBER_ID;
+  if (!process.env.WHATSAPP_TOKEN || !from) return false;
+
+  const mediaId = await uploadMedia(buffer, { mimeType, filename, phoneNumberId: from });
+  const res = await fetch(`${GRAPH_API}/${from}/messages`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      messaging_product: 'whatsapp',
+      to: normalizeNumber(to),
+      type: 'audio',
+      audio: { id: mediaId },
+    }),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '');
+    throw new Error(`WhatsApp audio send failed (${res.status}): ${detail.slice(0, 200)}`);
+  }
+  return true;
+}
+
+/**
+ * Sends an arbitrary message object — an interactive call-permission request,
+ * say — from a given business number. The text and audio helpers above cover
+ * the common cases; this is the escape hatch the calling API needs.
+ */
+export async function sendWhatsAppPayload(to, payload, { phoneNumberId = null } = {}) {
+  const from = phoneNumberId || process.env.WHATSAPP_PHONE_NUMBER_ID;
+  if (!process.env.WHATSAPP_TOKEN || !from) return null;
+
+  const res = await fetch(`${GRAPH_API}/${from}/messages`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ messaging_product: 'whatsapp', recipient_type: 'individual', to: normalizeNumber(to), ...payload }),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '');
+    throw new Error(`WhatsApp send failed (${res.status}): ${detail.slice(0, 200)}`);
+  }
+  return res.json().catch(() => ({}));
+}
+
+export { normalizeNumber };
+
 // Meta retries a delivery it thinks failed, so the same message id can
 // arrive more than once. Running a team turn twice would cost real money and
 // could fire an action tool twice, so ids are remembered for a while.
@@ -225,9 +328,6 @@ export function __resetDedupForTests() {
   seenIds.clear();
 }
 
-// No transcription service is wired into this app, so a voice note can't be
-// turned into a question. Saying so is better than silence, which reads as
-// the company ignoring you.
 // Claude reads these; anything else has to be described rather than shown.
 export const SUPPORTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 

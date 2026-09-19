@@ -115,6 +115,25 @@ import {
   formatPlanForWhatsApp,
 } from './dailyPlan.js';
 import { isOpenAIConfigured, transcribeAudio } from './agents/openai.js';
+import {
+  isTravelVoiceNumber,
+  isTravelVoiceCallerAllowed,
+  handleTravelVoiceMessage,
+  handleTravelVoiceCall,
+  runTravelVoiceTurn,
+  resetTravelVoiceSession,
+  startTravelVoiceOutreach,
+  ensureTravelVoiceVenture,
+  travelVoiceStatus,
+  travelVoicePhoneNumberId,
+  parseAdvisorModeCommand,
+  setAdvisorMode,
+  isAdvisorMode,
+  isTravelVoiceConfigured,
+  maskNumber,
+} from './travelVoice/index.js';
+import { extractCallEvent, recordCallPermission } from './travelVoice/calls.js';
+import { localized, normalizeLanguage, SUPPORTED_LANGUAGES } from './travelVoice/languages.js';
 import { listWeeklyReflections, getWeeklyReflection, getLatestWeeklyReflection } from './weeklyReflections.js';
 import { startWeeklyReflectionScheduler, runWeeklyReflectionNow, isWeeklyReflectionRunning } from './weeklyScheduler.js';
 import { startInboxWatcher } from './inboxWatch.js';
@@ -769,6 +788,22 @@ app.post('/api/whatsapp/webhook', (req, res) => {
   // Acknowledge now. Every path below this line runs after the response.
   res.sendStatus(200);
 
+  // A voice call on the advisor's number. Call events share this webhook
+  // with messages and are handled in travelVoice/calls.js; on any other
+  // number they are noted and nothing more, since the company line has no
+  // one to pick up.
+  const callEvent = extractCallEvent(req.body);
+  if (callEvent) {
+    if (isTravelVoiceNumber(callEvent.phoneNumberId)) {
+      handleTravelVoiceCall(callEvent, { phoneNumberId: callEvent.phoneNumberId }).catch((err) => {
+        console.error('Travel voice: failed to handle a call event:', err);
+      });
+    } else {
+      console.warn(`WhatsApp: a call event arrived on ${callEvent.phoneNumberId || 'an unknown number'}, which takes no calls.`);
+    }
+    return;
+  }
+
   const message = extractMessage(req.body);
   if (!message) {
     // Delivery and read receipts arrive here too. Worth counting even though
@@ -776,6 +811,24 @@ app.post('/api/whatsapp/webhook', (req, res) => {
     // webhook at all, which is the first thing in question when a message
     // seems to vanish.
     recordReceipt();
+    return;
+  }
+
+  // The advisor's own number. Anyone may write to it (see travelVoice/index.js
+  // for why that is safe), and nothing behind it can reach the company.
+  if (isTravelVoiceNumber(message.phoneNumberId)) {
+    if (isDuplicate(message.id)) return;
+    if (message.callPermission) {
+      recordCallPermission(message.from, message.callPermission);
+      return;
+    }
+    if (!isTravelVoiceCallerAllowed(message.from)) {
+      console.warn(`Travel voice: ignoring a message from ${maskNumber(message.from)}, outside TRAVEL_VOICE_ALLOWED_NUMBERS.`);
+      return;
+    }
+    handleTravelVoiceMessage(message, { anthropic, phoneNumberId: message.phoneNumberId }).catch((err) => {
+      console.error('Travel voice: failed to handle a message:', err);
+    });
     return;
   }
 
@@ -800,6 +853,37 @@ app.post('/api/whatsapp/webhook', (req, res) => {
 
 async function handleWhatsAppMessage(message) {
   let text = message.text.trim();
+
+  // The founder trying the advisor from their own phone, without a second
+  // Meta number: TRAVEL ON routes everything to the advisor until TRAVEL
+  // OFF. Decided before transcription, because a voice note in advisor mode
+  // is the advisor's to hear and answer in kind.
+  const advisorMode = parseAdvisorModeCommand(text);
+  if (advisorMode) {
+    if (!isTravelVoiceConfigured()) {
+      await sendWhatsAppMessage(message.from, 'The travel advisor needs ANTHROPIC_API_KEY set before it can answer.');
+      return;
+    }
+    setAdvisorMode(message.from, advisorMode === 'on');
+    recordInbound({ stage: STAGES.ANSWERED, from: message.from, text, detail: `travel advisor mode ${advisorMode}` });
+    await sendWhatsAppMessage(message.from, localized(advisorMode === 'on' ? 'demoModeOn' : 'demoModeOff', 'en'));
+    return;
+  }
+  if (isAdvisorMode(message.from)) {
+    const startedAt = Date.now();
+    const outcome = await handleTravelVoiceMessage(message, {
+      anthropic,
+      phoneNumberId: message.phoneNumberId || process.env.WHATSAPP_PHONE_NUMBER_ID,
+    });
+    recordInbound({
+      stage: outcome.stage === 'answered' ? STAGES.ANSWERED : outcome.stage === 'failed' ? STAGES.FAILED : STAGES.UNSUPPORTED_TYPE,
+      from: message.from,
+      text,
+      detail: `travel advisor: ${outcome.stage}${outcome.language ? ` (${outcome.language})` : ''}`,
+      durationMs: Date.now() - startedAt,
+    });
+    return;
+  }
 
   // A voice note is the natural way to brief a team while walking, and it
   // used to get an apology. Transcribed here rather than inside the company
@@ -1012,6 +1096,106 @@ function ackDisabled() {
 function isVoiceNote(message) {
   return message.type === 'audio' || message.type === 'voice';
 }
+
+// --- Travel voice advisor -------------------------------------------------
+//
+// The venture's product, reachable from the browser as well as from
+// WhatsApp so it can be tried and demonstrated without a Meta number. See
+// travelVoice/index.js.
+
+app.get('/api/travel-voice/status', (_req, res) => {
+  res.json(travelVoiceStatus());
+});
+
+// One exchange. Either JSON { sessionId, text, language } or a raw audio
+// body (Content-Type audio/webm, audio/ogg, audio/mp4…) with the session id
+// and language in the query string. Audio comes back base64 in the JSON
+// rather than as a second request, so a voice turn is one round trip.
+const audioBody = express.raw({ type: ['audio/*', 'application/octet-stream'], limit: '15mb' });
+
+app.post('/api/travel-voice/turn', audioBody, async (req, res) => {
+  const isAudio = Buffer.isBuffer(req.body) && req.body.length > 0;
+  const sessionId = String((isAudio ? req.query.sessionId : req.body?.sessionId) || '').trim();
+  const language = normalizeLanguage(isAudio ? req.query.language : req.body?.language);
+  const text = isAudio ? '' : String(req.body?.text || '').trim();
+  const wantAudio = isAudio ? req.query.audio !== 'false' : Boolean(req.body?.wantAudio);
+
+  if (!sessionId) return res.status(400).json({ error: 'sessionId is required' });
+  if (!isAudio && !text) return res.status(400).json({ error: 'Send text, or an audio body' });
+  if (!isTravelVoiceConfigured()) return res.status(500).json({ error: 'Server is missing ANTHROPIC_API_KEY' });
+  if (isAudio && !isOpenAIConfigured()) {
+    return res.status(400).json({ error: 'Voice needs OPENAI_API_KEY set. Send text instead.' });
+  }
+
+  try {
+    const contentType = String(req.get('content-type') || '');
+    const filename = contentType.includes('webm') ? 'voice.webm' : contentType.includes('mp4') ? 'voice.mp4' : contentType.includes('mpeg') ? 'voice.mp3' : contentType.includes('wav') ? 'voice.wav' : 'voice.ogg';
+    const result = await runTravelVoiceTurn({
+      anthropic,
+      sessionId: `web-${sessionId}`,
+      text,
+      audio: isAudio ? req.body : null,
+      filename,
+      language,
+      wantAudio,
+    });
+    if (result.empty) {
+      return res.json({ transcript: '', language: result.language, reply: localized('emptyVoiceNote', result.language), empty: true });
+    }
+    res.json({
+      transcript: result.transcript,
+      language: result.language,
+      languageSource: result.languageSource,
+      reply: result.reply,
+      toolCalls: result.toolCalls,
+      audio: result.audio ? result.audio.buffer.toString('base64') : null,
+      audioMimeType: result.audio ? result.audio.mimeType : null,
+      audioError: result.audioError,
+      costUsd: result.costUsd,
+      durationMs: result.durationMs,
+    });
+  } catch (err) {
+    // The reason goes back: a transcription failure and a spend-cap stop
+    // need different fixes, and a generic 502 hides which one it was.
+    console.error('Travel voice turn failed:', err);
+    const status = String(err?.message || '').startsWith('Daily spend cap reached') ? 429 : 502;
+    res.status(status).json({ error: err.message || 'The travel advisor could not answer' });
+  }
+});
+
+app.post('/api/travel-voice/reset', (req, res) => {
+  const sessionId = String(req.body?.sessionId || '').trim();
+  if (sessionId) resetTravelVoiceSession(`web-${sessionId}`);
+  res.json({ ok: true });
+});
+
+// Reach out first: a call-permission request, an introduction, and the
+// message spoken as a voice note. Real messages to a real phone, so this is
+// behind the app token like every other real action here, and refused when
+// the advisor has no number of its own.
+app.post('/api/travel-voice/outreach', async (req, res) => {
+  const { to, language, message } = req.body || {};
+  const phoneNumberId = travelVoicePhoneNumberId();
+  if (!phoneNumberId) {
+    return res.status(400).json({ error: 'Set TRAVEL_VOICE_PHONE_NUMBER_ID — the advisor needs its own WhatsApp number to reach out from.' });
+  }
+  if (!to) return res.status(400).json({ error: 'to (a phone number) is required' });
+  if (language && !normalizeLanguage(language)) {
+    return res.status(400).json({ error: `language must be one of ${SUPPORTED_LANGUAGES.join(', ')}` });
+  }
+  try {
+    const outcome = await startTravelVoiceOutreach(to, { phoneNumberId, language, message });
+    res.json(outcome);
+  } catch (err) {
+    const status = String(err?.message || '').startsWith('Daily spend cap reached') ? 429 : 400;
+    res.status(status).json({ error: err.message || 'Could not reach out' });
+  }
+});
+
+// Puts the advisor on the portfolio so the team can sell and report on it.
+app.post('/api/travel-voice/venture', (_req, res) => {
+  res.json(ensureTravelVoiceVenture());
+});
 
 // What the webhook has actually seen. An empty list here is a diagnosis in
 // itself: Meta is not calling the webhook, so the problem is in the Meta

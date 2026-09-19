@@ -755,14 +755,102 @@ fire an action tool a second time, so ids are remembered for ten minutes.
 synthesised team answer can exceed that, so replies split on paragraph
 boundaries with a `(1/3)` marker rather than failing the send.
 
-**Voice notes.** No transcription service is wired into this app, so a voice
-note gets a plain explanation instead of silence — silence reads as the
-company ignoring you. Adding transcription means adding a provider; that's a
-deliberate gap, not an oversight.
+**Voice notes.** With `OPENAI_API_KEY` set, a voice note is transcribed and
+reaches the team as text; without it, the note gets a plain explanation
+naming the missing key rather than silence — silence reads as the company
+ignoring you.
+
+**More than one number.** Every message carries the id of the business
+number it arrived at, and the webhook routes on it: the founder's line goes
+to the company, the travel advisor's line (next section) goes to the
+advisor. One Meta app, two products, no shared session.
 
 **Session isolation.** The sender's number keys the conversation
 (`whatsapp-<number>`), so a WhatsApp thread has its own continuous history
 rather than colliding with the web app's.
+
+## The first product: a travel voice advisor
+
+Everything above is a company that can build and sell. This is the first
+thing it has to sell: a voice-to-voice Amadeus and travel-industry helpdesk
+on WhatsApp, in Spanish, French and English. A travel agent sends a voice
+note — a PNR that will not price, a fare rule nobody can read, a client
+shouting about a refund — and a senior advisor answers in a voice note in
+the same language, within the time it takes to read a text. Code:
+`server/travelVoice/`; the Travel Voice tab is the same advisor in a
+browser.
+
+### Not a member of the team
+
+The advisor is one agent with a domain brief and at most two read-only
+tools (an airport lookup and a fare search). It is deliberately *not* on the
+org chart. The company's agents delegate to each other and can act — deploy,
+email, book revenue — and a stranger on a phone must never reach any of
+that. So the advisor has no way to reach the org chart, and its WhatsApp
+number is open to any caller by default: behind it are a per-caller hourly
+limit, the daily spend cap, and nothing that can act. The founder's line is
+allowlisted because of what sits behind it; a helpdesk nobody can ring is
+not a helpdesk.
+
+### Language is decided before the model is asked
+
+A text chat survives answering in the wrong language for a turn. A voice
+reply in the wrong language is thirty seconds of noise on a phone. So the
+language is resolved in `languages.js` and *stated* in the prompt rather
+than left to the model's judgement, in a fixed order of trust: what the
+caller chose, what Whisper heard, a word-frequency guess over the text, the
+previous turn's language, then English. The guess says "don't know" on a
+string of IATA codes rather than picking a side, and a weak guess cannot flip
+a conversation out of its language mid-way. "En français, s'il vous plaît"
+in any of the three switches for the rest of the conversation. Every message
+the plumbing sends on its own behalf — "that note was empty", "you've sent a
+lot in a short time" — exists in all three.
+
+### Voice in, voice out, and the words as well
+
+Transcription and synthesis both run on the OpenAI key that already
+transcribes the founder's voice notes. Whisper reports the language it
+heard; the reply is synthesised as Ogg Opus, which WhatsApp plays as a voice
+note with a waveform rather than delivering as a file. A voice note is
+answered with a voice note *and* the words as a text, because an Amadeus
+entry is easier to copy than to remember from audio. Audio is billed by the
+minute and the character rather than the token, so it is metered into the
+daily spend cap with its own prices, pinned by hand like every price here.
+
+### It can look, not just explain
+
+The advisor knows Amadeus the way a trainer does — the cryptic entries
+agencies actually type, the PNR lifecycle, what the letters on a fare basis
+signal, NDC, EU261, BSP — and is told never to invent a specific fare or a
+named airline's rule. With Amadeus Self-Service credentials it searches: live
+flight offers and airport codes, summarised to what a person would read out
+over the phone, the cheapest first. Without them it says plainly that it
+cannot see live fares and explains how the agent can.
+
+### Calls: signalling now, audio when there is a bridge
+
+Meta's Business Calling API has two halves. Signalling — asking a user's
+permission to ring them, placing a call, accepting an incoming one, hanging
+up, and every webhook event — is plain JSON and implemented in `calls.js`,
+with permissions remembered per number and honoured with their expiry. The
+audio itself travels over WebRTC and needs a media gateway that terminates
+the call, feeds the caller's speech to transcription and plays synthesised
+speech back — a media stack, not something a JavaScript server does on its
+own. It plugs in through `setMediaBridge()`, and nothing above that file
+changes when it arrives. Until then the advisor does not pretend: an
+incoming call is declined and the caller is told, in their language, to send
+a voice note; an outbound "call" is a permission request, an introduction
+and the message spoken as a voice note. Live calls are the venture's fourth
+milestone, recorded on the portfolio when the founder registers it from the
+tab.
+
+### Trying it from one phone
+
+`TRAVEL ON` on the founder's own WhatsApp line routes every following
+message, voice or text, to the advisor until `TRAVEL OFF` — persisted, so a
+redeploy mid-demo does not silently hand the next voice note to the CEO.
+The same advisor, with the same transcription, answers in the Travel Voice
+tab, which is how it is tested without a Meta number at all.
 
 ## The company works in your tools: Obsidian and VS Code
 

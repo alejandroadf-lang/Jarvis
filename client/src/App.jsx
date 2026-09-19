@@ -6,6 +6,7 @@ import VenturesPanel from './components/VenturesPanel.jsx';
 import PortfolioView from './components/PortfolioView.jsx';
 import BuildView from './components/BuildView.jsx';
 import DailyReportView from './components/DailyReportView.jsx';
+import TravelVoiceView from './components/TravelVoiceView.jsx';
 import { useSpeechRecognition } from './hooks/useSpeechRecognition.js';
 import { useSpeechSynthesis } from './hooks/useSpeechSynthesis.js';
 import { useWakeWord } from './hooks/useWakeWord.js';
@@ -85,7 +86,8 @@ export default function App() {
   const isPortfolio = mode === 'portfolio';
   const isDailyReport = mode === 'dailyReport';
   const isBuild = mode === 'build';
-  const isFullWidthTab = isPortfolio || isDailyReport || isBuild;
+  const isTravelVoice = mode === 'travelVoice';
+  const isFullWidthTab = isPortfolio || isDailyReport || isBuild || isTravelVoice;
   const messages = messagesByMode[mode] || [];
   const modeConfig = MODES[mode] || null;
 
@@ -236,6 +238,14 @@ export default function App() {
             >
               Daily Report
             </button>
+            <button
+              onClick={() => setMode('travelVoice')}
+              className={`px-3 py-1 transition-colors ${
+                isTravelVoice ? 'bg-cyan-600 text-white' : 'text-cyan-400/80 hover:text-cyan-300'
+              }`}
+            >
+              Travel Voice
+            </button>
           </div>
         </div>
         <div className="flex items-center gap-3 text-xs">
@@ -276,6 +286,8 @@ export default function App() {
         <BuildView reloadKey={venturesReloadKey} />
       ) : isDailyReport ? (
         <DailyReportView />
+      ) : isTravelVoice ? (
+        <TravelVoiceView onVenturesChanged={() => setVenturesReloadKey((k) => k + 1)} />
       ) : (
       <div className="flex-1 flex min-h-0">
         {mode === 'company' && (

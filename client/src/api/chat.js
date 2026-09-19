@@ -276,3 +276,45 @@ export async function runWeeklyReflectionNow() {
   const { data } = await axios.post('/api/reports/weekly/run');
   return data.reflection;
 }
+
+// --- Travel voice advisor ---------------------------------------------------
+
+export async function fetchTravelVoiceStatus() {
+  const { data } = await axios.get('/api/travel-voice/status');
+  return data;
+}
+
+export async function sendTravelVoiceText(sessionId, text, { language, wantAudio } = {}) {
+  const { data } = await axios.post('/api/travel-voice/turn', { sessionId, text, language: language || undefined, wantAudio: Boolean(wantAudio) });
+  return data;
+}
+
+// The recording goes up as its own body rather than base64 inside JSON, so a
+// thirty-second note is not a 40% larger request. The reply's audio comes
+// back base64 in the JSON: one round trip per voice turn.
+export async function sendTravelVoiceAudio(sessionId, blob, { language } = {}) {
+  const params = new URLSearchParams({ sessionId });
+  if (language) params.set('language', language);
+  const res = await fetch(`/api/travel-voice/turn?${params}`, {
+    method: 'POST',
+    headers: authHeaders({ 'Content-Type': blob.type || 'audio/webm' }),
+    body: blob,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `The advisor could not answer (${res.status})`);
+  return data;
+}
+
+export async function resetTravelVoiceConversation(sessionId) {
+  await axios.post('/api/travel-voice/reset', { sessionId });
+}
+
+export async function startTravelVoiceOutreach({ to, language, message }) {
+  const { data } = await axios.post('/api/travel-voice/outreach', { to, language, message });
+  return data;
+}
+
+export async function registerTravelVoiceVenture() {
+  const { data } = await axios.post('/api/travel-voice/venture');
+  return data; // { venture, created }
+}

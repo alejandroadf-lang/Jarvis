@@ -123,12 +123,16 @@ test('an inbound text message is pulled out of the nested payload', () => {
     entry: [{ changes: [{ value: { messages: [{ id: 'wamid.1', from: '447700900123', type: 'text', text: { body: 'what is our net?' } }] } }] }],
   });
   // mediaId is null for text: only voice notes arrive as an id to fetch.
+  // phoneNumberId is null when Meta sends no metadata; callPermission only
+  // exists on a reply to a call-permission request (see travelVoice/calls.js).
   assert.deepEqual(message, {
     id: 'wamid.1',
     from: '447700900123',
     type: 'text',
     text: 'what is our net?',
     mediaId: null,
+    phoneNumberId: null,
+    callPermission: null,
   });
 });
 

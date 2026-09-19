@@ -26,6 +26,12 @@ outside world. See
 [the economic model](./ORG_STRUCTURE.md#the-economic-model-no-capital-required)
 for why the earlier $100-seed version was making the company worse.
 
+It also ships the company's first product, in a **Travel Voice** tab and on
+its own WhatsApp number: a voice-to-voice Amadeus and travel-industry advisor
+in Spanish, French and English. Send it a voice note asking how to price a
+PNR or what a fare rule means, and it answers with a voice note in the same
+language. See [Travel Voice Advisor](#travel-voice-advisor) below.
+
 A **Portfolio** tab rounds it out: every venture ever created (active or
 killed) with its own slice of the ledger and milestone progress, so you
 can compare the whole company at a glance instead of one venture at a
@@ -141,6 +147,44 @@ A push to `main` doesn't auto-redeploy unless you connect Railway's
 GitHub integration for this repo (its own setting, separate from
 anything above) — without it, redeploy manually from the Railway
 dashboard after a merge.
+
+## Travel Voice Advisor
+
+The first venture built on this company, and the first thing here that talks
+to someone who is not the founder. A travel agent sends a WhatsApp voice
+note — "¿cómo valoro este PNR con la tarifa más baja?", "comment annuler un
+segment sans perdre le dossier ?", "what does fare basis ONNAZ tell me?" —
+and a senior Amadeus advisor answers in a voice note in the same language,
+with the words as a text underneath so an entry like `FXP` can be copied.
+Code lives in `server/travelVoice/`; the Travel Voice tab in the client is
+the same advisor without a phone.
+
+What it needs, in layers:
+
+- `ANTHROPIC_API_KEY` — text answers in the tab and on WhatsApp.
+- `OPENAI_API_KEY` — hearing and speaking (Whisper in, Ogg Opus out).
+- `TRAVEL_VOICE_PHONE_NUMBER_ID` — its own WhatsApp number from the same
+  Meta app as the founder's line. The webhook routes on the number a message
+  arrived at: this one goes to the advisor, any other to the company. It is
+  open to any caller unless `TRAVEL_VOICE_ALLOWED_NUMBERS` narrows it, with a
+  per-caller hourly limit and the daily spend cap behind it.
+- `AMADEUS_CLIENT_ID` / `AMADEUS_CLIENT_SECRET` — live flight offers and
+  airport lookups from the Amadeus Self-Service APIs, so "cheapest MAD to CDG
+  on the first" gets a real price rather than a description of how to search.
+
+To try it from the founder's own WhatsApp line without a second number, send
+`TRAVEL ON`; every message after that, voice or text, goes to the advisor
+until `TRAVEL OFF`. The tab's sidebar can reach out first — an introduction,
+a call-permission request and a spoken message to a number you name — and
+puts the advisor on the portfolio as a venture so the team can sell it.
+
+**Live calls.** Meta's Business Calling API is wired for signalling (asking
+permission, placing, accepting, ending, and every webhook event) but the
+audio of a live call travels over WebRTC and needs a media gateway this
+repository does not carry. Until one is registered through
+`setMediaBridge()` in `server/travelVoice/calls.js`, an incoming call is
+declined and the caller is told, in their language, to send a voice note.
+Voice notes are the product today; live calls are the fourth milestone.
 
 ### Voice experience
 
