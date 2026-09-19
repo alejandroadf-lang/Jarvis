@@ -7,10 +7,12 @@
 //      Voice tab, or the fields on the /turn endpoint. Refused, not silently
 //      swapped, when that provider has no key: a founder comparing voices
 //      needs to know they heard the one they picked.
-//   2. The deployment's default — TRAVEL_VOICE_STT_PROVIDER, _LLM_PROVIDER,
-//      _TTS_PROVIDER. This is what WhatsApp callers get, since a phone has
-//      no dropdown.
-//   3. The first configured provider in the slot's own order, which puts the
+//   2. A runtime pin set from a phone (see providerPrefs.js). This is how a
+//      demo with no browser open switches voice mid-conversation.
+//   3. The deployment's default — TRAVEL_VOICE_STT_PROVIDER, _LLM_PROVIDER,
+//      _TTS_PROVIDER. This is what a WhatsApp caller gets when nothing is
+//      pinned, since a phone has no dropdown.
+//   4. The first configured provider in the slot's own order, which puts the
 //      one that was here first (OpenAI for audio, Anthropic for the brain)
 //      ahead of the newcomers.
 //
@@ -21,6 +23,7 @@
 import { EARS } from './stt.js';
 import { BRAINS } from './llm.js';
 import { VOICES } from './tts.js';
+import { overrideFor } from '../providerPrefs.js';
 
 export const SLOTS = {
   stt: { label: 'Ears (speech to text)', providers: EARS, envName: 'TRAVEL_VOICE_STT_PROVIDER' },
@@ -48,6 +51,19 @@ export function defaultProviderId(kind) {
 }
 
 /**
+ * Where the active choice for a slot came from, for a status display that
+ * has to explain itself without a browser: 'pinned', 'env', 'first' or
+ * 'none'.
+ */
+export function providerSource(kind) {
+  const pinned = overrideFor(kind);
+  if (pinned && findProvider(kind, pinned)?.configured()) return 'pinned';
+  const preset = defaultProviderId(kind);
+  if (preset && findProvider(kind, preset)?.configured()) return 'env';
+  return listProviders(kind).some((p) => p.configured()) ? 'first' : 'none';
+}
+
+/**
  * The provider a turn should use for one slot, or null when none is
  * configured at all. Throws when the caller named one that cannot run —
  * see the header for why that is not a fallback.
@@ -60,6 +76,16 @@ export function resolveProvider(kind, requested = null) {
     if (!chosen) throw new Error(`Unknown ${kind} provider "${requested}". Options: ${providers.map((p) => p.id).join(', ')}.`);
     if (!chosen.configured()) throw new Error(`${chosen.label} is not configured — see server/.env.example for what it needs.`);
     return chosen;
+  }
+
+  // A pin set from a phone. Same fall-through as the environment default: a
+  // pin whose key was later removed must not take the demo down, it must
+  // quietly stop applying and say so in the log.
+  const pinned = overrideFor(kind);
+  if (pinned) {
+    const chosen = findProvider(kind, pinned);
+    if (chosen && chosen.configured()) return chosen;
+    console.warn(`Travel voice: the ${kind} slot is pinned to "${pinned}", which is unknown or has no key; falling through.`);
   }
 
   const preset = defaultProviderId(kind);
@@ -85,6 +111,8 @@ export function describeProviders() {
     out[kind] = {
       label,
       active: active ? active.id : null,
+      source: providerSource(kind),
+      pinned: overrideFor(kind),
       options: slot(kind).providers.map((p) => ({
         id: p.id,
         label: p.label,

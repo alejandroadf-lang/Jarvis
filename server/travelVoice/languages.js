@@ -188,6 +188,27 @@ export function requestedLanguageSwitch(text) {
   return null;
 }
 
+// A message that is nothing but a hello. Someone who has just been given
+// this number types one, and answering it with a model call wastes a call to
+// say what a fixed greeting says better — what this service is and what to
+// send next. Matched whole, so "hola, ¿cómo valoro el PNR?" is a question.
+const GREETINGS = [
+  'hola', 'holaa', 'buenas', 'buenos dias', 'buenos días', 'buenas tardes', 'buenas noches', 'que tal', 'qué tal',
+  'bonjour', 'bonsoir', 'salut', 'coucou', 'allo', 'allô',
+  'hi', 'hello', 'hey', 'good morning', 'good afternoon', 'good evening', 'yo',
+];
+
+export function isBareGreeting(text) {
+  const cleaned = String(text || '')
+    .toLowerCase()
+    // Drop punctuation and emoji; a wave after "hola" is still just a hello.
+    .replace(/[^\p{L}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!cleaned) return false;
+  return GREETINGS.includes(cleaned);
+}
+
 // Everything the app says to a caller on its own behalf — not the advisor's
 // answers, which the model writes in the right language, but the plumbing
 // messages: "I'm listening", "that note was empty", "I can't take live calls

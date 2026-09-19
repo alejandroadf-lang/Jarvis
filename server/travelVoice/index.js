@@ -37,6 +37,7 @@ import {
   requestedLanguageSwitch,
   normalizeLanguage,
   localized,
+  isBareGreeting,
   SUPPORTED_LANGUAGES,
   DEFAULT_LANGUAGE,
 } from './languages.js';
@@ -48,6 +49,8 @@ import {
   startCall,
   recentCallEvents,
 } from './calls.js';
+import { isGuest, addGuest, listGuests } from './guests.js';
+import { parseTravelCommand, runTravelCommand } from './commands.js';
 
 const STATE_FILE = 'travelVoiceState.json';
 const SESSION_KIND = 'travel';
@@ -394,6 +397,18 @@ export async function handleTravelVoiceMessage(message, { anthropic, phoneNumber
     return { stage: 'unsupported_type' };
   }
 
+  // Somebody who has just been handed the number and typed "hola". A fixed
+  // greeting says what this is and what to send next, better than a model
+  // call would and for nothing. Only a message that is *nothing but* a
+  // hello, so a real question that opens politely still reaches the advisor.
+  if (!audio && isBareGreeting(message.text)) {
+    const lang = resolveLanguage({ text: message.text, previous: rememberedLanguage(sessionId) }).language;
+    rememberLanguage(sessionId, lang);
+    recordTurnLog({ channel: 'whatsapp', from: maskNumber(from), stage: 'greeted', language: lang });
+    await send(localized('greeting', lang));
+    return { stage: 'greeted', language: lang };
+  }
+
   let result;
   try {
     result = await runTravelVoiceTurn({
@@ -509,6 +524,73 @@ export async function startTravelVoiceOutreach(to, { phoneNumberId, language = D
   return outcome;
 }
 
+// --- running the demo from a phone ------------------------------------------
+
+/**
+ * Invites someone to try the advisor: puts them on the guest list and sends
+ * a hello, as text and — this is the actual demo — as a voice note in the
+ * product's own voice. An agency owner judges this thing on how it sounds
+ * before they have read a word, so the first thing they get should be sound.
+ */
+export async function inviteGuest(number, { language = null, phoneNumberId = null } = {}) {
+  const lang = normalizeLanguage(language) || DEFAULT_LANGUAGE;
+  const digits = addGuest(number, { language: lang });
+  const from = phoneNumberId || travelVoicePhoneNumberId() || process.env.WHATSAPP_PHONE_NUMBER_ID;
+  if (!from) throw new Error('No WhatsApp number to send from');
+
+  // The guest list is already updated above, and that is the half that
+  // matters: they can message the number from this moment whether or not the
+  // hello reaches them. So a failed send is reported, not thrown — throwing
+  // would tell the founder nothing happened when in fact the invitation is
+  // live, and they would invite the same person twice.
+  const greeting = localized('greeting', lang);
+  let delivered = true;
+  let error = null;
+  try {
+    await sendWhatsAppMessage(digits, greeting, { phoneNumberId: from });
+  } catch (err) {
+    delivered = false;
+    error = err.message;
+  }
+
+  let spoke = false;
+  if (delivered && canSpeak()) {
+    try {
+      // The greeting is short and deliberately written; it is not the
+      // advisor rambling, so it goes out whole.
+      const speech = await synthesizeSpeech(speakable(greeting, { maxWords: Infinity }), { language: lang, format: 'opus' });
+      await sendWhatsAppAudio(digits, speech.buffer, { mimeType: speech.mimeType, filename: speech.filename, phoneNumberId: from });
+      spoke = true;
+    } catch (err) {
+      // They still have the text and can still write. A failed voice note is
+      // a worse invitation, not a failed one.
+      console.warn(`Travel voice: could not speak the invitation to ${maskNumber(digits)}: ${err.message}`);
+    }
+  }
+
+  // So their first real message is answered in the language they were
+  // invited in, before anything has been heard from them.
+  rememberLanguage(`whatsapp-${digits}`, lang);
+  recordTurnLog({ channel: 'whatsapp', from: maskNumber(digits), stage: 'invited', language: lang, spoke, detail: error || undefined });
+  return { number: digits, language: lang, spoke, delivered, error };
+}
+
+export { parseTravelCommand, isGuest, listGuests };
+
+/**
+ * Runs a TRAVEL command from the founder's own line. The dependencies are
+ * bound here rather than in commands.js so that file reaches nothing on its
+ * own and stays testable without a WhatsApp stub.
+ */
+export function runTravelVoiceCommand(command, { from, phoneNumberId = null } = {}) {
+  return runTravelCommand(command, {
+    setAdvisorMode: (on) => setAdvisorMode(from, on),
+    recentTurns: recentTravelVoiceTurns,
+    inviteGuest: (number, opts) => inviteGuest(number, { ...opts, phoneNumberId }),
+    localized,
+  });
+}
+
 // --- the venture record -----------------------------------------------------
 
 /**
@@ -565,6 +647,7 @@ export function travelVoiceStatus() {
       maxTurnsPerHour: maxTurnsPerHour(),
       liveCalls: capabilities.liveCalls,
     },
+    guests: listGuests().map((g) => ({ number: maskNumber(g.number), language: g.language, addedAt: g.addedAt })),
     venture: venture ? { id: venture.id, title: venture.title, status: venture.status } : null,
     recentTurns: recentTravelVoiceTurns(20),
     recentCalls: recentCallEvents(10),

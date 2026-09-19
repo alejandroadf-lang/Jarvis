@@ -935,6 +935,51 @@ and the message spoken as a voice note. Live calls are the venture's fourth
 milestone, recorded on the portfolio when the founder registers it from the
 tab.
 
+### The demo is a phone number, so it is run from a phone
+
+Everything needed to show this thing to an agency lived in a browser tab:
+which providers were live, the recent conversations, switching the voice,
+inviting someone. That is the wrong place for all of it. The product is a
+WhatsApp number, it gets demonstrated in someone's office or over coffee,
+and the moment an agency owner says the voice sounds robotic is the moment
+you want to change the voice — not the moment you want to find a laptop.
+
+So the tab's controls are also WhatsApp commands, parsed by the same rules
+as the founder commands: the command must be the whole message, matched
+deterministically, never interpreted by a model. `TRAVEL STATUS` names what
+is live and what the day has cost. `TRAVEL VOICE deepgram` pins a provider
+at runtime, between the per-turn request and the environment default, and
+survives a restart; `TRAVEL DEFAULTS` puts it back. `TRAVEL LOG` reads back
+the recent conversations with a wrong-language answer called out, because
+that is the one worth seeing at a glance.
+
+### One number, two doors
+
+The interesting part is `TRAVEL INVITE`. A demo needs a prospect to be able
+to message the number, and the company's own line is allowlisted because
+what sits behind it can commit code and email customers. Adding a prospect
+to that allowlist to show them a demo would hand a stranger the Engineering
+Lead.
+
+So there is a second, much narrower door: a guest list. The webhook checks
+it *before* the company allowlist and, on a match, calls exactly one thing —
+the advisor. Not the company turn, not the founder commands, not the daily
+plan. A guest who types `TRAVEL STATUS` gets it answered as a travel
+question, because the branch that parses commands is one the guest's message
+never reaches. The asymmetry is a property of the routing rather than
+something a prompt asks for, which is the only kind of boundary worth having
+when the thing on the other side is a stranger with a phone.
+
+Inviting someone also sends them a hello — as text, and as a voice note in
+the product's own voice, because an agency owner judges this on how it
+sounds before they have read a word. If that hello fails to send, the
+invitation is still live and the reply says so, since the failure mode to
+avoid is a founder who thinks nothing happened and invites the same person
+twice. A stranger who arrives on a dedicated advisor number and types
+nothing but "hola" gets the same greeting, in their language, without a
+model call: a fixed sentence says what this is and what to send next better
+than a generated one would, and for nothing.
+
 ### Trying it from one phone
 
 `TRAVEL ON` on the founder's own WhatsApp line routes every following

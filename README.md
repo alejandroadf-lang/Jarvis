@@ -204,6 +204,21 @@ you can see which brain needs it. An overlong reply is not retried, since the
 text message carries the words intact. Only the audio is cut, at the last
 full sentence that fits.
 
+**The demo runs without a browser, on one number.** Everything the tab does
+is also a WhatsApp command from your own allowlisted phone: `TRAVEL STATUS`
+for what is live and what it has spent, `TRAVEL INVITE <number> [es|fr|en]`
+to let someone try it and send them a spoken hello in the demo voice,
+`TRAVEL VOICE deepgram` to switch a provider mid-demo with `TRAVEL DEFAULTS`
+to undo it, `TRAVEL LOG` for the recent conversations, and `TRAVEL GUESTS`
+or `TRAVEL REMOVE <number>` for the guest list. Send `TRAVEL` for the list.
+
+An invited guest reaches the travel advisor and nothing else on that number.
+Not the executive team, not the founder commands. The webhook checks the
+guest list before the company allowlist and, on a match, calls exactly one
+thing, so the boundary is routing rather than a prompt. That is what makes
+it safe to hand the number to a prospect, and why you should never widen
+`WHATSAPP_ALLOWED_NUMBERS` to run a demo.
+
 To try it from the founder's own WhatsApp line without a second number, send
 `TRAVEL ON`; every message after that, voice or text, goes to the advisor
 until `TRAVEL OFF`. The tab's sidebar can reach out first — an introduction,

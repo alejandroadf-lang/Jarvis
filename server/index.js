@@ -126,11 +126,12 @@ import {
   ensureTravelVoiceVenture,
   travelVoiceStatus,
   travelVoicePhoneNumberId,
-  parseAdvisorModeCommand,
-  setAdvisorMode,
   isAdvisorMode,
   isTravelVoiceConfigured,
   maskNumber,
+  isGuest,
+  parseTravelCommand,
+  runTravelVoiceCommand,
 } from './travelVoice/index.js';
 import { canHear } from './travelVoice/speech.js';
 import { extractCallEvent, recordCallPermission } from './travelVoice/calls.js';
@@ -833,6 +834,22 @@ app.post('/api/whatsapp/webhook', (req, res) => {
     return;
   }
 
+  // A guest on the company's own number: someone the founder invited to try
+  // the travel advisor (see travelVoice/guests.js). Checked BEFORE the
+  // company allowlist and handled with exactly one call, because that is
+  // what makes it safe — a guest reaches the advisor and can reach nothing
+  // else on this line. No founder commands, no company turn, no daily plan.
+  // Widening WHATSAPP_ALLOWED_NUMBERS to show someone a demo would instead
+  // hand a stranger the Engineering Lead.
+  if (!isTravelVoiceNumber(message.phoneNumberId) && isGuest(message.from)) {
+    if (isDuplicate(message.id)) return;
+    recordInbound({ stage: STAGES.ANSWERED, from: message.from, text: message.text, detail: 'travel advisor guest' });
+    handleTravelVoiceMessage(message, { anthropic, phoneNumberId: message.phoneNumberId || process.env.WHATSAPP_PHONE_NUMBER_ID }).catch((err) => {
+      console.error('Travel voice: failed to handle a guest message:', err);
+    });
+    return;
+  }
+
   // A signature proves Meta sent it, not who typed it. The allowlist is the
   // gate that decides whose messages actually reach the company.
   if (!isAllowedSender(message.from)) {
@@ -855,19 +872,27 @@ app.post('/api/whatsapp/webhook', (req, res) => {
 async function handleWhatsAppMessage(message) {
   let text = message.text.trim();
 
-  // The founder trying the advisor from their own phone, without a second
-  // Meta number: TRAVEL ON routes everything to the advisor until TRAVEL
-  // OFF. Decided before transcription, because a voice note in advisor mode
-  // is the advisor's to hear and answer in kind.
-  const advisorMode = parseAdvisorModeCommand(text);
-  if (advisorMode) {
+  // Running the demo from this phone: status, switching a provider
+  // mid-conversation, inviting someone to try it, TRAVEL ON/OFF. Decided
+  // before transcription and before the advisor-mode check below, so TRAVEL
+  // OFF still works while every other message is going to the advisor.
+  // Only reachable from this allowlisted number — see travelVoice/commands.js.
+  const travelCommand = parseTravelCommand(text);
+  if (travelCommand) {
     if (!isTravelVoiceConfigured()) {
       await sendWhatsAppMessage(message.from, 'The travel advisor needs ANTHROPIC_API_KEY set before it can answer.');
       return;
     }
-    setAdvisorMode(message.from, advisorMode === 'on');
-    recordInbound({ stage: STAGES.ANSWERED, from: message.from, text, detail: `travel advisor mode ${advisorMode}` });
-    await sendWhatsAppMessage(message.from, localized(advisorMode === 'on' ? 'demoModeOn' : 'demoModeOff', 'en'));
+    try {
+      const reply = await runTravelVoiceCommand(travelCommand, {
+        from: message.from,
+        phoneNumberId: message.phoneNumberId || process.env.WHATSAPP_PHONE_NUMBER_ID,
+      });
+      recordInbound({ stage: STAGES.ANSWERED, from: message.from, text, detail: `travel command: ${travelCommand.kind}` });
+      await sendWhatsAppMessage(message.from, reply);
+    } catch (err) {
+      await sendWhatsAppMessage(message.from, `Couldn't do that — ${err.message}`);
+    }
     return;
   }
   if (isAdvisorMode(message.from)) {
