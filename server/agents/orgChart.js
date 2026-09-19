@@ -1009,6 +1009,31 @@ ${BASE_STYLE}`,
         },
       },
       {
+        name: 'draft_customer_email',
+        description:
+          "Write a real outreach email and park it for the founder to release. It is not sent and reaches nobody — it is a file on this server — so use it freely: no scope, no cap, no cooldown applies to drafting. This is the tool for outreach the company cannot send yet, and for anything you want a second pair of eyes on. When the founder approves it, it goes out through exactly the same gates as send_customer_email, so write it as the real thing rather than a sketch. Give a reason in `why`: the founder is approving a message to a stranger and why that person was chosen is the part that decides it.",
+        input_schema: {
+          type: 'object',
+          properties: {
+            ventureId: { type: 'string', description: 'The venture this is on behalf of.' },
+            to: { type: 'string', description: "The recipient's real email address. A handle is not enough to draft to — find the address, or leave them in the pipeline until you have it." },
+            subject: { type: 'string', description: 'The subject line, as it would actually go out.' },
+            body: { type: 'string', description: 'The full message. The AI disclosure and opt-out are appended on send — do not write them yourself.' },
+            why: { type: 'string', description: 'One line: what makes this person worth writing to, with the evidence. "Filed issue #12 asking for exactly this" beats "fits the ICP".' },
+          },
+          required: ['ventureId', 'to', 'subject', 'body', 'why'],
+        },
+      },
+      {
+        name: 'list_drafts',
+        description:
+          'What outreach is already queued: waiting on the founder, or approved and not yet gone out. Check before drafting so the same person is not written to twice by two different turns.',
+        input_schema: {
+          type: 'object',
+          properties: { ventureId: { type: 'string', description: 'Optional: narrow to one venture.' } },
+        },
+      },
+      {
         name: 'update_pipeline',
         description:
           'Record a prospect and where the deal stands: the stage (lead, contacted, replied, call_booked, pilot, paying, lost), its likely monthly value, and the one thing that happens next. Use it to build a list, not only to track one — a named person you found in a GitHub issue or a forum thread goes in here with their handle and the URL, before anyone has written to them. This is not a note about the person — log_contact_note is — it is the state of the deal, and the CFO reads the total. Update it every time something moves: a reply, a call booked, a price agreed, a no.',

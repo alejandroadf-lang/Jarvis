@@ -9,6 +9,7 @@ import { economicsLast30 } from '../spend.js';
 import { buildKnowledgeContext } from '../workspace/knowledge.js';
 import { listVentures, listContacts, listReplies, describePricing, pipelineSummary, listObjectives } from './ventures.js';
 import { listFiles } from '../deploy/github.js';
+import { describeDraftsForAgents } from '../outreachDrafts.js';
 import { getLatestWeeklyReflection } from '../weeklyReflections.js';
 import { getAgentEarnings, sharePct } from './profitShare.js';
 import { buildOperationsContext } from '../agents/operations.js';
@@ -112,10 +113,15 @@ export function buildOutreachContext() {
     return `"${venture.title}" [id: ${venture.id}]:${price}${booking}${mcp}${deals}\n${body}${waiting}`;
   });
 
+  // What is already written and waiting. Without this the team redrafts the
+  // same person every morning, because a draft it wrote yesterday is invisible
+  // to the turn that starts today.
+  const queued = describeDraftsForAgents();
+
   return `Contact history for ventures with an outreach scope — check this before
 drafting anything, and use log_contact_note to record what you learn from a
 reply so the next email isn't written blind:
-${sections.join('\n')}`;
+${sections.join('\n')}${queued ? `\n\n${queued}` : ''}`;
 }
 
 // What the team has already learned on each active venture.

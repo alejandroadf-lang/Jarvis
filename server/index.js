@@ -38,6 +38,9 @@ import {
   handleCheckUsage,
   handleCreatePaymentLink,
   handleUpdatePipeline,
+  handleDraftCustomerEmail,
+  handleListDrafts,
+  releaseDraft,
   handleSetObjective,
   handleOpenPullRequest,
   handleRevertCommit,
@@ -331,6 +334,8 @@ async function runCompanyTurn(sessionId, message, { deadlineAt = null, image = n
       // Creating a link charges nobody; sending it goes through email and its
       // gates. Pipeline and objectives are internal book-keeping.
       create_payment_link: (input, ctx) => handleCreatePaymentLink(input, ctx),
+      draft_customer_email: (input, ctx) => handleDraftCustomerEmail(input, ctx),
+      list_drafts: (input) => handleListDrafts(input),
       update_pipeline: (input, ctx) => handleUpdatePipeline(input, ctx),
       set_objective: (input, ctx) => handleSetObjective(input, ctx),
       // Finished work that has not landed. Not behind the plan — see
@@ -902,6 +907,10 @@ async function handleWhatsAppMessage(message) {
         // the same one every agent turn uses — a dry run against a different
         // client would be rehearsing a different company.
         dryRunOutreach: (args) => dryRunOutreach({ ...args, anthropic }),
+        // Releasing a draft runs the ordinary send path, gates and all — the
+        // founder's yes is an extra opinion on the message, never a way past
+        // the allowlist.
+        releaseDraft: (id) => releaseDraft(id, { anthropic }),
         // Started, not awaited: the eval takes minutes of real API calls, and
         // holding the webhook open for it would time out long before it
         // finished. The result finds the founder when it exists.

@@ -40,6 +40,9 @@ import {
   handleCheckUsage,
   handleCreatePaymentLink,
   handleUpdatePipeline,
+  handleDraftCustomerEmail,
+  handleListDrafts,
+  releaseApprovedDrafts,
   handleSetObjective,
   handleOpenPullRequest,
   handleRevertCommit,
@@ -237,6 +240,11 @@ export function dailyCycleActionHandlers() {
     // A payment link charges nobody until a person opens it, and the pipeline
     // and objectives are the company's own notebook. None need the founder.
     create_payment_link: (input, ctx) => handleCreatePaymentLink(input, ctx),
+    // Drafting reaches nobody and spends nothing, so it is safe unattended in a
+    // way sending is not — and it is the only outreach work available while the
+    // founder's mailbox config is unfinished.
+    draft_customer_email: (input, ctx) => handleDraftCustomerEmail(input, ctx),
+    list_drafts: (input) => handleListDrafts(input),
     update_pipeline: (input, ctx) => handleUpdatePipeline(input, ctx),
     set_objective: (input, ctx) => handleSetObjective(input, ctx),
     // Finished work that has not landed. Not behind the plan — see
@@ -502,6 +510,20 @@ export async function runDailyMeeting({ anthropic }) {
   const startedVentures = listVentures().filter((v) => proposedVentureIds.includes(v.id));
   await publishDailyReport({ ...report, proposedVentureNames: startedVentures.map((v) => v.title) });
   for (const venture of startedVentures) await publishVenture(venture);
+
+  // Approved drafts that never went out, usually because the mailbox was not
+  // configured yet when the founder said yes. Nobody is going to remember to
+  // come back and press send on eleven messages the day the config lands, so
+  // the cycle does it.
+  let released = { sent: [], stuck: [], considered: 0 };
+  try {
+    released = await releaseApprovedDrafts({ anthropic });
+    if (released.sent.length) {
+      console.log(`Released ${released.sent.length} approved outreach draft(s).`);
+    }
+  } catch (err) {
+    console.error('Could not release approved drafts:', err);
+  }
 
   try {
     await sendDailyReportEmail(report);

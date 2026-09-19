@@ -2991,3 +2991,51 @@ that already cost a week and it does not announce itself.
 One repo failing does not lose the others, and the whole call is caught at both
 call sites: a GitHub outage must not take the morning down, since this is
 context rather than a gate.
+
+## Outreach written before it can be sent
+
+The company could build a prospect list and could not email anyone: SMTP and
+the allowlist are founder configuration, and until they exist every send
+refuses. That left the commercial side with nothing to do but wait, which is
+how a week produces a report full of recommendations and no work.
+
+So drafting is separated from sending. `draft_customer_email` parks a real
+message: no scope, no cap, no cooldown, because it reaches nobody and costs
+nothing. The team can write fifteen tonight. The founder reads them on a phone
+— `DRAFTS` to list, `DRAFT d1` to read one in full, `SEND d1` to release, `BIN
+d1 <reason>` to bin it. Short ids because these are typed one-handed; a uuid is
+something you paste and there is nothing to paste from in a WhatsApp thread.
+
+### Approval is an extra gate, never a substitute for one
+
+This is the rule the whole design turns on, and the one that would be easiest
+to lose. Saying yes to a draft does not widen the allowlist, lift a cap, skip
+the compliance footer or bypass the CEO's veto. `releaseDraft` calls the same
+handler an agent calls, so every check runs exactly as it would have — the
+founder's yes is a second opinion on the *message*, on top of the standing
+grant, not in place of it. A queue that dissolved those checks would be a way
+around them wearing a helpful face.
+
+Tests come at that from several angles on purpose: approving a draft to an
+address outside the allowlist still refuses, approving during a halt still
+refuses, and a released draft spends the cap like any other send because it
+*is* any other send.
+
+### Approved and unsent is a normal state, not a failure
+
+The usual reason a draft is stuck is that the mailbox was not configured when
+the founder approved it. That is a fact about the world, not a verdict on the
+message — so a refused send keeps the draft approved, records why, and leaves
+it in the queue. `releaseApprovedDrafts()` runs in the daily cycle and sends
+whatever can now go, because nobody is going to remember to come back and press
+send on eleven messages the day the config lands.
+
+The WhatsApp reply says as much rather than letting a refusal read as a
+rejection: *"It stays in the queue and goes out on its own once that is fixed —
+you do not need to approve it again."*
+
+Two smaller decisions worth recording. A draft needs a real address, so a lead
+that is still only a handle stays in the pipeline until someone finds one — and
+the refusal says exactly that rather than just "no". And the queue is in the
+agents' context, because a draft written yesterday is invisible to the turn
+that starts today, and an invisible draft gets written again every morning.
