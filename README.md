@@ -313,6 +313,12 @@ the cascade and hardening its boundaries. Every recommendation is built:
   code-switched speech; Deepgram can be told the Amadeus vocabulary; a clip
   under two seconds cannot switch a conversation's language; ElevenLabs is
   asked not to log and `TRAVEL TIER FAST` moves it to the low-latency model.
+- *A dress rehearsal with no keys.* `npm run travel:smoke` runs the real
+  webhook path with the vendors faked and asserts on every control above in
+  sequence — 47 checks, no credentials, no cost. It earned its place on its
+  first run by catching record locators being written into the five-year audit
+  trail, which the 180-day transcript clock was supposed to outlive; the trail
+  now counts codes and amounts rather than keeping them.
 - *Simulate, then judge.* `npm run travel:qa` plays six callers through the
   advisor as it ships, applies deterministic rules and has a judge model score
   each conversation; `npm run travel:bench -- fixtures/` runs every ear over

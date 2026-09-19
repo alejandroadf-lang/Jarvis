@@ -8,7 +8,8 @@
     "start": "node index.js",
     "test": "node --test",
     "travel:qa": "node travelVoice/qa/run.js",
-    "travel:bench": "node travelVoice/bench/run.js"
+    "travel:bench": "node travelVoice/bench/run.js",
+    "travel:smoke": "node travelVoice/qa/smoke.js"
   },
   "dependencies": {
     "@anthropic-ai/bedrock-sdk": "^0.33.7",

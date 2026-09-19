@@ -89,16 +89,48 @@ export function callerKey(number) {
 // The fields that carry words. Never written to the trail.
 const WORDS = new Set(['transcript', 'reply', 'text', 'detail']);
 
+// Fields that carry the caller's own identifiers rather than prose: the
+// locators read back, the codes a translation lost, the amounts quoted.
+// These are the useful thing to COUNT and the wrong thing to keep.
+//
+// A record locator is the most sensitive identifier this product touches —
+// it retrieves a PNR with a passenger's name and itinerary on it — and the
+// trail outlives the transcript it came from by years. So the trail learns
+// that two locators were read back and none was lost; the founder's own
+// turn log, swept on the transcript clock, keeps which ones they were,
+// because that is where a person asks "was it X7K2PQ or X7KZPQ".
+const COUNTED = { readBack: 'readBackCount', dropped: 'droppedCount', amounts: 'amountCount', protectedCodes: 'protectedCount' };
+
+// Same rule one level down, inside the grounding finding.
+function redactGrounding(grounding) {
+  if (!grounding || typeof grounding !== 'object') return grounding;
+  const { ungrounded, stillUngrounded, ...rest } = grounding;
+  return {
+    ...rest,
+    ...(Array.isArray(ungrounded) ? { ungroundedCount: ungrounded.length } : {}),
+    ...(Array.isArray(stillUngrounded) ? { stillUngroundedCount: stillUngrounded.length } : {}),
+  };
+}
+
 /**
  * Appends one event. `entry` is a turn-log entry (see index.js) plus
- * whatever the caller adds; the words are stripped here, so a mistake
- * upstream cannot put a transcript in the trail.
+ * whatever the caller adds; the words and the caller's own codes are
+ * stripped here, so a mistake upstream cannot put either in the trail.
  */
 export function recordAudit(entry) {
   try {
     const line = {};
     for (const [key, value] of Object.entries(entry || {})) {
       if (WORDS.has(key)) continue;
+      if (COUNTED[key]) {
+        if (Array.isArray(value)) line[COUNTED[key]] = value.length;
+        else if (value !== undefined && value !== null) line[COUNTED[key]] = 1;
+        continue;
+      }
+      if (key === 'grounding') {
+        line.grounding = redactGrounding(value);
+        continue;
+      }
       line[key] = value;
     }
     if (!line.at) line.at = new Date().toISOString();
@@ -353,9 +385,11 @@ export function metrics({ days = 7, now = Date.now() } = {}) {
           b.wrongLanguage += 1;
           if (e.drift.corrected) b.wrongLanguageFixed += 1;
         }
-        if (e.grounding && (e.grounding.stillUngrounded?.length || !e.grounding.corrected)) b.ungrounded += 1;
-        if (Array.isArray(e.dropped) && e.dropped.length) b.droppedCodes += 1;
-        if (Array.isArray(e.readBack) && e.readBack.length) b.readBacks += 1;
+        // The trail counts rather than names these (see recordAudit); an
+        // older line may still carry the array, so both shapes are read.
+        if (e.grounding && (e.grounding.stillUngroundedCount || e.grounding.stillUngrounded?.length || !e.grounding.corrected)) b.ungrounded += 1;
+        if (e.droppedCount || e.dropped?.length) b.droppedCodes += 1;
+        if (e.readBackCount || e.readBack?.length) b.readBacks += 1;
         if (e.shortClip) b.shortClips += 1;
         if (e.words) b.tooLong += 1;
       }

@@ -153,3 +153,43 @@ test('the clocks: transcripts go at the retention period, the sample later, the 
   audit.sweepRetention({ now, sweepConversations: (cutoff) => { swept = cutoff; return 0; } });
   assert.ok(Math.abs(now - 30 * DAY - swept) < 1000);
 });
+
+test('the trail counts the caller’s codes and amounts rather than keeping them', () => {
+  audit.recordAudit({
+    kind: 'turn',
+    stage: 'answered',
+    language: 'es',
+    readBack: ['X7K2PQ', '075-1234567890'],
+    dropped: ['IB3402'],
+    amounts: ['189,40 €'],
+    protectedCodes: ['MAD', 'CDG'],
+    grounding: { ungrounded: ['150 euros'], corrected: false, stillUngrounded: ['150 euros'] },
+  });
+  const [line] = audit.readAudit();
+  assert.equal(line.readBackCount, 2);
+  assert.equal(line.droppedCount, 1);
+  assert.equal(line.amountCount, 1);
+  assert.equal(line.protectedCount, 2);
+  assert.deepEqual(line.grounding, { corrected: false, ungroundedCount: 1, stillUngroundedCount: 1 });
+  assert.equal(line.readBack, undefined);
+  assert.equal(line.dropped, undefined);
+  const raw = fs.readFileSync(path.join(tmpDir, 'travelVoiceAudit.jsonl'), 'utf8');
+  for (const secret of ['X7K2PQ', '075-1234567890', 'IB3402', '189,40', '150 euros', 'MAD']) {
+    assert.ok(!raw.includes(secret), `the trail still holds ${secret}`);
+  }
+});
+
+test('the metrics read the counted fields, and the arrays an older trail carries', () => {
+  const now = Date.now();
+  const at = new Date(now - 3600 * 1000).toISOString();
+  audit.recordAudit({ at, kind: 'turn', stage: 'answered', language: 'es', readBackCount: 1, droppedCount: 1, grounding: { ungroundedCount: 1, corrected: false } });
+  // A line written before the redaction existed, appended by hand.
+  fs.appendFileSync(path.join(tmpDir, 'travelVoiceAudit.jsonl'), `${JSON.stringify({ at, kind: 'turn', stage: 'answered', language: 'fr', readBack: ['ABC123'], dropped: ['IB1'], grounding: { ungrounded: ['9 €'], corrected: false } })}\n`);
+  const m = audit.metrics({ days: 1, now });
+  assert.equal(m.languages.es.readBacks, 1);
+  assert.equal(m.languages.es.droppedCodes, 1);
+  assert.equal(m.languages.es.ungrounded, 1);
+  assert.equal(m.languages.fr.readBacks, 1, 'an older line still counts');
+  assert.equal(m.languages.fr.droppedCodes, 1);
+  assert.equal(m.languages.fr.ungrounded, 1);
+});

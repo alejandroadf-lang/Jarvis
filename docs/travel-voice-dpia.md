@@ -31,7 +31,7 @@ conversation to a person.
 | Conversation history | Derived | Context for the next answer | Same clock; deleted when the conversation is idle past it |
 | Consent record | Caller's button tap | Evidence of disclosure and agreement | Until the caller withdraws (`BORRAR` / `SUPPRIMER` / `DELETE`) |
 | Review sample | 1–5% of answered turns, words included | Human quality review | `TRAVEL_VOICE_REVIEW_RETENTION_DAYS` (365) |
-| Audit trail | Every turn, **without words** | Accountability, per-language metrics | `TRAVEL_VOICE_AUDIT_RETENTION_DAYS` (5 years) |
+| Audit trail | Every turn, **without words or the caller's codes** | Accountability, per-language metrics | `TRAVEL_VOICE_AUDIT_RETENTION_DAYS` (5 years) |
 | Handoff record | Escalations | A person can take over | With the audit trail; numbers masked |
 
 **Subjects:** travel agents and agency staff (professionals), and any consumer an agency
@@ -80,7 +80,7 @@ drives `TRAVEL_VOICE_RESIDENCY=eu`, which refuses any provider not declared EU-h
 | Caller not told they talk to a machine | Spoken + written disclosure before any processing; version-tracked | `consent.js`, `discloseTo()` |
 | Voice processed without a basis | Voice gated on a recorded button tap by default | `handleTravelVoiceMessage` |
 | Data kept longer than needed | Three retention clocks, sweeper on start and daily, `TRAVEL SWEEP` | `audit.js`, `runRetentionSweep()` |
-| Re-identification from logs | Numbers masked everywhere a person reads; salted hash in the trail; no words in the trail | `maskNumber`, `callerKey`, `recordAudit` |
+| Re-identification from logs | Numbers masked everywhere a person reads; salted hash in the trail; no words in the trail, and record locators, ticket numbers and amounts are counted rather than kept — the trail outlives the transcript, so it must not hold what retrieves a PNR | `maskNumber`, `callerKey`, `recordAudit` |
 | Automated decision with legal effect | The advisor gives guidance, never a decision on entitlement; a person with override authority is one word away and can answer or take over | `escalation.js`, `TRAVEL SAY/TAKE/RESUME` |
 | Invented fares or fees | Every amount checked against tool results and the caller's words; one correction; recorded | `grounding.js` |
 | Wrong language, mangled locator | Drift check with one correction; locators read back in the spelling alphabet; codes protected through translation | `replyCheck.js`, `spoken.js`, `translate.js` |
@@ -106,7 +106,16 @@ beyond the transcript clock.
   hash and metadata.
 - **Objection to automated processing:** `AGENTE` / `CONSEILLER` / `AGENT` at any time.
 
-## 8. Review
+## 8. Evidence
+
+`npm run travel:smoke` walks a caller through the whole pipeline with the vendors faked —
+first contact and the notice, the tap, a question carrying a locator, a question designed to
+make the advisor invent a fee, a translation full of codes, a demand for a person — and
+asserts on each control in this document, including that the trail holds no words, no
+numbers and no locators. It needs no credentials and is the check to run before a demo or a
+release. `npm run travel:qa` is the model-scored version and costs tokens.
+
+## 9. Review
 
 Re-run this assessment when a provider is added, when `TRAVEL_VOICE_RESIDENCY` or
 `TRAVEL_VOICE_CONSENT` defaults change, when live calls (the media bridge) ship, or when the
