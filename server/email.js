@@ -221,6 +221,14 @@ export async function sendOutreachDryRunEmail(venture, details) {
   return sendEmail(subject, text); // to the founder — no override, and no parameter for one
 }
 
+// The morning pitch. Its own email rather than a section of the daily report,
+// because it is a different kind of thing: the report says what happened, and
+// this says what could. Burying a provocation inside a status update is how it
+// stops being read.
+export async function sendPitchEmail({ subject, text }) {
+  return sendEmail(subject, text); // to the founder, like every other alert here
+}
+
 // A real person answered. That is the single most important thing that can
 // happen in this company's day, and before inbox.js existed it was invisible
 // — the founder was relaying replies by hand into WhatsApp.

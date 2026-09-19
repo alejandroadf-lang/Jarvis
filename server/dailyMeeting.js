@@ -26,6 +26,7 @@
 
 import { unsupportedClaims } from './claimCheck.js';
 import { describeSearchBalance } from './searchLog.js';
+import { generatePitch, formatPitchEmail } from './pitchOfTheDay.js';
 import { runAgent } from './agents/agentRunner.js';
 import { AGENTS as COMPANY_AGENTS, ROOT_AGENT_ID as COMPANY_ROOT } from './agents/orgChart.js';
 import { AGENTS as STUDIO_AGENTS, ROOT_AGENT_ID as STUDIO_ROOT } from './agents/ideationTeam.js';
@@ -66,7 +67,7 @@ import {
   handleListApprovedRepos,
 } from './actionHandlers.js';
 import { todayKey, saveDailyReport, getLatestDailyReport } from './dailyReports.js';
-import { sendDailyReportEmail } from './email.js';
+import { sendDailyReportEmail, sendPitchEmail } from './email.js';
 import { publishDailyReport, publishVenture, readFounderSteering } from './workspace/vault.js';
 import { estimateCostUsd, sumUsage, emptyUsage } from './usage.js';
 import { isPlanRequired, getPlan } from './dailyPlan.js';
@@ -515,6 +516,27 @@ export async function runDailyMeeting({ anthropic }) {
   const startedVentures = listVentures().filter((v) => proposedVentureIds.includes(v.id));
   await publishDailyReport({ ...report, proposedVentureNames: startedVentures.map((v) => v.title) });
   for (const venture of startedVentures) await publishVenture(venture);
+
+  // The morning pitch. Deliberately outside the scope check that skips the
+  // Studio on a quiet day: the founder asked for one every morning, and a
+  // provocation does not depend on there having been company news. It starts
+  // nothing, so it is safe to run unattended — there is no propose_venture in
+  // its handler map and it cannot create a venture.
+  if (process.env.DAILY_PITCH !== 'false') {
+    try {
+      const { pitch, note } = await generatePitch({
+        anthropic,
+        runAgent,
+        agents: soloRoster(STUDIO_AGENTS, STUDIO_ROOT),
+        agentId: STUDIO_ROOT,
+      });
+      if (pitch || note) await sendPitchEmail(formatPitchEmail(pitch || {}, { note }));
+    } catch (err) {
+      // Never takes the morning down. It is the least important thing in this
+      // function and the report is what the founder actually needs.
+      console.error('Could not produce the pitch of the day:', err);
+    }
+  }
 
   // Approved drafts that never went out, usually because the mailbox was not
   // configured yet when the founder said yes. Nobody is going to remember to

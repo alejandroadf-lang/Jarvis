@@ -3120,3 +3120,71 @@ catches a different slice (claimed real-world acts with no action in the
 trace). Neither substitutes for the other, and an empty result is reported as a
 finding rather than a blank: an uncited claim cannot be checked by anyone,
 including the team that made it.
+
+## One pitch a morning
+
+The founder asked for an elevator pitch every day at 8am — a revolutionary
+idea, argued as if to an investor. The obvious build is a prompt and a cron.
+That build fails in about three weeks, for a reason worth writing down.
+
+Idea homogenisation in LLMs is **collective, not individual**: each person gets
+more ideas, and everyone gets the *same* ideas. The effect **survives prompt
+and temperature modification** — "be more original" does not fix it. And inside
+a single context, early outputs constrain later ones, so a generator that never
+sees what it said before circles the same attractor forever. Pioneer Square
+Labs generated 160,000 candidate ideas, culled them to 10,000, and needed
+automated near-duplicate detection as core pipeline infrastructure to do it: a
+16:1 cull for similarity alone.
+
+So the defence is structural rather than instructional. Past pitches go into
+the prompt *and* every new pitch is checked against them by token overlap
+before it is sent. The prompt half is not useless — it is just not sufficient,
+and a generator with no memory is guaranteed to repeat rather than merely
+likely to.
+
+A repeat is re-asked once, with the match named: *"too close to SleepSync from
+the 14th — a different buyer, a different problem, not the same idea renamed"*.
+Naming it is what makes the instruction usable. A second repeat sends **no
+pitch**, and says so:
+
+> Both attempts came back close to "SleepSync", so nothing new was actually
+> generated. That usually means the recent pitches have boxed the generator in,
+> and a steer from you would break it out.
+
+Sending the repeat anyway would be the easy behaviour and the wrong one: a
+founder who reads the same idea twice stops reading.
+
+The similarity check is deliberately crude — token overlap, with startup filler
+(`platform`, `agent`, `solution`, `market`) in the stopword list so generic
+vocabulary cannot manufacture a match. Embeddings would be better and would
+cost a call per comparison forever; this catches the failure that actually
+happens, which is not a subtle paraphrase but the same idea with the nouns
+swapped.
+
+### Two things that keep it honest
+
+**It cannot start anything.** There is no `propose_venture` in its handler map,
+so a daily idea generator cannot quietly fill the portfolio, and the email says
+as much out loud: *"This is a provocation, not a proposal."*
+
+**Every pitch carries its own counter-case.** `what_would_have_to_be_true` and
+`how_to_kill_it_this_week` are required fields. A daily "revolutionary idea"
+generator is a hype machine by default — this codebase already has
+`claimCheck.js` because claims outran reality once — and those two slides are
+what make it worth reading on day thirty rather than day one. The path to €1M
+must be arithmetic, not a TAM, for the same reason it must be on a venture
+proposal.
+
+It rides the existing 8am scheduler rather than a second one, and runs
+*outside* the scope check that skips the Studio on a quiet day: the founder
+asked for one every morning, and a provocation does not depend on there having
+been company news. `DAILY_PITCH=false` switches it off. A failure never takes
+the morning down — the report is what the founder actually needs.
+
+### Two bugs the tests caught, both on the no-pitch path
+
+The retry reached into the previous attempt's candidate to write its corrective
+steer, which crashes when the first attempt produced nothing at all rather than
+a repeat. And `formatPitchEmail` dereferenced a pitch that does not exist on a
+no-pitch morning. Both live on the path nobody watches, which is exactly why
+the no-pitch case got its own tests.
