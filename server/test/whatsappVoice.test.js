@@ -99,13 +99,28 @@ test('transcription posts multipart with the model, and returns the words', asyn
     return { ok: true, json: async () => ({ text: '  get me the top ten ideas  ' }) };
   };
 
-  const text = await transcribeAudio(Buffer.from('audio'), 'voice.ogg');
+  const heard = await transcribeAudio(Buffer.from('audio'), 'voice.ogg');
 
-  assert.equal(text, 'get me the top ten ideas', 'trimmed, since it goes straight to the team');
+  assert.equal(heard.text, 'get me the top ten ideas', 'trimmed, since it goes straight to the team');
   assert.match(seen.url, /audio\/transcriptions/);
   assert.equal(seen.auth, 'Bearer oa-key');
   assert.ok(seen.body instanceof FormData, 'must be multipart — a JSON body is rejected');
   assert.ok(seen.body.get('model'), 'the model is named in the form');
+  // The language comes back with the words, because answering a Spanish voice
+  // note in English is a translation nobody asked for.
+  assert.equal(seen.body.get('response_format'), 'verbose_json');
+});
+
+test('the spoken language comes back with the words, and is optional', async () => {
+  global.fetch = async () => ({ ok: true, json: async () => ({ text: 'hola equipo', language: 'Spanish' }) });
+  const heard = await transcribeAudio(Buffer.from('audio'), 'voice.ogg');
+  assert.equal(heard.text, 'hola equipo');
+  assert.equal(heard.language, 'spanish');
+
+  // Whisper does not always report one. Empty is a real answer — better than a
+  // guess the model would then obey.
+  global.fetch = async () => ({ ok: true, json: async () => ({ text: 'hello' }) });
+  assert.equal((await transcribeAudio(Buffer.from('a'), 'v.ogg')).language, '');
 });
 
 test('a transcription failure carries its status so the reply can name the reason', async () => {

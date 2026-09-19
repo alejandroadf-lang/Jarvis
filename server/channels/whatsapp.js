@@ -183,6 +183,67 @@ export async function sendWhatsAppMessage(to, text) {
   return true;
 }
 
+/**
+ * Uploads audio to WhatsApp and returns the media id it can be sent by.
+ *
+ * Two calls rather than one because Meta's API has no way to post bytes and a
+ * message together: media is uploaded, given an id, and then referenced. The id
+ * is short-lived, so it is used immediately rather than stored.
+ */
+export async function uploadMedia(buffer, { mimeType = 'audio/ogg', filename = 'reply.ogg' } = {}) {
+  if (!process.env.WHATSAPP_TOKEN || !process.env.WHATSAPP_PHONE_NUMBER_ID) {
+    throw new Error('WhatsApp is not configured, so nothing can be uploaded.');
+  }
+
+  const form = new FormData();
+  form.append('messaging_product', 'whatsapp');
+  form.append('type', mimeType);
+  form.append('file', new Blob([buffer], { type: mimeType }), filename);
+
+  const res = await fetch(`${GRAPH_API}/${process.env.WHATSAPP_PHONE_NUMBER_ID}/media`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}` },
+    body: form, // no Content-Type: fetch sets the multipart boundary itself
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '');
+    throw new Error(`WhatsApp media upload failed (${res.status}): ${detail.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  if (!data?.id) throw new Error('WhatsApp accepted the upload but returned no media id.');
+  return data.id;
+}
+
+/**
+ * Sends spoken audio as a playable voice note.
+ *
+ * `type: 'audio'` with an opus/ogg file is what renders inline with a play
+ * button. Anything else arrives as a file to download, which nobody does.
+ */
+export async function sendWhatsAppAudio(to, buffer, { mimeType = 'audio/ogg', filename = 'reply.ogg' } = {}) {
+  if (!process.env.WHATSAPP_TOKEN || !process.env.WHATSAPP_PHONE_NUMBER_ID) return false;
+
+  const mediaId = await uploadMedia(buffer, { mimeType, filename });
+  const res = await fetch(`${GRAPH_API}/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      messaging_product: 'whatsapp',
+      to: normalizeNumber(to),
+      type: 'audio',
+      audio: { id: mediaId },
+    }),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '');
+    throw new Error(`WhatsApp audio send failed (${res.status}): ${detail.slice(0, 200)}`);
+  }
+  return true;
+}
+
 const MAX_BODY = 4000; // under Meta's 4096, leaving room for the part marker
 
 export function splitForWhatsApp(text) {

@@ -3188,3 +3188,62 @@ steer, which crashes when the first attempt produced nothing at all rather than
 a repeat. And `formatPitchEmail` dereferenced a pitch that does not exist on a
 no-pitch morning. Both live on the path nobody watches, which is exactly why
 the no-pitch case got its own tests.
+
+## Voice to voice, in the founder's own language
+
+Half of this already worked. A WhatsApp voice note was downloaded and run
+through Whisper, and the words reached the team — a founder could brief the
+company while walking. The other half did not exist, and the gap was worse than
+missing: the only text-to-speech in the codebase lives in the browser client,
+speaking through the viewer's own device and unreachable from a webhook. So
+somebody who sent a voice note *because their hands were full* got a wall of
+text back.
+
+And nothing handled language at all. A Spanish voice note was transcribed
+correctly and answered in English, because every system prompt is written in
+English and that is what the model matches. A translation was happening —
+silently, in the wrong direction, and nobody asked for it.
+
+### The outbound leg
+
+`speech.js` synthesises the reply on the same `OPENAI_API_KEY` the
+transcription already uses. That mattered: everything else here could be
+finished and one missing credential would leave all of it inert.
+
+Opus in an ogg container, because that is what WhatsApp renders as a playable
+voice note. An mp3 arrives as a file you download, and that difference decides
+whether the feature gets used at all.
+
+**The text always goes out; the voice note is added on top, never instead of.**
+The spoken part carries the top of the answer and the message carries all of
+it, so a TTS outage costs the audio and never the answer — losing a reply to a
+speech failure would be a worse bug than never having built this. A cut
+excerpt ends at a sentence and says "the rest is in the message", because a
+voice note that stops mid-thought reads as a bug.
+
+### Two mechanisms for language, because they fail differently
+
+**Mirror** (the default) answers in whatever language the founder used, taken
+from Whisper's own detection rather than a guess. When Whisper is not
+confident, or reports a language this app has no name for, **nothing is
+instructed at all** — a model told "reply in zz" will obey, so silence is safer
+than a guess. An English question to an English-speaking team gets no
+instruction either, since that would be tokens spent to change nothing.
+
+**Pinned** (`REPLY_LANGUAGE=es`) answers in one language whatever comes in.
+This is the actual translation case: brief the company in one language, read
+the answer in another.
+
+Either way, product names, commands and ventureIds are named as things *not* to
+translate — a helpfully localised `v_1789201169411_ekka7z` would be useless.
+
+The instruction goes in the prompt rather than through a translation API on the
+way out. Translating a finished English answer produces English sentences
+wearing Spanish words; idiom, register and the company's own vocabulary all
+survive better when the answer is composed in the target language to begin
+with.
+
+One breaking change worth noting: `transcribeAudio` now returns
+`{ text, language }` rather than a bare string, since the language is the thing
+that makes answering in it possible. Both call sites and the existing test were
+updated with it.

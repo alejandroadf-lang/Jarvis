@@ -72,6 +72,11 @@ export async function transcribeAudio(audio, filename = 'voice.ogg') {
   const form = new FormData();
   form.append('file', new Blob([audio]), filename);
   form.append('model', transcribeModel());
+  // Ask for the detected language as well as the words. Without it a reply to
+  // a Spanish voice note comes back in English, which is a translation nobody
+  // asked for — and knowing the language is what makes answering in it
+  // possible at all.
+  form.append('response_format', 'verbose_json');
 
   const response = await fetch(TRANSCRIBE_URL, {
     method: 'POST',
@@ -87,5 +92,11 @@ export async function transcribeAudio(audio, filename = 'voice.ogg') {
   }
 
   const data = await response.json();
-  return (data?.text || '').trim();
+  return {
+    text: (data?.text || '').trim(),
+    // ISO-639-1 where Whisper is confident, empty where it is not. Empty is a
+    // real answer: it means answer in whatever the text looks like rather than
+    // guessing a language and being confidently wrong in it.
+    language: String(data?.language || '').trim().toLowerCase(),
+  };
 }
