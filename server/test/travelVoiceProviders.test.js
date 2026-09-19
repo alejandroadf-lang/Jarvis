@@ -19,6 +19,7 @@ const KEYS = [
   'ASSEMBLYAI_API_KEY',
   'ASSEMBLYAI_POLL_MS',
   'DEEPGRAM_KEYTERMS',
+  'ELEVENLABS_ZERO_RETENTION',
   'ELEVENLABS_API_KEY',
   'ELEVENLABS_TTS_MODEL',
   'ELEVENLABS_VOICE_ID',
@@ -506,4 +507,48 @@ test('no ear asks for speaker identification, diarisation or sentiment', async (
   }
   assert.deepEqual(stt.EARS.map((e) => e.id), ['openai', 'elevenlabs', 'deepgram', 'assemblyai']);
   delete process.env.ASSEMBLYAI_POLL_MS;
+});
+
+// --- what the voice keeps, which tier it speaks with, and what it never does ----------
+
+test('ElevenLabs is asked not to log by default, and can be told to when a plan rejects the flag', async () => {
+  process.env.ELEVENLABS_API_KEY = 'el-key';
+  let seen = capture({ ok: true, arrayBuffer: async () => new ArrayBuffer(2) });
+  await tts.elevenLabsVoice.synthesize('Hola', { language: 'es' });
+  assert.equal(new URL(seen[0].url).searchParams.get('enable_logging'), 'false');
+
+  process.env.ELEVENLABS_ZERO_RETENTION = 'false';
+  try {
+    seen = capture({ ok: true, arrayBuffer: async () => new ArrayBuffer(2) });
+    await tts.elevenLabsVoice.synthesize('Hola', { language: 'es' });
+    assert.equal(new URL(seen[0].url).searchParams.get('enable_logging'), null);
+  } finally {
+    delete process.env.ELEVENLABS_ZERO_RETENTION;
+  }
+});
+
+test('the tier dial switches ElevenLabs between the quality and the fast model', async () => {
+  process.env.ELEVENLABS_API_KEY = 'el-key';
+  const settings = await import('../travelVoice/settings.js');
+  settings.__resetSettingsForTests();
+  assert.equal(tts.elevenLabsVoice.model(), 'eleven_multilingual_v2');
+  settings.setOverride('tier', 'fast');
+  assert.equal(tts.elevenLabsVoice.model(), 'eleven_flash_v2_5');
+  const seen = capture({ ok: true, arrayBuffer: async () => new ArrayBuffer(2) });
+  await tts.elevenLabsVoice.synthesize('Bonjour', { language: 'fr' });
+  const body = JSON.parse(seen[0].init.body);
+  assert.equal(body.model_id, 'eleven_flash_v2_5');
+  assert.equal(body.language_code, 'fr', 'the fast model takes the language');
+  settings.setOverride('tier', 'quality');
+  assert.equal(tts.elevenLabsVoice.model(), 'eleven_multilingual_v2');
+  settings.__resetSettingsForTests();
+});
+
+test('no voice provider clones a voice', async () => {
+  const fs = await import('node:fs');
+  const source = fs.readFileSync(new URL('../travelVoice/providers/tts.js', import.meta.url), 'utf8');
+  for (const forbidden of ['/voices/add', 'voice_clone', 'instant_voice', 'clone', 'voices/pvc', 'similarity_boost']) {
+    assert.ok(!source.toLowerCase().includes(forbidden.toLowerCase()) || /cloning is not covered|no cloning here/.test(source), `tts.js mentions ${forbidden}`);
+  }
+  assert.ok(!source.includes('/v1/voices/add'), 'no ElevenLabs cloning endpoint');
 });

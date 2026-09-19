@@ -52,7 +52,7 @@ const COMMANDS = [
   { kind: 'settings', re: /^travel\s+(?:settings|options|config)$/i },
   // "set" is optional: "travel length 90" reads better on a phone than
   // "travel set length 90", and both should work.
-  { kind: 'set', re: /^travel\s+(?:set\s+)?(voice|voiceid|language|lang|idioma|langue|length|words|effort|thinking|model|text|retry|limit|rate)\s+(.+)$/i },
+  { kind: 'set', re: /^travel\s+(?:set\s+)?(voice|voiceid|language|lang|idioma|langue|length|words|effort|thinking|model|text|retry|limit|rate|tier)\s+(.+)$/i },
   { kind: 'guests', re: /^travel\s+guests$/i },
   { kind: 'guest_remove', re: /^travel\s+(?:guest\s+)?remove\s+(\+?[\d\s()-]{6,})$/i },
   { kind: 'guest_clear', re: /^travel\s+guests\s+clear$/i },

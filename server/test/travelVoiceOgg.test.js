@@ -64,3 +64,43 @@ test('a truncated file yields the pages that are whole and stops', () => {
   assert.equal([...oggPages(cut)].length, 2, 'the torn last page is not returned');
   assert.equal(oggOpusDurationSeconds(cut), null, 'and without it there is no duration');
 });
+
+// --- writing the AI-generated marker into the file ---------------------------------
+
+import { tagOggOpus, oggOpusComments, oggChecksum } from '../travelVoice/ogg.js';
+
+test('comments are added to the OpusTags page and every page still checksums', () => {
+  const original = fakeOpus(2.5);
+  assert.deepEqual(oggOpusComments(original), []);
+
+  const tagged = tagOggOpus(original, ['AI_GENERATED=true', 'GENERATOR=test/voice']);
+  assert.deepEqual(oggOpusComments(tagged), ['AI_GENERATED=true', 'GENERATOR=test/voice']);
+  assert.equal(oggOpusDurationSeconds(tagged), 2.5, 'the audio is untouched');
+  assert.ok(tagged.length > original.length);
+
+  const pages = [...oggPages(tagged)];
+  assert.equal(pages.length, 3);
+  assert.deepEqual(pages.map((p) => p.sequence), [0, 1, 2], 'no page was added or renumbered');
+  // The rebuilt page carries a correct Ogg checksum.
+  const rebuilt = tagged.subarray(pages[1].offset, pages[1].end);
+  const stored = rebuilt.readUInt32LE(22);
+  const zeroed = Buffer.from(rebuilt);
+  zeroed.writeUInt32LE(0, 22);
+  assert.equal(oggChecksum(zeroed), stored);
+
+  // Tagging again appends rather than replacing.
+  const twice = tagOggOpus(tagged, ['LANGUAGE=es']);
+  assert.deepEqual(oggOpusComments(twice), ['AI_GENERATED=true', 'GENERATOR=test/voice', 'LANGUAGE=es']);
+});
+
+test('the Ogg checksum is the un-reflected CRC-32 the format specifies', () => {
+  // Known value: the CRC of "123456789" under this polynomial with no reflection and no XOR is 0x89a1897f.
+  assert.equal(oggChecksum(Buffer.from('123456789', 'latin1')), 0x89a1897f);
+});
+
+test('audio that is not Ogg Opus is returned unchanged rather than corrupted', () => {
+  const mp3 = Buffer.from('ID3\u0003\u0000\u0000', 'latin1');
+  assert.equal(tagOggOpus(mp3, ['AI_GENERATED=true']), mp3);
+  const one = fakeOpus(1);
+  assert.equal(tagOggOpus(one, []), one, 'no comments, no change');
+});

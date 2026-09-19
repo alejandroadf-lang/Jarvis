@@ -105,11 +105,32 @@ function elevenLabsFormat(format) {
   return (process.env.ELEVENLABS_OUTPUT_FORMAT || '').trim() || 'opus_48000_64';
 }
 
+// Two tiers of the same voice. The multilingual model is the one people
+// mean when they say the voice sounds human; Flash is the same voice at a
+// fraction of the latency and half the price, which is what a streaming
+// path will need. TRAVEL TIER FAST switches from a phone; the model
+// variable pins one outright.
+const ELEVENLABS_TIERS = { quality: 'eleven_multilingual_v2', fast: 'eleven_flash_v2_5' };
+
+// Whether ElevenLabs is asked not to keep the text or the audio. On by
+// default: a client's booking question is not training data. The switch
+// exists because the parameter is honoured per plan, and a plan that
+// rejects it should be told so rather than silently logged. Voice cloning
+// is not covered by this flag on any plan, which is one of the reasons
+// there is no cloning here at all.
+export function elevenLabsZeroRetention() {
+  return (process.env.ELEVENLABS_ZERO_RETENTION || '').trim().toLowerCase() !== 'false';
+}
+
 export const elevenLabsVoice = {
   id: 'elevenlabs',
   label: 'ElevenLabs',
   configured: () => hasSecret('ELEVENLABS_API_KEY'),
-  model: () => (process.env.ELEVENLABS_TTS_MODEL || '').trim() || 'eleven_multilingual_v2',
+  model: () => {
+    const tier = settingOverride('tier');
+    if (tier && ELEVENLABS_TIERS[tier]) return ELEVENLABS_TIERS[tier];
+    return (process.env.ELEVENLABS_TTS_MODEL || '').trim() || ELEVENLABS_TIERS.quality;
+  },
   // "George", a stock multilingual voice, so a fresh key works without a
   // trip to the voice library. Any voice id from the account replaces it.
   voice: () => settingOverride('voice', 'elevenlabs') || (process.env.ELEVENLABS_VOICE_ID || '').trim() || 'JBFqnCBsd6RMkjVDRZzb',
@@ -129,6 +150,7 @@ export const elevenLabsVoice = {
     if (/flash|turbo/i.test(model)) body.language_code = lang(language);
 
     const params = new URLSearchParams({ output_format: elevenLabsFormat(format in FORMATS ? format : 'opus') });
+    if (elevenLabsZeroRetention()) params.set('enable_logging', 'false');
     const response = await fetch(`${ELEVENLABS_URL}/${encodeURIComponent(this.voice())}?${params}`, {
       method: 'POST',
       headers: { 'xi-api-key': apiKey, 'Content-Type': 'application/json', Accept: spec.mimeType },

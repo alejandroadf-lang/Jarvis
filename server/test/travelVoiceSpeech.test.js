@@ -7,6 +7,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fakeOpus } from './travelVoiceOgg.test.js';
+import { oggOpusComments } from '../travelVoice/ogg.js';
 
 let tmpDir;
 let speech;
@@ -144,3 +146,30 @@ test('speakable strips the markdown a spoken reply must not contain', () => {
   assert.match(spoken, /Use FXP\./);
   assert.match(spoken, /See this\./);
 });
+
+test('every synthesised voice note says inside the file that a machine made it', async () => {
+  const opus = fakeOpus(2);
+  global.fetch = async () => ({ ok: true, arrayBuffer: async () => opus.buffer.slice(opus.byteOffset, opus.byteOffset + opus.length) });
+  const result = await speech.synthesizeSpeech('Hola', { language: 'es' });
+  assert.equal(result.marked, true);
+  const comments = oggOpusComments(result.buffer);
+  assert.ok(comments.includes('AI_GENERATED=true'));
+  assert.ok(comments.includes('LANGUAGE=es'));
+  assert.ok(comments.some((c) => c.startsWith('GENERATOR=openai/')));
+  assert.ok(comments.some((c) => /Article 50/.test(c)));
+
+  // The MP3 fallback has nowhere to write it and passes through untouched.
+  global.fetch = async () => ({ ok: true, arrayBuffer: async () => new TextEncoder().encode('ID3mp3').buffer });
+  const mp3 = await speech.synthesizeSpeech('Hola', { language: 'es', format: 'mp3' });
+  assert.equal(mp3.marked, false);
+
+  process.env.TRAVEL_VOICE_MARK_AUDIO = 'false';
+  try {
+    global.fetch = async () => ({ ok: true, arrayBuffer: async () => opus.buffer.slice(opus.byteOffset, opus.byteOffset + opus.length) });
+    const off = await speech.synthesizeSpeech('Hola', { language: 'es' });
+    assert.equal(off.marked, false);
+  } finally {
+    delete process.env.TRAVEL_VOICE_MARK_AUDIO;
+  }
+});
+

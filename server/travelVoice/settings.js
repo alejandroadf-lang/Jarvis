@@ -55,6 +55,17 @@ export const SETTINGS = {
     perProvider: 'tts',
     parse: (value) => String(value).trim(),
   },
+  tier: {
+    label: 'tier',
+    help: 'quality for the best voice, fast for the low-latency one (ElevenLabs)',
+    envName: 'ELEVENLABS_TTS_MODEL',
+    parse: (value) => {
+      const v = String(value).trim().toLowerCase();
+      if (!['quality', 'fast'].includes(v)) throw new Error('needs to be quality or fast');
+      return v;
+    },
+    describeDefault: 'quality (eleven_multilingual_v2)',
+  },
   language: {
     label: 'language',
     help: `${SUPPORTED_LANGUAGES.join(', ')}, or auto to detect it`,
