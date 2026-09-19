@@ -185,6 +185,15 @@ and it is OpenAI for audio and Claude for the brain, as before. Keys:
 `ELEVENLABS_API_KEY`, `DEEPGRAM_API_KEY`, `IONOS_API_KEY` — details in
 `server/.env.example`, and the Integrations panel probes each one.
 
+**Every reply is checked before it is spoken.** A weaker or cheaper brain
+sometimes ignores the instruction to answer in the caller's language, and on
+a voice channel that is a total loss rather than a degraded answer. So a
+reply confidently in the wrong language is asked for again once, and the
+corrected one is what the caller hears; the tab says when that happened, so
+you can see which brain needs it. An overlong reply is not retried, since the
+text message carries the words intact. Only the audio is cut, at the last
+full sentence that fits.
+
 To try it from the founder's own WhatsApp line without a second number, send
 `TRAVEL ON`; every message after that, voice or text, goes to the advisor
 until `TRAVEL OFF`. The tab's sidebar can reach out first — an introduction,

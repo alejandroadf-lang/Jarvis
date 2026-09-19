@@ -100,10 +100,12 @@ const MARKER_SETS = Object.fromEntries(
 /**
  * Guesses the language of a piece of text from its function words.
  *
- * Returns { language, confidence } where language is null when nothing
+ * Returns { language, confidence, hits } where language is null when nothing
  * matched — a string of IATA codes and a date, say — so the caller can fall
  * back to a hint or the default rather than to a coin toss. Confidence is the
- * winning share of all marker hits, 0 to 1.
+ * winning share of all marker hits, 0 to 1; `hits` is how many markers the
+ * winner actually matched, which is the difference between a guess resting on
+ * one word and one resting on twenty.
  */
 export function guessLanguage(text) {
   const words = String(text || '')
@@ -122,16 +124,16 @@ export function guessLanguage(text) {
   }
 
   const total = scores.es + scores.fr + scores.en;
-  if (total === 0) return { language: null, confidence: 0 };
+  if (total === 0) return { language: null, confidence: 0, hits: 0 };
 
   const [best, bestScore] = Object.entries(scores).sort((a, b) => b[1] - a[1])[0];
   const confidence = bestScore / total;
   // A dead heat between two languages is not a detection. Two hits each for
   // Spanish and French ("la reserva de un vol") tells you nothing.
   const runnerUp = Object.entries(scores).filter(([l]) => l !== best).map(([, s]) => s).sort((a, b) => b - a)[0];
-  if (bestScore === runnerUp) return { language: null, confidence };
+  if (bestScore === runnerUp) return { language: null, confidence, hits: bestScore };
 
-  return { language: best, confidence };
+  return { language: best, confidence, hits: bestScore };
 }
 
 /**

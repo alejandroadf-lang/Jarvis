@@ -186,6 +186,16 @@ export default function TravelVoiceView({ onVenturesChanged }) {
         used.llm && `brain ${used.llm}${data.model ? ` (${data.model})` : ''}${fmtMs(t.llmMs) ? ` ${fmtMs(t.llmMs)}` : ''}`,
         used.tts && `voice ${used.tts}${fmtMs(t.ttsMs) ? ` ${fmtMs(t.ttsMs)}` : ''}`,
       ].filter(Boolean);
+      // A brain that answered in the wrong language and had to be asked
+      // again is the single most useful thing to know when comparing two of
+      // them, so it is said in words rather than left in a log.
+      const drift = data.drift
+        ? data.drift.corrected
+          ? `answered in ${LANGUAGE_LABEL[data.drift.detected] || data.drift.detected}, asked again`
+          : data.drift.error
+            ? `answered in ${LANGUAGE_LABEL[data.drift.detected] || data.drift.detected}, could not be corrected: ${data.drift.error}`
+            : `answered in ${LANGUAGE_LABEL[data.drift.detected] || data.drift.detected} twice`
+        : null;
       append({
         role: 'assistant',
         text: data.reply,
@@ -193,6 +203,8 @@ export default function TravelVoiceView({ onVenturesChanged }) {
           data.toolCalls?.length ? ` · looked up: ${data.toolCalls.join(', ')}` : ''
         }${stages.length ? ` · ${stages.join(' · ')}` : ''}${
           Number.isFinite(data.costUsd) ? ` · $${data.costUsd.toFixed(4)}` : ''
+        }${drift ? ` · ⚠ ${drift}` : ''}${
+          data.tooLong ? ` · ${data.words} words, the voice note stops at the last full sentence that fits` : ''
         }${data.audioError ? ` · no audio: ${data.audioError}` : ''}`,
         audioUrl,
         autoPlay: Boolean(audioUrl),
@@ -445,6 +457,7 @@ export default function TravelVoiceView({ onVenturesChanged }) {
                         {t.channel} {t.from || ''} · {t.language || '?'} · {t.stage}
                         {t.voice ? ' · 🎤' : ''}
                         {t.providers ? ` · ${[t.providers.stt, t.providers.llm, t.providers.tts].filter(Boolean).join('/')}` : ''}
+                        {t.drift ? ` · ⚠ wrong language${t.drift.corrected ? ', fixed' : ''}` : ''}
                       </span>
                       {t.transcript && <div className="truncate">“{t.transcript}”</div>}
                     </li>

@@ -9,6 +9,7 @@
 
 import { assertUnderDailyCap, recordSpend } from '../spend.js';
 import { resolveProvider, hasProvider } from './providers/index.js';
+import { trimToSentence, spokenMaxWords } from './replyCheck.js';
 
 /** Whether the advisor can both hear and speak with what is configured. */
 export function isSpeechConfigured() {
@@ -70,13 +71,26 @@ export async function synthesizeSpeech(text, { language = 'en', format = 'opus',
 }
 
 /**
- * What the advisor says out loud is not always what it writes. A spoken
- * answer drops markdown, and a fare table read aloud is unbearable, so the
- * advisor is asked for a spoken-friendly answer in the first place (see
- * advisor.js) — this only strips what slips through.
+ * What the advisor says out loud is not always what it writes.
+ *
+ * Two differences. A spoken answer drops markdown, because a fare table read
+ * aloud is unbearable — the advisor is asked for a spoken-friendly answer in
+ * the first place (see advisor.js) and this strips what slips through. And a
+ * spoken answer has a length nobody will sit through, so an overlong one is
+ * cut at a sentence boundary rather than mid-word at whatever ceiling the
+ * provider happens to impose.
+ *
+ * The cut only ever applies to the audio. The text message that goes out
+ * alongside it carries the whole answer, so nothing the advisor said is lost
+ * — it moves from the ear to the eye.
+ *
+ * @param {string} text
+ * @param {{maxWords?: number}} [opts] maxWords of Infinity speaks it all,
+ *   which is what the founder's own outreach message gets: their words, their
+ *   call.
  */
-export function speakable(text) {
-  return String(text || '')
+export function speakable(text, { maxWords = spokenMaxWords() } = {}) {
+  const cleaned = String(text || '')
     .replace(/```[\s\S]*?```/g, ' ')
     .replace(/[*_#>`]+/g, '')
     .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
@@ -85,6 +99,7 @@ export function speakable(text) {
     .replace(/[ \t]+/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+  return Number.isFinite(maxWords) ? trimToSentence(cleaned, maxWords) : cleaned;
 }
 
 // Kept for the Integrations panel and status, which name the active voice.

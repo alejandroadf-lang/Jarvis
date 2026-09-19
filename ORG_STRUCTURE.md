@@ -846,6 +846,41 @@ booking question go" is a question they ask. The other brains already spoke
 the OpenAI protocol this app translates tool calls through, so IONOS is a
 URL, a key and a model default, and the advisor's tools work on it unchanged.
 
+### The advisor checks its own answer
+
+Opening the brain slot to open models created a failure the Anthropic-only
+version did not have. The advisor leans on two instructions harder than
+anything else in its prompt — answer entirely in the caller's language, keep
+it short enough to hear — and a weaker model follows them less reliably.
+
+The two failures are not equally bad, so they are not treated alike. A reply
+in the **wrong language** is a total loss: a Spanish agent handed thirty
+seconds of English audio has not received a worse answer, they have received
+no answer, and unlike a text they cannot skim it to discover that. That is
+worth a second model call, so the reply is checked and, if it confidently
+came back in the wrong language, asked for again once. The correction is
+written in the target language first, because a model that just ignored an
+English instruction to speak Spanish is not obviously going to obey a second
+one. A reply that is merely **too long** is a partial loss of a different
+kind: the words are fine and the text message carries all of them, so nothing
+is retried and only the audio is cut, at the last full sentence that fits.
+
+The check is deliberately reluctant. A false positive costs a whole extra
+call and doubles the wait of someone holding a phone, so it fires only on
+strong evidence and stays silent on anything it cannot judge — a reply that
+is mostly Amadeus entries and IATA codes has no language to detect, which is
+the common shape of the shortest and best answers. A correction that itself
+drifts is still used, because a second wrong-language answer is no worse than
+the first and discarding it would throw away a call already paid for; a
+correction that cannot run at all, because the spend cap closed in between,
+leaves the first answer standing rather than turning a degraded reply into no
+reply.
+
+What this produces, beyond a better answer, is evidence. Every turn records
+whether the brain drifted and whether the correction fixed it, so "this model
+cannot be trusted on a Spanish line" stops being an impression and becomes a
+count.
+
 ### It can look, not just explain
 
 The advisor knows Amadeus the way a trainer does — the cryptic entries

@@ -23,6 +23,7 @@ import { assertUnderDailyCap, recordSpend } from '../spend.js';
 import { LANGUAGE_NAMES, normalizeLanguage, DEFAULT_LANGUAGE } from './languages.js';
 import { isAmadeusConfigured, lookupLocations, searchFlightOffers, amadeusEnvironment } from './amadeus.js';
 import { resolveProvider } from './providers/index.js';
+import { checkReply, correctionPrompt, languageRetryEnabled } from './replyCheck.js';
 
 const MAX_TOOL_ROUNDS = 4;
 
@@ -144,10 +145,13 @@ export async function runAdvisorTurn({ anthropic = null, provider = null, histor
   const usage = { inputTokens: 0, outputTokens: 0, cacheWriteTokens: 0, cacheReadTokens: 0, costUsd: 0 };
   const toolCalls = [];
 
-  for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+  // One call, metered. Shared by the tool loop and the language correction
+  // below so both are billed and capped the same way — a correction that
+  // slipped past the cap would be the one call in the app that could.
+  async function ask({ withTools = true } = {}) {
     assertUnderDailyCap();
     const request = { model, max_tokens: maxTokens(), system, messages };
-    if (toolDefs.length) request.tools = toolDefs;
+    if (withTools && toolDefs.length) request.tools = toolDefs;
     const response = await brain.create(request, { anthropic });
 
     const tokens = usageOf(response);
@@ -161,15 +165,25 @@ export async function runAdvisorTurn({ anthropic = null, provider = null, histor
 
     const content = response.content || [];
     messages.push({ role: 'assistant', content });
+    return { response, content };
+  }
+
+  function textOf(content) {
+    return content
+      .filter((block) => block.type === 'text')
+      .map((block) => block.text)
+      .join('\n')
+      .trim();
+  }
+
+  let reply = '';
+  for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+    const { response, content } = await ask();
 
     const toolUses = content.filter((block) => block.type === 'tool_use');
     if (response.stop_reason !== 'tool_use' || toolUses.length === 0 || round === MAX_TOOL_ROUNDS) {
-      const reply = content
-        .filter((block) => block.type === 'text')
-        .map((block) => block.text)
-        .join('\n')
-        .trim();
-      return { reply, messages, usage, toolCalls, language: lang, provider: brain.id, model, ms: Date.now() - startedAt };
+      reply = textOf(content);
+      break;
     }
 
     // Every tool_use block needs a matching tool_result, or the API rejects
@@ -188,8 +202,55 @@ export async function runAdvisorTurn({ anthropic = null, provider = null, histor
     messages.push({ role: 'user', content: results });
   }
 
-  // Unreachable: the loop returns on its final round.
-  return { reply: '', messages, usage, toolCalls, language: lang, provider: brain.id, model, ms: Date.now() - startedAt };
+  // The answer is written. Is it in the language the caller is speaking?
+  // See replyCheck.js for why this is worth a second call and why it fires
+  // only on strong evidence.
+  let check = checkReply(reply, { language: lang });
+  let drift = null;
+  if (check.drifted && languageRetryEnabled()) {
+    drift = { detected: check.detected, corrected: false };
+    messages.push({ role: 'user', content: correctionPrompt(lang) });
+    try {
+      // No tools on the correction: this is a rewrite of an answer already
+      // researched, and a fresh tool round here would be a third call and a
+      // longer wait for words the model has already chosen.
+      const { content } = await ask({ withTools: false });
+      const rewritten = textOf(content);
+      if (rewritten) {
+        const recheck = checkReply(rewritten, { language: lang });
+        // Kept even if it drifted again: a second wrong-language answer is no
+        // worse than the first, and refusing to use it would mean throwing
+        // away a call the founder has already paid for.
+        reply = rewritten;
+        check = recheck;
+        drift.corrected = !recheck.drifted;
+        drift.stillDrifted = recheck.drifted;
+      }
+    } catch (err) {
+      // The first answer still exists and is still useful to someone who
+      // reads the language it came back in. Losing it to a failed retry
+      // would turn a degraded reply into no reply at all.
+      drift.error = err.message;
+      if (String(err?.message || '').startsWith('Daily spend cap reached')) drift.error = 'daily spend cap reached before the correction could run';
+    }
+  }
+
+  return {
+    reply,
+    messages,
+    usage,
+    toolCalls,
+    language: lang,
+    provider: brain.id,
+    model,
+    // What the answer looked like once it was written: whether it came back
+    // in the wrong language and had to be asked again, and how long it ran.
+    // The numbers that say which brain can be trusted with a phone call.
+    drift,
+    words: check.words,
+    tooLong: check.tooLong,
+    ms: Date.now() - startedAt,
+  };
 }
 
 export const __testing = { DOMAIN_BRIEF, languageInstruction, toolsAvailable };

@@ -287,6 +287,10 @@ export async function runTravelVoiceTurn({
   costUsd += turn.usage.costUsd;
   used.llm = turn.provider;
   timings.llmMs = turn.ms;
+  // Whether the brain answered in the language it was told to, and how long
+  // it ran on. Carried out of the turn because it is the evidence behind
+  // "this model cannot be trusted on a Spanish line" — see replyCheck.js.
+  const quality = { drift: turn.drift, words: turn.words, tooLong: turn.tooLong };
 
   const trimmed = trimHistory(turn.messages);
   saveSession(SESSION_KIND, sessionId, trimmed);
@@ -318,6 +322,7 @@ export async function runTravelVoiceTurn({
     providers: used,
     model: turn.model,
     timings,
+    ...quality,
     durationMs: Date.now() - startedAt,
   };
 }
@@ -439,6 +444,10 @@ export async function handleTravelVoiceMessage(message, { anthropic, phoneNumber
     toolCalls: result.toolCalls.map((t) => t.name),
     providers: result.providers,
     timings: result.timings,
+    // Only recorded when something was actually wrong with the answer, so a
+    // scan down the log shows the bad turns rather than a column of nulls.
+    ...(result.drift ? { drift: result.drift } : {}),
+    ...(result.tooLong ? { words: result.words } : {}),
     costUsd: result.costUsd,
     durationMs: Date.now() - startedAt,
   });
@@ -482,7 +491,8 @@ export async function startTravelVoiceOutreach(to, { phoneNumberId, language = D
 
   const spoken = String(message || '').trim();
   if (spoken && canSpeak()) {
-    const speech = await synthesizeSpeech(speakable(spoken), { language: lang, format: 'opus' });
+    // The founder wrote this one. Their words go out whole, however long.
+    const speech = await synthesizeSpeech(speakable(spoken, { maxWords: Infinity }), { language: lang, format: 'opus' });
     await sendWhatsAppAudio(number, speech.buffer, { mimeType: speech.mimeType, filename: speech.filename, phoneNumberId });
     outcome.spoke = true;
   } else if (spoken) {

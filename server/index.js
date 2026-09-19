@@ -1172,6 +1172,9 @@ app.post('/api/travel-voice/turn', audioBody, async (req, res) => {
       providers: result.providers,
       model: result.model,
       timings: result.timings,
+      drift: result.drift,
+      words: result.words,
+      tooLong: result.tooLong,
       costUsd: result.costUsd,
       durationMs: result.durationMs,
     });
