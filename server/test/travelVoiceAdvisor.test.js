@@ -14,7 +14,7 @@ let tmpDir;
 let advisor;
 let spend;
 const saved = {};
-const KEYS = ['AMADEUS_CLIENT_ID', 'AMADEUS_CLIENT_SECRET', 'TRAVEL_VOICE_MODEL', 'DAILY_SPEND_CAP_USD'];
+const KEYS = ['AMADEUS_CLIENT_ID', 'AMADEUS_CLIENT_SECRET', 'TRAVEL_VOICE_MODEL', 'TRAVEL_VOICE_LLM_PROVIDER', 'DAILY_SPEND_CAP_USD', 'ANTHROPIC_API_KEY', 'IONOS_API_KEY'];
 
 before(async () => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jarvis-travel-advisor-'));
@@ -35,6 +35,7 @@ after(() => {
 
 beforeEach(() => {
   for (const k of KEYS) delete process.env[k];
+  process.env.ANTHROPIC_API_KEY = 'an-key';
 });
 
 function textResponse(text, usage = { input_tokens: 100, output_tokens: 50 }) {
@@ -168,6 +169,47 @@ test('over the daily cap nothing is asked', async () => {
   const client = stubClient([textResponse('should not run')]);
   await assert.rejects(() => advisor.runAdvisorTurn({ anthropic: client, text: 'x', language: 'en' }), /Daily spend cap reached/);
   assert.equal(client.calls.length, 0);
+});
+
+test('without any brain configured the advisor says which keys would give it one', async () => {
+  delete process.env.ANTHROPIC_API_KEY;
+  await assert.rejects(() => advisor.runAdvisorTurn({ anthropic: stubClient([]), text: 'x', language: 'en' }), /No advisor model is configured/);
+});
+
+test('a named brain is used for the turn, and its model is reported', async () => {
+  process.env.IONOS_API_KEY = 'io-key';
+  let seen;
+  const originalFetch = global.fetch;
+  global.fetch = async (url, init) => {
+    seen = { url: String(url), body: JSON.parse(init.body), auth: init.headers.Authorization };
+    return {
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: 'Utilisez FXP.' }, finish_reason: 'stop' }], usage: { prompt_tokens: 40, completion_tokens: 8 } }),
+    };
+  };
+  try {
+    const client = stubClient([]);
+    const result = await advisor.runAdvisorTurn({ anthropic: client, provider: 'ionos', text: 'Comment valoriser ?', language: 'fr' });
+    assert.equal(client.calls.length, 0, 'Anthropic was not asked');
+    assert.equal(result.provider, 'ionos');
+    assert.equal(result.model, 'meta-llama/Llama-3.3-70B-Instruct');
+    assert.equal(result.reply, 'Utilisez FXP.');
+    assert.match(seen.url, /openai\.inference\.de-txl\.ionos\.com\/v1\/chat\/completions$/);
+    assert.equal(seen.auth, 'Bearer io-key');
+    assert.equal(seen.body.messages[0].role, 'system');
+    assert.match(seen.body.messages[0].content, /Reply entirely in French/);
+    assert.match(seen.body.messages[0].content, /Amadeus/);
+    assert.equal(seen.body.messages[1].content, 'Comment valoriser ?');
+    assert.equal(seen.body.tools, undefined);
+    assert.ok(result.usage.costUsd > 0, 'priced at the IONOS rate');
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('naming a brain that has no key is refused rather than swapped', async () => {
+  await assert.rejects(() => advisor.runAdvisorTurn({ anthropic: stubClient([]), provider: 'ionos', text: 'x', language: 'en' }), /IONOS AI Model Hub \(EU\) is not configured/);
+  await assert.rejects(() => advisor.runAdvisorTurn({ anthropic: stubClient([]), provider: 'hal9000', text: 'x', language: 'en' }), /Unknown llm provider "hal9000"/);
 });
 
 test('the domain brief covers what agencies actually ring about', () => {

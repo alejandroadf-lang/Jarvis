@@ -19,7 +19,6 @@
 // with two read-only tools, a per-caller rate limit and the same daily spend
 // cap as everything else. A helpdesk nobody can ring is not a helpdesk.
 
-import { hasSecret } from '../env.js';
 import { readJson, writeJson } from '../store.js';
 import { loadSessions, saveSession, trimHistory } from '../sessionStore.js';
 import { createVenture, listVentures } from '../finance/ventures.js';
@@ -30,8 +29,9 @@ import {
   normalizeNumber,
 } from '../channels/whatsapp.js';
 import { runAdvisorTurn, advisorModel } from './advisor.js';
-import { transcribeWithLanguage, synthesizeSpeech, speakable, isSpeechConfigured, ttsModel, ttsVoice } from './speech.js';
+import { transcribeWithLanguage, synthesizeSpeech, speakable, isSpeechConfigured, canHear, canSpeak, ttsModel, ttsVoice } from './speech.js';
 import { isAmadeusConfigured, amadeusEnvironment } from './amadeus.js';
+import { describeProviders, hasProvider, resolveProvider } from './providers/index.js';
 import {
   resolveLanguage,
   requestedLanguageSwitch,
@@ -77,8 +77,10 @@ export function isTravelVoiceNumber(phoneNumberId) {
  */
 export function travelVoiceCapabilities() {
   return {
-    text: hasSecret('ANTHROPIC_API_KEY'),
+    text: hasProvider('llm'),
     voice: isSpeechConfigured(),
+    hear: canHear(),
+    speak: canSpeak(),
     liveFares: isAmadeusConfigured(),
     whatsapp: Boolean(travelVoicePhoneNumberId() && process.env.WHATSAPP_TOKEN),
     liveCalls: hasMediaBridge(),
@@ -226,6 +228,9 @@ function sessionHistory(sessionId) {
  * @param {string} [args.filename] format hint for the transcriber
  * @param {string} [args.language] what the caller chose, if anything
  * @param {boolean} [args.wantAudio] synthesise the reply
+ * @param {{stt?: string, llm?: string, tts?: string}} [args.providers] which
+ *   ears, brain and voice to use on this turn; the deployment defaults
+ *   otherwise (see providers/index.js)
  */
 export async function runTravelVoiceTurn({
   anthropic,
@@ -235,24 +240,42 @@ export async function runTravelVoiceTurn({
   filename = 'voice.ogg',
   language = null,
   wantAudio = false,
+  providers = {},
 }) {
   const startedAt = Date.now();
   const previous = rememberedLanguage(sessionId);
   let transcript = String(text || '').trim();
   let heard = null;
   let costUsd = 0;
+  // Which provider answered each stage, and how long it took — the numbers
+  // that make "which ears are better" a comparison rather than an opinion.
+  const used = { stt: null, llm: null, tts: null };
+  const timings = { sttMs: null, llmMs: null, ttsMs: null };
 
   if (audio) {
     // The chosen language is a hint to the transcriber, not an override of
     // what it hears: a caller who picked Spanish and then speaks French has
-    // changed their mind, and Whisper says so.
-    const result = await transcribeWithLanguage(audio, { filename, languageHint: normalizeLanguage(language) || previous });
+    // changed their mind, and the transcriber says so.
+    const result = await transcribeWithLanguage(audio, {
+      filename,
+      languageHint: normalizeLanguage(language) || previous,
+      provider: providers.stt,
+    });
     transcript = result.text;
     heard = result.language;
     costUsd += result.costUsd;
+    used.stt = result.provider;
+    timings.sttMs = result.ms;
     if (!transcript) {
-      // Whisper may still have heard which language the silence was in.
-      return { transcript: '', language: normalizeLanguage(language) || heard || previous || DEFAULT_LANGUAGE, empty: true, costUsd };
+      // The transcriber may still have heard which language the silence was in.
+      return {
+        transcript: '',
+        language: normalizeLanguage(language) || heard || previous || DEFAULT_LANGUAGE,
+        empty: true,
+        costUsd,
+        providers: used,
+        timings,
+      };
     }
   }
 
@@ -260,8 +283,10 @@ export async function runTravelVoiceTurn({
   const resolved = resolveLanguage({ chosen: switched || language, heard, text: transcript, previous });
   const history = sessionHistory(sessionId);
 
-  const turn = await runAdvisorTurn({ anthropic, history, text: transcript, language: resolved.language });
+  const turn = await runAdvisorTurn({ anthropic, provider: providers.llm, history, text: transcript, language: resolved.language });
   costUsd += turn.usage.costUsd;
+  used.llm = turn.provider;
+  timings.llmMs = turn.ms;
 
   const trimmed = trimHistory(turn.messages);
   saveSession(SESSION_KIND, sessionId, trimmed);
@@ -271,8 +296,10 @@ export async function runTravelVoiceTurn({
   let audioError = null;
   if (wantAudio && turn.reply) {
     try {
-      speech = await synthesizeSpeech(speakable(turn.reply), { language: resolved.language, format: 'opus' });
+      speech = await synthesizeSpeech(speakable(turn.reply), { language: resolved.language, format: 'opus', provider: providers.tts });
       costUsd += speech.costUsd;
+      used.tts = speech.provider;
+      timings.ttsMs = speech.ms;
     } catch (err) {
       audioError = err.message;
     }
@@ -288,6 +315,9 @@ export async function runTravelVoiceTurn({
     audioError,
     usage: turn.usage,
     costUsd,
+    providers: used,
+    model: turn.model,
+    timings,
     durationMs: Date.now() - startedAt,
   };
 }
@@ -339,8 +369,8 @@ export async function handleTravelVoiceMessage(message, { anthropic, phoneNumber
   let audio = null;
   let filename = 'voice.ogg';
   if (isVoiceNote(message) && message.mediaId) {
-    if (!isSpeechConfigured()) {
-      recordTurnLog({ channel: 'whatsapp', from: maskNumber(from), stage: 'unsupported_type', language: previous, detail: 'voice note without OPENAI_API_KEY' });
+    if (!canHear()) {
+      recordTurnLog({ channel: 'whatsapp', from: maskNumber(from), stage: 'unsupported_type', language: previous, detail: 'voice note with no speech-to-text provider configured' });
       await send(localized('unsupportedType', previous));
       return { stage: 'unsupported_type' };
     }
@@ -367,7 +397,7 @@ export async function handleTravelVoiceMessage(message, { anthropic, phoneNumber
       text: audio ? '' : message.text,
       audio,
       filename,
-      wantAudio: Boolean(audio),
+      wantAudio: Boolean(audio) && canSpeak(),
     });
   } catch (err) {
     recordTurnLog({ channel: 'whatsapp', from: maskNumber(from), stage: 'failed', language: previous, detail: err.message, durationMs: Date.now() - startedAt });
@@ -407,6 +437,8 @@ export async function handleTravelVoiceMessage(message, { anthropic, phoneNumber
     transcript: result.transcript.slice(0, PREVIEW_CHARS),
     reply: (result.reply || '').slice(0, PREVIEW_CHARS),
     toolCalls: result.toolCalls.map((t) => t.name),
+    providers: result.providers,
+    timings: result.timings,
     costUsd: result.costUsd,
     durationMs: Date.now() - startedAt,
   });
@@ -449,7 +481,7 @@ export async function startTravelVoiceOutreach(to, { phoneNumberId, language = D
   outcome.permissionRequested = true;
 
   const spoken = String(message || '').trim();
-  if (spoken && isSpeechConfigured()) {
+  if (spoken && canSpeak()) {
     const speech = await synthesizeSpeech(speakable(spoken), { language: lang, format: 'opus' });
     await sendWhatsAppAudio(number, speech.buffer, { mimeType: speech.mimeType, filename: speech.filename, phoneNumberId });
     outcome.spoke = true;
@@ -513,7 +545,8 @@ export function travelVoiceStatus() {
     capabilities,
     languages: SUPPORTED_LANGUAGES,
     model: advisorModel(),
-    voice: capabilities.voice ? { model: ttsModel(), voice: ttsVoice() } : null,
+    voice: capabilities.speak ? { provider: resolveProvider('tts').id, model: ttsModel(), voice: ttsVoice() } : null,
+    providers: describeProviders(),
     amadeus: capabilities.liveFares ? { environment: amadeusEnvironment() } : null,
     whatsapp: {
       phoneNumberId: travelVoicePhoneNumberId() || null,

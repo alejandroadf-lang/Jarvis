@@ -284,17 +284,32 @@ export async function fetchTravelVoiceStatus() {
   return data;
 }
 
-export async function sendTravelVoiceText(sessionId, text, { language, wantAudio } = {}) {
-  const { data } = await axios.post('/api/travel-voice/turn', { sessionId, text, language: language || undefined, wantAudio: Boolean(wantAudio) });
+// `providers` names the ears, brain and voice for this one turn ({ stt, llm,
+// tts }, each a provider id or blank for the deployment default). The server
+// refuses a named provider that has no key rather than swapping it, so a
+// comparison is always of the thing that was picked.
+export async function sendTravelVoiceText(sessionId, text, { language, wantAudio, providers = {} } = {}) {
+  const { data } = await axios.post('/api/travel-voice/turn', {
+    sessionId,
+    text,
+    language: language || undefined,
+    wantAudio: Boolean(wantAudio),
+    stt: providers.stt || undefined,
+    llm: providers.llm || undefined,
+    tts: providers.tts || undefined,
+  });
   return data;
 }
 
 // The recording goes up as its own body rather than base64 inside JSON, so a
 // thirty-second note is not a 40% larger request. The reply's audio comes
 // back base64 in the JSON: one round trip per voice turn.
-export async function sendTravelVoiceAudio(sessionId, blob, { language } = {}) {
+export async function sendTravelVoiceAudio(sessionId, blob, { language, providers = {} } = {}) {
   const params = new URLSearchParams({ sessionId });
   if (language) params.set('language', language);
+  for (const slot of ['stt', 'llm', 'tts']) {
+    if (providers[slot]) params.set(slot, providers[slot]);
+  }
   const res = await fetch(`/api/travel-voice/turn?${params}`, {
     method: 'POST',
     headers: authHeaders({ 'Content-Type': blob.type || 'audio/webm' }),

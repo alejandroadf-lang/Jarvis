@@ -25,11 +25,13 @@ import { isWhatsAppConfigured, allowedNumbers, GRAPH_API } from './channels/what
 import { isOpenAIConfigured, chatModel, fallbackModel, transcribeModel } from './agents/openai.js';
 import { isGeminiConfigured, geminiModel, listModelsUrl } from './agents/gemini.js';
 import { MODELS, CHEAP_TIER } from './agents/models.js';
-import { readSecret } from './env.js';
+import { readSecret, hasSecret } from './env.js';
 import { getStorageStatus } from './storage.js';
 import { accessStatus } from './auth.js';
 import { travelVoiceCapabilities, travelVoicePhoneNumberId } from './travelVoice/index.js';
 import { isAmadeusConfigured, amadeusEnvironment, amadeusHost } from './travelVoice/amadeus.js';
+import { isIonosConfigured, ionosModel, listModelsUrl as ionosModelsUrl } from './agents/ionos.js';
+import { describeProviders } from './travelVoice/providers/index.js';
 
 // A probe must never hang a page load. Both services are normally fast; if
 // one isn't, "couldn't reach it" is a more useful answer than a spinner.
@@ -389,18 +391,87 @@ async function probeAmadeus() {
   }
 }
 
+/**
+ * The three providers the travel advisor can hear and speak through besides
+ * OpenAI, plus the EU-hosted brain. Each probe is the cheapest call that
+ * proves the key is accepted and costs nothing in audio or tokens.
+ */
+async function probeElevenLabs() {
+  if (!hasSecret('ELEVENLABS_API_KEY')) {
+    return notConfigured('Not set — the advisor can still hear and speak through OpenAI or Deepgram.');
+  }
+  try {
+    const res = await withTimeout(
+      fetch('https://api.elevenlabs.io/v1/user/subscription', { headers: { 'xi-api-key': readSecret('ELEVENLABS_API_KEY') } }),
+      'ElevenLabs'
+    );
+    if (res.status === 401 || res.status === 403) return { configured: true, ok: false, detail: 'Key rejected. Pick another voice or fix ELEVENLABS_API_KEY.' };
+    if (!res.ok) return { configured: true, ok: false, detail: `ElevenLabs returned ${res.status}.` };
+    const body = await res.json().catch(() => ({}));
+    const left = Number.isFinite(body?.character_limit) && Number.isFinite(body?.character_count)
+      ? ` ${(body.character_limit - body.character_count).toLocaleString()} characters left this cycle.`
+      : '';
+    return { configured: true, ok: true, detail: `Key accepted — Scribe can hear and a voice can speak for the advisor.${left}` };
+  } catch (err) {
+    return { configured: true, ok: false, detail: `Couldn't reach ElevenLabs: ${err.message}` };
+  }
+}
+
+async function probeDeepgram() {
+  if (!hasSecret('DEEPGRAM_API_KEY')) {
+    return notConfigured('Not set — the advisor can still hear and speak through OpenAI or ElevenLabs.');
+  }
+  try {
+    const res = await withTimeout(
+      fetch('https://api.deepgram.com/v1/projects', { headers: { Authorization: `Token ${readSecret('DEEPGRAM_API_KEY')}` } }),
+      'Deepgram'
+    );
+    if (res.status === 401 || res.status === 403) return { configured: true, ok: false, detail: 'Key rejected. Pick another provider or fix DEEPGRAM_API_KEY.' };
+    if (!res.ok) return { configured: true, ok: false, detail: `Deepgram returned ${res.status}.` };
+    return { configured: true, ok: true, detail: 'Key accepted — Nova can hear and Aura can speak for the advisor.' };
+  } catch (err) {
+    return { configured: true, ok: false, detail: `Couldn't reach Deepgram: ${err.message}` };
+  }
+}
+
+async function probeIonos() {
+  if (!isIonosConfigured()) {
+    return notConfigured('Not set — the advisor thinks on Anthropic; IONOS is the EU-hosted alternative.');
+  }
+  try {
+    const res = await withTimeout(
+      fetch(ionosModelsUrl(), { headers: { Authorization: `Bearer ${readSecret('IONOS_API_KEY')}` } }),
+      'IONOS'
+    );
+    if (res.status === 401 || res.status === 403) return { configured: true, ok: false, detail: 'Key rejected. Check IONOS_API_KEY (an AI Model Hub token, not an account password).' };
+    if (!res.ok) return { configured: true, ok: false, detail: `IONOS returned ${res.status}.` };
+    const body = await res.json().catch(() => ({}));
+    const available = new Set((body?.data || []).map((m) => m.id));
+    const wanted = ionosModel();
+    if (available.size > 0 && !available.has(wanted)) {
+      return { configured: true, ok: false, detail: `Key works, but "${wanted}" is not on the hub. Set IONOS_MODEL to one of: ${[...available].slice(0, 6).join(', ')}.` };
+    }
+    return { configured: true, ok: true, detail: `Key accepted — the advisor can think on ${wanted}, hosted in the EU.` };
+  } catch (err) {
+    return { configured: true, ok: false, detail: `Couldn't reach IONOS: ${err.message}` };
+  }
+}
+
 function travelVoiceIntegration() {
   const caps = travelVoiceCapabilities();
   if (!caps.text) return notConfigured('Needs ANTHROPIC_API_KEY.');
   const parts = [];
-  parts.push(caps.voice ? 'voice in and out' : 'text only (set OPENAI_API_KEY for voice)');
+  const providers = describeProviders();
+  const name = (kind) => providers[kind].active || 'none';
+  parts.push(`brain ${name('llm')}`);
+  parts.push(caps.voice ? `ears ${name('stt')}, voice ${name('tts')}` : 'text only (set OPENAI_API_KEY, ELEVENLABS_API_KEY or DEEPGRAM_API_KEY for voice)');
   parts.push(caps.whatsapp ? `on WhatsApp number ${travelVoicePhoneNumberId()}` : 'browser only (set TRAVEL_VOICE_PHONE_NUMBER_ID for WhatsApp)');
   parts.push(caps.liveCalls ? 'live calls on' : 'voice notes, not live calls');
   return { configured: true, ok: caps.voice ? true : null, detail: `Spanish, French and English — ${parts.join('; ')}.` };
 }
 
 export async function getIntegrationStatus() {
-  const [openrouter, honcho, whatsapp, openai, gemini, deepseek, amadeus] = await Promise.all([
+  const [openrouter, honcho, whatsapp, openai, gemini, deepseek, amadeus, elevenlabs, deepgram, ionos] = await Promise.all([
     probeOpenRouter(),
     probeHoncho(),
     probeWhatsApp(),
@@ -408,6 +479,9 @@ export async function getIntegrationStatus() {
     probeGemini(),
     probeDeepSeek(),
     probeAmadeus(),
+    probeElevenLabs(),
+    probeDeepgram(),
+    probeIonos(),
   ]);
 
   return {
@@ -435,6 +509,9 @@ export async function getIntegrationStatus() {
     honcho,
     whatsapp,
     amadeus,
+    elevenlabs,
+    deepgram,
+    ionos,
     travelVoice: travelVoiceIntegration(),
     // These two predate the probes and fail loudly at the point of use (an
     // action tool returns the reason), so presence is the useful signal.

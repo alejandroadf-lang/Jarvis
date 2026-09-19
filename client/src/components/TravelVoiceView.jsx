@@ -35,6 +35,40 @@ const SOURCE_LABEL = {
   default: 'default',
 };
 
+// One dropdown per slot. An option without a key stays visible but disabled
+// with what it would need, so the founder sees what a comparison could
+// include rather than only what it does today.
+function ProviderPicker({ slot, spec, value, onChange, disabled }) {
+  if (!spec) return null;
+  return (
+    <label className="flex items-center gap-1.5 text-cyan-400/80">
+      <span className="text-[10px] uppercase tracking-wide">{slot}</span>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={disabled}
+        className="bg-[#0b0d10] border border-cyan-500/20 rounded px-2 py-1 text-xs max-w-[11rem] disabled:opacity-40"
+        title={spec.label}
+      >
+        <option value="">default{spec.active ? ` (${spec.active})` : ''}</option>
+        {spec.options.map((o) => (
+          <option key={o.id} value={o.id} disabled={!o.configured}>
+            {o.label}
+            {o.model ? ` · ${o.model}` : ''}
+            {o.configured ? '' : ' · no key'}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+const SLOT_LABEL = { stt: 'ears', llm: 'brain', tts: 'voice' };
+
+function fmtMs(ms) {
+  return Number.isFinite(ms) ? `${(ms / 1000).toFixed(1)}s` : null;
+}
+
 function getSessionId() {
   let id = localStorage.getItem('jarvis-travel-session-id');
   if (!id) {
@@ -90,6 +124,7 @@ export default function TravelVoiceView({ onVenturesChanged }) {
   const [status, setStatus] = useState(null);
   const [statusError, setStatusError] = useState(null);
   const [language, setLanguage] = useState('');
+  const [providers, setProviders] = useState({ stt: '', llm: '', tts: '' });
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -142,11 +177,22 @@ export default function TravelVoiceView({ onVenturesChanged }) {
         audioUrl = URL.createObjectURL(new Blob([bytes], { type: data.audioMimeType || 'audio/ogg' }));
       }
       const source = SOURCE_LABEL[data.languageSource] || data.languageSource;
+      // Which provider did each stage and how long it took: the line that
+      // turns "which voice is better" into a comparison with numbers on it.
+      const used = data.providers || {};
+      const t = data.timings || {};
+      const stages = [
+        used.stt && `ears ${used.stt}${fmtMs(t.sttMs) ? ` ${fmtMs(t.sttMs)}` : ''}`,
+        used.llm && `brain ${used.llm}${data.model ? ` (${data.model})` : ''}${fmtMs(t.llmMs) ? ` ${fmtMs(t.llmMs)}` : ''}`,
+        used.tts && `voice ${used.tts}${fmtMs(t.ttsMs) ? ` ${fmtMs(t.ttsMs)}` : ''}`,
+      ].filter(Boolean);
       append({
         role: 'assistant',
         text: data.reply,
         meta: `${LANGUAGE_LABEL[data.language] || data.language}${source ? ` · ${source}` : ''}${
           data.toolCalls?.length ? ` · looked up: ${data.toolCalls.join(', ')}` : ''
+        }${stages.length ? ` · ${stages.join(' · ')}` : ''}${
+          Number.isFinite(data.costUsd) ? ` · $${data.costUsd.toFixed(4)}` : ''
         }${data.audioError ? ` · no audio: ${data.audioError}` : ''}`,
         audioUrl,
         autoPlay: Boolean(audioUrl),
@@ -165,7 +211,7 @@ export default function TravelVoiceView({ onVenturesChanged }) {
       setInput('');
       setBusy(true);
       try {
-        const data = await sendTravelVoiceText(sessionId, trimmed, { language, wantAudio: Boolean(status?.capabilities?.voice) });
+        const data = await sendTravelVoiceText(sessionId, trimmed, { language, wantAudio: Boolean(status?.capabilities?.speak), providers });
         handleReply(data);
       } catch (err) {
         setError(err?.response?.data?.error || err.message);
@@ -173,7 +219,7 @@ export default function TravelVoiceView({ onVenturesChanged }) {
         setBusy(false);
       }
     },
-    [busy, append, sessionId, language, status, handleReply]
+    [busy, append, sessionId, language, status, providers, handleReply]
   );
 
   const submitAudio = useCallback(
@@ -183,7 +229,7 @@ export default function TravelVoiceView({ onVenturesChanged }) {
       append({ role: 'user', text: '🎤 voice note', audioUrl: localUrl });
       setBusy(true);
       try {
-        const data = await sendTravelVoiceAudio(sessionId, blob, { language });
+        const data = await sendTravelVoiceAudio(sessionId, blob, { language, providers });
         // Replace the placeholder with what the server heard.
         setMessages((prev) => {
           const idx = prev.map((m) => m.audioUrl).lastIndexOf(localUrl);
@@ -203,7 +249,7 @@ export default function TravelVoiceView({ onVenturesChanged }) {
         setBusy(false);
       }
     },
-    [append, sessionId, language, handleReply]
+    [append, sessionId, language, providers, handleReply]
   );
 
   const startRecording = useCallback(async () => {
@@ -277,7 +323,8 @@ export default function TravelVoiceView({ onVenturesChanged }) {
   };
 
   const caps = status?.capabilities;
-  const canRecord = mimeType !== null && Boolean(caps?.voice);
+  const canRecord = mimeType !== null && Boolean(caps?.hear);
+  const providerSpecs = status?.providers || {};
 
   return (
     <div className="flex-1 flex min-h-0">
@@ -295,11 +342,20 @@ export default function TravelVoiceView({ onVenturesChanged }) {
         {status && (
           <>
             <ul className="space-y-1.5">
-              <Capability ok={caps.text} label={`Advisor on ${status.model}`} hint="Needs ANTHROPIC_API_KEY." />
               <Capability
-                ok={caps.voice}
-                label={caps.voice ? `Voice in and out (${status.voice.model}, voice "${status.voice.voice}")` : 'Voice in and out'}
-                hint="Set OPENAI_API_KEY to hear and speak."
+                ok={caps.text}
+                label={caps.text ? `Brain: ${providerSpecs.llm?.active} by default (${status.model})` : 'Brain (the advisor model)'}
+                hint="Needs ANTHROPIC_API_KEY, or IONOS_API_KEY / OPENAI_API_KEY / GEMINI_API_KEY / DEEPSEEK_API_KEY / OPENROUTER_API_KEY."
+              />
+              <Capability
+                ok={caps.hear}
+                label={caps.hear ? `Ears: ${providerSpecs.stt?.active} by default` : 'Ears (speech to text)'}
+                hint="Set OPENAI_API_KEY, ELEVENLABS_API_KEY or DEEPGRAM_API_KEY."
+              />
+              <Capability
+                ok={caps.speak}
+                label={caps.speak ? `Voice: ${status.voice.provider} by default (${status.voice.model}, "${status.voice.voice}")` : 'Voice (text to speech)'}
+                hint="Set OPENAI_API_KEY, ELEVENLABS_API_KEY or DEEPGRAM_API_KEY."
               />
               <Capability
                 ok={caps.liveFares}
@@ -388,6 +444,7 @@ export default function TravelVoiceView({ onVenturesChanged }) {
                       <span className="text-cyan-400/60">
                         {t.channel} {t.from || ''} · {t.language || '?'} · {t.stage}
                         {t.voice ? ' · 🎤' : ''}
+                        {t.providers ? ` · ${[t.providers.stt, t.providers.llm, t.providers.tts].filter(Boolean).join('/')}` : ''}
                       </span>
                       {t.transcript && <div className="truncate">“{t.transcript}”</div>}
                     </li>
@@ -400,21 +457,33 @@ export default function TravelVoiceView({ onVenturesChanged }) {
       </aside>
 
       <div className="flex-1 flex flex-col min-w-0">
-        <div className="flex items-center justify-between gap-3 px-4 py-2 border-b border-cyan-500/20 text-xs">
-          <label className="flex items-center gap-2 text-cyan-400/80">
-            Answer in
-            <select
-              value={language}
-              onChange={(e) => setLanguage(e.target.value)}
-              className="bg-[#0b0d10] border border-cyan-500/20 rounded px-2 py-1"
-            >
-              {LANGUAGES.map((l) => (
-                <option key={l.code || 'auto'} value={l.code}>
-                  {l.label}
-                </option>
-              ))}
-            </select>
-          </label>
+        <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2 border-b border-cyan-500/20 text-xs">
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="flex items-center gap-2 text-cyan-400/80">
+              Answer in
+              <select
+                value={language}
+                onChange={(e) => setLanguage(e.target.value)}
+                className="bg-[#0b0d10] border border-cyan-500/20 rounded px-2 py-1"
+              >
+                {LANGUAGES.map((l) => (
+                  <option key={l.code || 'auto'} value={l.code}>
+                    {l.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {['stt', 'llm', 'tts'].map((slot) => (
+              <ProviderPicker
+                key={slot}
+                slot={SLOT_LABEL[slot]}
+                spec={providerSpecs[slot]}
+                value={providers[slot]}
+                onChange={(v) => setProviders((prev) => ({ ...prev, [slot]: v }))}
+                disabled={busy}
+              />
+            ))}
+          </div>
           <button onClick={handleReset} className="text-cyan-400/80 hover:text-cyan-300 border border-cyan-500/30 rounded px-2 py-1">
             new conversation
           </button>

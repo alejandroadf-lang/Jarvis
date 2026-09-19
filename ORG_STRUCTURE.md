@@ -817,6 +817,35 @@ entry is easier to copy than to remember from audio. Audio is billed by the
 minute and the character rather than the token, so it is metered into the
 daily spend cap with its own prices, pinned by hand like every price here.
 
+### Three slots, several providers each
+
+Whether a Spanish agency owner trusts a synthetic voice with their clients,
+whether Scribe hears an Andalusian accent on a bad line better than Whisper,
+whether Llama on a Berlin server explains a fare rule as well as Claude —
+these are empirical questions, and a product that hard-codes the answers
+has decided them from a datasheet. So the advisor has three slots — ears,
+brain, voice — with one contract each and several providers behind it
+(`server/travelVoice/providers/`): OpenAI Whisper, ElevenLabs Scribe and
+Deepgram Nova for hearing; Claude, IONOS, OpenAI, Gemini, DeepSeek and
+OpenRouter for thinking; OpenAI, ElevenLabs and Deepgram Aura for speaking.
+
+A choice resolves in a fixed order: what the caller asked for on this turn
+(the tab's dropdowns), the deployment's default (what WhatsApp callers get),
+then the first provider in the slot with a key — which puts the one that was
+here first ahead of the newcomers, so a deployment that sets nothing behaves
+exactly as before. A provider named on a turn that has no key is refused
+rather than swapped, because a comparison is only worth anything if it is of
+the thing that was picked. Every reply carries which provider did each stage,
+how long it took and what it cost, and the log keeps the same, so the
+comparison has numbers on it.
+
+IONOS is the odd one out and the reason the brain slot exists at all: an
+EU-hosted provider serving open models under EU data rules. The advisor's
+callers are agencies in Spain and France, and "where does my client's
+booking question go" is a question they ask. The other brains already spoke
+the OpenAI protocol this app translates tool calls through, so IONOS is a
+URL, a key and a model default, and the advisor's tools work on it unchanged.
+
 ### It can look, not just explain
 
 The advisor knows Amadeus the way a trainer does — the cryptic entries

@@ -26,6 +26,12 @@ const KEYS = [
   'ANTHROPIC_API_KEY',
   'AMADEUS_CLIENT_ID',
   'AMADEUS_CLIENT_SECRET',
+  'ELEVENLABS_API_KEY',
+  'DEEPGRAM_API_KEY',
+  'IONOS_API_KEY',
+  'TRAVEL_VOICE_STT_PROVIDER',
+  'TRAVEL_VOICE_LLM_PROVIDER',
+  'TRAVEL_VOICE_TTS_PROVIDER',
 ];
 
 before(async () => {
@@ -110,10 +116,13 @@ test('the advisor’s number is its own, and any caller may write to it unless n
 });
 
 test('capabilities are reported as separate facts', () => {
-  assert.deepEqual(tv.travelVoiceCapabilities(), { text: true, voice: true, liveFares: false, whatsapp: true, liveCalls: false });
+  assert.deepEqual(tv.travelVoiceCapabilities(), { text: true, voice: true, hear: true, speak: true, liveFares: false, whatsapp: true, liveCalls: false });
   delete process.env.OPENAI_API_KEY;
   assert.equal(tv.travelVoiceCapabilities().voice, false);
   assert.equal(tv.isTravelVoiceConfigured(), true, 'text still works without voice');
+  process.env.DEEPGRAM_API_KEY = 'dg';
+  assert.equal(tv.travelVoiceCapabilities().voice, true, 'any configured ears and voice will do');
+  delete process.env.DEEPGRAM_API_KEY;
 });
 
 test('a caller gets a sliding hour of turns, then a polite no', () => {
@@ -204,6 +213,69 @@ test('a WhatsApp voice note is answered with a voice note in the same language, 
   assert.equal(logged.spoke, true);
   assert.equal(logged.language, 'es');
   assert.ok(logged.costUsd > 0);
+  assert.deepEqual(logged.providers, { stt: 'openai', llm: 'anthropic', tts: 'openai' });
+  assert.ok(Number.isFinite(logged.timings.sttMs) && Number.isFinite(logged.timings.llmMs) && Number.isFinite(logged.timings.ttsMs));
+});
+
+test('a turn can name its ears, brain and voice, and reports which answered', async () => {
+  process.env.ELEVENLABS_API_KEY = 'el';
+  process.env.DEEPGRAM_API_KEY = 'dg';
+  const hit = [];
+  global.fetch = async (url, init = {}) => {
+    const u = String(url);
+    hit.push(u);
+    if (u.includes('api.elevenlabs.io/v1/speech-to-text')) return { ok: true, json: async () => ({ text: 'Bonjour', language_code: 'fra', words: [{ end: 1.2 }] }) };
+    if (u.includes('api.deepgram.com/v1/speak')) return { ok: true, arrayBuffer: async () => new ArrayBuffer(8) };
+    throw new Error(`unexpected fetch ${u}`);
+  };
+  process.env.DEEPGRAM_TTS_VOICE_FR = 'aura-2-test-fr';
+  try {
+    const anthropic = stubAnthropic('Oui.');
+    const r = await tv.runTravelVoiceTurn({
+      anthropic,
+      sessionId: 'web-p',
+      audio: Buffer.from('opus'),
+      wantAudio: true,
+      providers: { stt: 'elevenlabs', llm: 'anthropic', tts: 'deepgram' },
+    });
+    assert.equal(r.transcript, 'Bonjour');
+    assert.equal(r.language, 'fr', 'Scribe’s three-letter code is understood');
+    assert.deepEqual(r.providers, { stt: 'elevenlabs', llm: 'anthropic', tts: 'deepgram' });
+    assert.equal(r.model, 'claude-sonnet-5');
+    assert.ok(r.audio, 'spoken by Deepgram');
+    assert.equal(hit.filter((u) => u.includes('openai.com')).length, 0, 'OpenAI was not used for anything');
+  } finally {
+    delete process.env.DEEPGRAM_TTS_VOICE_FR;
+  }
+});
+
+test('the deployment default picks the provider for WhatsApp callers', async () => {
+  process.env.DEEPGRAM_API_KEY = 'dg';
+  process.env.TRAVEL_VOICE_STT_PROVIDER = 'deepgram';
+  const hit = [];
+  const inner = (() => {
+    const calls = stubOutside({ transcript: 'ignored' });
+    return calls;
+  })();
+  const outer = global.fetch;
+  global.fetch = async (url, init = {}) => {
+    const u = String(url);
+    hit.push(u);
+    if (u.includes('api.deepgram.com/v1/listen')) {
+      return { ok: true, json: async () => ({ metadata: { duration: 2 }, results: { channels: [{ detected_language: 'es', alternatives: [{ transcript: 'Hola' }] }] } }) };
+    }
+    return outer(url, init);
+  };
+  const outcome = await tv.handleTravelVoiceMessage(
+    { id: 'wamid.p', from: '34600111222', type: 'audio', text: '', mediaId: 'media-1', phoneNumberId: '222' },
+    { anthropic: stubAnthropic('Sí.'), phoneNumberId: '222' }
+  );
+  assert.equal(outcome.stage, 'answered');
+  assert.ok(hit.some((u) => u.includes('api.deepgram.com/v1/listen')), 'Deepgram heard it');
+  assert.ok(!hit.some((u) => u.includes('audio/transcriptions')), 'OpenAI did not');
+  assert.equal(tv.recentTravelVoiceTurns()[0].providers.stt, 'deepgram');
+  assert.equal(tv.recentTravelVoiceTurns()[0].providers.tts, 'openai', 'the voice default is unchanged');
+  void inner;
 });
 
 test('a WhatsApp text is answered with text only', async () => {

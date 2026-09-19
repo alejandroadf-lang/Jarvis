@@ -172,6 +172,19 @@ What it needs, in layers:
   airport lookups from the Amadeus Self-Service APIs, so "cheapest MAD to CDG
   on the first" gets a real price rather than a description of how to search.
 
+**Ears, brain and voice are each pluggable.** The same voice note can be
+heard by OpenAI Whisper, ElevenLabs Scribe or Deepgram Nova; answered by
+Claude, IONOS (EU-hosted Llama or Mistral), OpenAI, Gemini, DeepSeek or
+OpenRouter; and spoken by OpenAI, ElevenLabs or Deepgram Aura. Three
+dropdowns in the Travel Voice tab pick them per turn, and each reply shows
+which provider did each stage, how long it took and what it cost, so
+comparing them is a matter of asking the same question twice. What WhatsApp
+callers get is set with `TRAVEL_VOICE_STT_PROVIDER`,
+`TRAVEL_VOICE_LLM_PROVIDER` and `TRAVEL_VOICE_TTS_PROVIDER`; leave them blank
+and it is OpenAI for audio and Claude for the brain, as before. Keys:
+`ELEVENLABS_API_KEY`, `DEEPGRAM_API_KEY`, `IONOS_API_KEY` — details in
+`server/.env.example`, and the Integrations panel probes each one.
+
 To try it from the founder's own WhatsApp line without a second number, send
 `TRAVEL ON`; every message after that, voice or text, goes to the advisor
 until `TRAVEL OFF`. The tab's sidebar can reach out first — an introduction,

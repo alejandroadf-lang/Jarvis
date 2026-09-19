@@ -132,6 +132,7 @@ import {
   isTravelVoiceConfigured,
   maskNumber,
 } from './travelVoice/index.js';
+import { canHear } from './travelVoice/speech.js';
 import { extractCallEvent, recordCallPermission } from './travelVoice/calls.js';
 import { localized, normalizeLanguage, SUPPORTED_LANGUAGES } from './travelVoice/languages.js';
 import { listWeeklyReflections, getWeeklyReflection, getLatestWeeklyReflection } from './weeklyReflections.js';
@@ -1119,12 +1120,21 @@ app.post('/api/travel-voice/turn', audioBody, async (req, res) => {
   const language = normalizeLanguage(isAudio ? req.query.language : req.body?.language);
   const text = isAudio ? '' : String(req.body?.text || '').trim();
   const wantAudio = isAudio ? req.query.audio !== 'false' : Boolean(req.body?.wantAudio);
+  // Which ears, brain and voice this turn runs on. Blank means the
+  // deployment's default; a named one that has no key is refused rather
+  // than swapped, so a comparison is always of the thing that was picked.
+  const source = isAudio ? req.query : req.body || {};
+  const providers = {
+    stt: String(source.stt || '').trim() || undefined,
+    llm: String(source.llm || '').trim() || undefined,
+    tts: String(source.tts || '').trim() || undefined,
+  };
 
   if (!sessionId) return res.status(400).json({ error: 'sessionId is required' });
   if (!isAudio && !text) return res.status(400).json({ error: 'Send text, or an audio body' });
-  if (!isTravelVoiceConfigured()) return res.status(500).json({ error: 'Server is missing ANTHROPIC_API_KEY' });
-  if (isAudio && !isOpenAIConfigured()) {
-    return res.status(400).json({ error: 'Voice needs OPENAI_API_KEY set. Send text instead.' });
+  if (!isTravelVoiceConfigured()) return res.status(500).json({ error: 'No advisor model is configured — set ANTHROPIC_API_KEY' });
+  if (isAudio && !canHear()) {
+    return res.status(400).json({ error: 'Voice needs a speech-to-text provider: set OPENAI_API_KEY, ELEVENLABS_API_KEY or DEEPGRAM_API_KEY. Send text instead.' });
   }
 
   try {
@@ -1138,9 +1148,17 @@ app.post('/api/travel-voice/turn', audioBody, async (req, res) => {
       filename,
       language,
       wantAudio,
+      providers,
     });
     if (result.empty) {
-      return res.json({ transcript: '', language: result.language, reply: localized('emptyVoiceNote', result.language), empty: true });
+      return res.json({
+        transcript: '',
+        language: result.language,
+        reply: localized('emptyVoiceNote', result.language),
+        empty: true,
+        providers: result.providers,
+        timings: result.timings,
+      });
     }
     res.json({
       transcript: result.transcript,
@@ -1151,14 +1169,20 @@ app.post('/api/travel-voice/turn', audioBody, async (req, res) => {
       audio: result.audio ? result.audio.buffer.toString('base64') : null,
       audioMimeType: result.audio ? result.audio.mimeType : null,
       audioError: result.audioError,
+      providers: result.providers,
+      model: result.model,
+      timings: result.timings,
       costUsd: result.costUsd,
       durationMs: result.durationMs,
     });
   } catch (err) {
     // The reason goes back: a transcription failure and a spend-cap stop
-    // need different fixes, and a generic 502 hides which one it was.
+    // need different fixes, and a generic 502 hides which one it was. A
+    // provider the caller named but has no key for is their mistake, not
+    // the server's, and says so with a 400.
     console.error('Travel voice turn failed:', err);
-    const status = String(err?.message || '').startsWith('Daily spend cap reached') ? 429 : 502;
+    const message = String(err?.message || '');
+    const status = message.startsWith('Daily spend cap reached') ? 429 : /is not configured|Unknown (stt|llm|tts) provider/.test(message) ? 400 : 502;
     res.status(status).json({ error: err.message || 'The travel advisor could not answer' });
   }
 });

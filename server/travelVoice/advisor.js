@@ -18,11 +18,11 @@
 // Where an answer depends on a specific airline's rule or a live price, the
 // advisor is told to say so and — when Amadeus credentials exist — to look.
 
-import { MODELS, DEFAULT_TIER } from '../agents/models.js';
 import { priceUsage } from '../usage.js';
 import { assertUnderDailyCap, recordSpend } from '../spend.js';
 import { LANGUAGE_NAMES, normalizeLanguage, DEFAULT_LANGUAGE } from './languages.js';
 import { isAmadeusConfigured, lookupLocations, searchFlightOffers, amadeusEnvironment } from './amadeus.js';
+import { resolveProvider } from './providers/index.js';
 
 const MAX_TOOL_ROUNDS = 4;
 
@@ -31,8 +31,10 @@ function maxTokens() {
   return Number.isFinite(value) && value > 0 ? value : 700;
 }
 
+/** The model the default brain answers with, for status displays. */
 export function advisorModel() {
-  return (process.env.TRAVEL_VOICE_MODEL || '').trim() || MODELS[DEFAULT_TIER].model;
+  const brain = resolveProvider('llm');
+  return brain ? brain.model() : null;
 }
 
 const DOMAIN_BRIEF = `You are a senior travel-industry advisor who has spent years on an Amadeus helpdesk and in agency back offices. Callers are travel agents, agency owners, tour operators and corporate travel bookers. They ring with a live problem — a PNR that will not price, a client asking for a refund, a fare they do not understand — and they want a clear, practical answer they can act on now.
@@ -114,19 +116,24 @@ function usageOf(response) {
  * One advisor turn.
  *
  * @param {object} args
- * @param {object} args.anthropic an Anthropic client (or a stub with messages.create)
+ * @param {object} [args.anthropic] the Anthropic client, used by the Anthropic brain
+ * @param {string} [args.provider] which brain to think with (see providers/llm.js);
+ *   the deployment default when omitted
  * @param {Array} args.history prior messages for this caller, Anthropic-shaped
  * @param {string} args.text what the caller said, already transcribed
  * @param {string} args.language which of the three to answer in
  * @param {(name: string, input: object) => Promise<any>} [args.tools] tool
  *   executor override, for tests
- * @returns {Promise<{ reply: string, messages: Array, usage: object, toolCalls: Array<{name, input}> }>}
+ * @returns {Promise<{ reply: string, messages: Array, usage: object, toolCalls: Array<{name, input}>, provider: string, model: string, ms: number }>}
  */
-export async function runAdvisorTurn({ anthropic, history = [], text, language, tools = runTool }) {
+export async function runAdvisorTurn({ anthropic = null, provider = null, history = [], text, language, tools = runTool }) {
   const lang = normalizeLanguage(language) || DEFAULT_LANGUAGE;
-  const modelSpec = MODELS[DEFAULT_TIER];
-  const model = advisorModel();
+  const brain = resolveProvider('llm', provider);
+  if (!brain) throw new Error('No advisor model is configured — set ANTHROPIC_API_KEY (or IONOS_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, DEEPSEEK_API_KEY, OPENROUTER_API_KEY and choose it)');
+  const modelSpec = brain.priceSpec();
+  const model = brain.model();
   const toolDefs = toolsAvailable();
+  const startedAt = Date.now();
 
   const system = [
     { type: 'text', text: DOMAIN_BRIEF, cache_control: { type: 'ephemeral' } },
@@ -141,7 +148,7 @@ export async function runAdvisorTurn({ anthropic, history = [], text, language, 
     assertUnderDailyCap();
     const request = { model, max_tokens: maxTokens(), system, messages };
     if (toolDefs.length) request.tools = toolDefs;
-    const response = await anthropic.messages.create(request);
+    const response = await brain.create(request, { anthropic });
 
     const tokens = usageOf(response);
     const cost = priceUsage(tokens, modelSpec);
@@ -162,7 +169,7 @@ export async function runAdvisorTurn({ anthropic, history = [], text, language, 
         .map((block) => block.text)
         .join('\n')
         .trim();
-      return { reply, messages, usage, toolCalls, language: lang };
+      return { reply, messages, usage, toolCalls, language: lang, provider: brain.id, model, ms: Date.now() - startedAt };
     }
 
     // Every tool_use block needs a matching tool_result, or the API rejects
@@ -182,7 +189,7 @@ export async function runAdvisorTurn({ anthropic, history = [], text, language, 
   }
 
   // Unreachable: the loop returns on its final round.
-  return { reply: '', messages, usage, toolCalls, language: lang };
+  return { reply: '', messages, usage, toolCalls, language: lang, provider: brain.id, model, ms: Date.now() - startedAt };
 }
 
 export const __testing = { DOMAIN_BRIEF, languageInstruction, toolsAvailable };

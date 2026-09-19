@@ -86,7 +86,7 @@ test('a language hint is passed to the transcriber and wins', async () => {
 
 test('a transcription failure carries its status', async () => {
   global.fetch = async () => ({ ok: false, status: 413, text: async () => 'too large' });
-  await assert.rejects(() => speech.transcribeWithLanguage(Buffer.from('x')), (err) => err.status === 413 && /Transcription failed \(413\)/.test(err.message));
+  await assert.rejects(() => speech.transcribeWithLanguage(Buffer.from('x')), (err) => err.status === 413 && /OpenAI transcription failed \(413\)/.test(err.message));
 });
 
 test('speech comes back as Ogg Opus with delivery instructions in the caller’s language', async () => {
@@ -118,6 +118,13 @@ test('tts-1 gets no instructions field, which it would reject', async () => {
   };
   await speech.synthesizeSpeech('Hello', { language: 'en' });
   assert.equal(seen.instructions, undefined);
+});
+
+test('with no audio provider at all the façade says which keys would give it one', async () => {
+  delete process.env.OPENAI_API_KEY;
+  await assert.rejects(() => speech.transcribeWithLanguage(Buffer.from('x')), /No speech-to-text provider is configured/);
+  await assert.rejects(() => speech.synthesizeSpeech('Hello'), /No text-to-speech provider is configured/);
+  assert.equal(speech.isSpeechConfigured(), false);
 });
 
 test('nothing is synthesised over the daily cap', async () => {
