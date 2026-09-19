@@ -8,6 +8,7 @@ import {
   registerTravelVoiceVenture,
   fetchTravelVoiceMetrics,
 } from '../api/chat.js';
+import { startLiveCall, liveCallSupported } from '../lib/liveCall.js';
 
 // The travel advisor, in the browser. This is how the venture's product gets
 // tried without a Meta number: hold the button, ask in Spanish, French or
@@ -126,6 +127,9 @@ export default function TravelVoiceView({ onVenturesChanged }) {
   const [statusError, setStatusError] = useState(null);
   const [metrics, setMetrics] = useState(null);
   const [metricsDays, setMetricsDays] = useState(7);
+  const [call, setCall] = useState(null);
+  const [callState, setCallState] = useState(null);
+  const callRef = useRef(null);
   const [language, setLanguage] = useState('');
   const [providers, setProviders] = useState({ stt: '', llm: '', tts: '' });
   const [messages, setMessages] = useState([]);
@@ -183,6 +187,49 @@ export default function TravelVoiceView({ onVenturesChanged }) {
   }, []);
 
   const append = useCallback((m) => setMessages((prev) => [...prev, m]), []);
+
+  // A live call. The turn-taking, the barge-in and the advisor all live on
+  // the server (server/travelVoice/live/); this end sends the microphone
+  // and plays what comes back. Every message it emits is shown as it
+  // arrives, so a call reads as a conversation rather than a black box.
+  const hangUp = useCallback(() => {
+    callRef.current?.hangUp();
+    callRef.current = null;
+    setCall(null);
+    setCallState(null);
+  }, []);
+
+  const startCall = useCallback(async () => {
+    if (callRef.current) return hangUp();
+    setError(null);
+    setCallState('connecting');
+    try {
+      const handle = await startLiveCall({
+        sessionId,
+        language: language || null,
+        providers,
+        onEvent: (event) => {
+          if (event.type === 'state') setCallState(event.state);
+          if (event.type === 'transcript') append({ role: 'user', text: event.text, meta: `live · ${LANGUAGE_LABEL[event.language] || event.language}` });
+          if (event.type === 'reply') append({ role: 'assistant', text: event.text, meta: ['live', event.readBack].filter(Boolean).join(' · ') });
+          if (event.type === 'error') setError(event.detail);
+          if (event.type === 'mic-denied') setError(`The microphone was refused: ${event.detail}`);
+          if (event.type === 'closed') {
+            callRef.current = null;
+            setCall(null);
+            setCallState(null);
+          }
+        },
+      });
+      callRef.current = handle;
+      setCall(handle);
+    } catch {
+      setCallState(null);
+    }
+  }, [append, hangUp, language, providers, sessionId]);
+
+  // A call must not outlive the tab.
+  useEffect(() => () => callRef.current?.hangUp(), []);
 
   const handleReply = useCallback(
     (data) => {
@@ -643,10 +690,46 @@ export default function TravelVoiceView({ onVenturesChanged }) {
               <line x1="8" y1="23" x2="16" y2="23" />
             </svg>
           </button>
+          {/* A live call: no holding a button, and it can be interrupted. */}
+          <button
+            type="button"
+            onClick={startCall}
+            disabled={!liveCallSupported() || !caps.voice || busy || recording}
+            title={
+              !liveCallSupported()
+                ? 'This browser cannot take a live call'
+                : !caps.voice
+                  ? 'A live call needs ears and a voice configured on the server'
+                  : call
+                    ? 'Hang up'
+                    : 'Call the advisor — talk normally, interrupt whenever'
+            }
+            className={`shrink-0 flex items-center justify-center w-11 h-11 rounded-full border transition select-none disabled:opacity-30 disabled:cursor-not-allowed ${
+              call ? 'bg-emerald-500/20 border-emerald-400 text-emerald-300' : 'bg-white/5 border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/10'
+            } ${callState === 'speaking' ? 'animate-pulse' : ''}`}
+          >
+            {call ? (
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M10.7 13.3a10 10 0 0 0 4 4l1.4-1.4a1 1 0 0 1 1-.2 11 11 0 0 0 3.2.5 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h2.8a1 1 0 0 1 1 1 11 11 0 0 0 .5 3.2 1 1 0 0 1-.2 1z" />
+                <line x1="2" y1="2" x2="22" y2="22" />
+              </svg>
+            ) : (
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M10.7 13.3a10 10 0 0 0 4 4l1.4-1.4a1 1 0 0 1 1-.2 11 11 0 0 0 3.2.5 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h2.8a1 1 0 0 1 1 1 11 11 0 0 0 .5 3.2 1 1 0 0 1-.2 1z" />
+              </svg>
+            )}
+          </button>
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder={recording ? 'Listening… release to send' : 'Ask about Amadeus, fares, PNRs, tickets…'}
+            disabled={Boolean(call)}
+            placeholder={
+              call
+                ? { connecting: 'Connecting…', greeting: 'Saying hello…', listening: 'Listening — just talk', thinking: 'Thinking…', speaking: 'Speaking — talk over it to interrupt' }[callState] || 'On a call'
+                : recording
+                  ? 'Listening… release to send'
+                  : 'Ask about Amadeus, fares, PNRs, tickets…'
+            }
             className="flex-1 bg-white/5 border border-cyan-500/20 rounded-full px-4 py-2 text-sm outline-none focus:border-cyan-400/60"
           />
           <button

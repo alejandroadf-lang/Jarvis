@@ -260,13 +260,34 @@ until `TRAVEL OFF`. The tab's sidebar can reach out first — an introduction,
 a call-permission request and a spoken message to a number you name — and
 puts the advisor on the portfolio as a venture so the team can sell it.
 
-**Live calls.** Meta's Business Calling API is wired for signalling (asking
-permission, placing, accepting, ending, and every webhook event) but the
-audio of a live call travels over WebRTC and needs a media gateway this
-repository does not carry. Until one is registered through
-`setMediaBridge()` in `server/travelVoice/calls.js`, an incoming call is
-declined and the caller is told, in their language, to send a voice note.
-Voice notes are the product today; live calls are the fourth milestone.
+**Live calls.** You can call the advisor today, in the Travel Voice tab:
+press the handset, talk normally, and interrupt it whenever you like. No
+holding a button, no waiting for a voice note.
+
+The research said the hard part of live calls is not the transport —
+endpointing, barge-in and teardown are the same work whichever wire wins,
+and a native speech-to-speech model does not remove them, it hides them
+inside a vendor. So that work is written once, transport-agnostic, in
+`server/travelVoice/live/`: `turnTaking.js` decides when you have stopped
+(adaptive noise floor, hysteresis both ways, a shorter wait when the
+transcript ends in a full stop, a higher bar for interrupting because
+without echo cancellation the thing talking over the advisor is the
+advisor), and `session.js` drives hear → think → speak with barge-in that
+stops the audio on the next frame and throws the rest away. It reuses the
+advisor whole: same prompt, case memory, grounding check on invented
+fares, spelled-out locators, handoff, spend cap, audit trail. A live call
+is a faster way to reach the advisor, not a second one with none of the
+guards.
+
+The browser transport (`live/websocket.js` and `client/src/lib/liveCall.js`)
+is the wire that can exist today. **WhatsApp calls are still declined**, on
+purpose: Meta's Business Calling API is wired for signalling, but its audio
+travels over SRTP and nothing confirms the API will hand that media to a
+machine at all. Registering a bridge that cannot carry audio would replace
+an honest "send me a voice note" with a call that connects and says
+nothing. When a gateway can genuinely carry the media it passes itself to
+`registerLiveBridge()`, and the session it drives is the one the browser
+has been exercising all along.
 
 **What the research changed.** A deep research pass in September 2026 —
 what the leading voice companies run, the state of real-time speech, and what

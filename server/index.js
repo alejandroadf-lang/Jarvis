@@ -136,9 +136,13 @@ import {
   travelVoiceMetrics,
   travelVoiceReviewQueue,
   startRetentionSweeper,
+  recordLiveTurn,
+  registerLiveBridge,
 } from './travelVoice/index.js';
 import { canHear } from './travelVoice/speech.js';
 import { createAnthropicClient } from './agents/anthropicClient.js';
+import { attachLiveCalls } from './travelVoice/live/websocket.js';
+import { liveCallsPossible } from './travelVoice/live/session.js';
 import {
   parseTranslateCommand,
   modeFor as translateModeFor,
@@ -1615,7 +1619,7 @@ app.get('*', (_req, res) => {
   res.sendFile(path.join(clientDist, 'index.html'));
 });
 
-app.listen(PORT, () => {
+const httpServer = app.listen(PORT, () => {
   console.log(`Jarvis server listening on port ${PORT}`);
   // Leaves a mark and counts the ones already there. A count still at 1 after
   // a redeploy is proof the data directory was emptied — which is otherwise
@@ -1627,4 +1631,25 @@ app.listen(PORT, () => {
   startWeeklyReflectionScheduler({ anthropic });
   startInboxWatcher({ anthropic });
   startRetentionSweeper();
+
+  // Live calls, over a WebSocket. The transport that can exist today; the
+  // session behind it is the one a WhatsApp media gateway would drive, so
+  // registering it as the media bridge is what stops incoming calls being
+  // declined the day that gateway arrives — see travelVoice/calls.js.
+  if (liveCallsPossible()) {
+    liveCalls = attachLiveCalls(httpServer, {
+      anthropic,
+      onTurn: (turn, info) => recordLiveTurn(turn, info),
+    });
+    console.log(`Travel voice: live calls are open on ${liveCalls.path} (ears, brain and voice are all configured).`);
+  } else {
+    console.log('Travel voice: live calls are off — they need a speech-to-text provider, a brain and a voice. Voice notes still work.');
+  }
 });
+
+let liveCalls = null;
+
+/** What is on a call right now, for the status panel. */
+export function liveCallSummaries() {
+  return liveCalls ? liveCalls.live() : [];
+}

@@ -106,6 +106,7 @@ import {
 } from './languages.js';
 import {
   handleCallEvent,
+  setMediaBridge,
   requestCallPermission,
   hasCallPermission,
   hasMediaBridge,
@@ -1224,6 +1225,75 @@ export function runTravelVoiceCommand(command, { from, phoneNumberId = null } = 
       numbers: escalationNumbers,
     },
   });
+}
+
+// --- live calls ---------------------------------------------------------------------
+
+/**
+ * A turn that happened on a live call, written down the same way a voice
+ * note is: the log the founder reads, the audit trail, the review sample,
+ * the per-conversation spend. A call must not be a hole in the record.
+ */
+export function recordLiveTurn(turn, { sessionId, number = null } = {}) {
+  const from = number || sessionId;
+  recordSessionSpend(sessionId, turn.costUsd || 0);
+  maybeSample({
+    from,
+    language: turn.language,
+    voice: true,
+    providers: turn.providers,
+    model: turn.model,
+    transcript: turn.transcript,
+    reply: turn.reply,
+    flags: {
+      live: true,
+      ...(turn.interrupted ? { interrupted: true } : {}),
+      ...(turn.drift ? { drift: turn.drift } : {}),
+      ...(turn.grounding ? { grounding: turn.grounding } : {}),
+      ...(turn.readBack ? { readBack: turn.readBack } : {}),
+      ...(turn.handoff ? { handoff: turn.handoff.reason } : {}),
+    },
+  });
+  recordTurnLog({
+    channel: 'live',
+    ...turnMeta(number || ''),
+    stage: 'answered',
+    language: turn.language,
+    voice: true,
+    live: true,
+    spoke: true,
+    seconds: Number(turn.seconds?.toFixed?.(2) ?? turn.seconds) || null,
+    interrupted: Boolean(turn.interrupted),
+    transcript: String(turn.transcript || '').slice(0, PREVIEW_CHARS),
+    reply: String(turn.reply || '').slice(0, PREVIEW_CHARS),
+    providers: turn.providers,
+    model: turn.model,
+    promptVersion: turn.promptVersion,
+    ...(turn.readBack?.length ? { readBack: turn.readBack } : {}),
+    ...(turn.drift ? { drift: turn.drift } : {}),
+    ...(turn.grounding ? { grounding: turn.grounding } : {}),
+    ...(turn.handoff ? { handoff: turn.handoff.reason } : {}),
+    costUsd: turn.costUsd,
+  });
+  return turn;
+}
+
+/**
+ * Registers the live session machinery as the media bridge, so an incoming
+ * WhatsApp call stops being declined.
+ *
+ * Deliberately NOT called on start. The signalling half is done and the
+ * session behind it is real and tested, but the audio of a WhatsApp call
+ * travels over SRTP and there is no confirmation that the Business Calling
+ * API will hand that media to a machine at all. Registering a bridge that
+ * cannot carry audio would replace an honest "send me a voice note" with a
+ * call that connects and says nothing — which is worse. So a gateway
+ * passes itself in here once it can genuinely carry the media, and the
+ * session it drives is the one the browser has been exercising all along.
+ */
+export function registerLiveBridge(bridge) {
+  setMediaBridge(bridge);
+  return hasMediaBridge();
 }
 
 // --- retention, review and the numbers --------------------------------------------

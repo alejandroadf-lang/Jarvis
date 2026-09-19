@@ -33,6 +33,7 @@ conversation to a person.
 | Consent record | Caller's button tap | Evidence of disclosure and agreement | Until the caller withdraws (`BORRAR` / `SUPPRIMER` / `DELETE`) |
 | Review sample | 1–5% of answered turns, words included | Human quality review | `TRAVEL_VOICE_REVIEW_RETENTION_DAYS` (365) |
 | Audit trail | Every turn, **without words or the caller's codes** | Accountability, per-language metrics | `TRAVEL_VOICE_AUDIT_RETENTION_DAYS` (5 years) |
+| Live call audio | Caller, in the browser | Transcription only, utterance by utterance | Never written to disk; held in memory for the length of one utterance and discarded |
 | Handoff record | Escalations | A person can take over | With the audit trail; numbers masked |
 | Captured voice notes | Only while `TRAVEL CAPTURE ON` | Measuring the transcribers on real audio rather than vendor recordings | Same clock as the transcript; off by default; swept with everything else |
 
@@ -56,6 +57,11 @@ therefore not engaged by design; the DPO should confirm.
   text working. Withdrawal is one word and deletes the record and the conversation.
 - **Lowering the bar** (`notice`, `off`) is a founder decision made from the phone and shown
   in `TRAVEL STATUS`; it should be used only for the founder's own demo numbers.
+- **On a live call** the disclosure is spoken before the caller says anything, in the
+  language their number suggests, and the call is logged as any other turn. Consent gating
+  does not apply the same way — a call cannot wait for a button — so a deployment that needs
+  recorded consent for voice should keep live calls off the public number until that is
+  designed.
 - **Synthetic audio** carries a machine-readable AI-generated marker inside the Ogg file
   (`TRAVEL_VOICE_MARK_AUDIO`); whether WhatsApp preserves container comments on delivery must
   be verified on the real channel, which is why the spoken disclosure exists as well.
