@@ -13,6 +13,7 @@ import { describeDraftsForAgents } from '../outreachDrafts.js';
 import { getLatestWeeklyReflection } from '../weeklyReflections.js';
 import { getAgentEarnings, sharePct } from './profitShare.js';
 import { buildOperationsContext } from '../agents/operations.js';
+import { AGENTS } from '../agents/orgChart.js';
 import { describePlanForAgents } from '../dailyPlan.js';
 import { describeTasksForAgents } from '../tasks.js';
 import { buildCultureContext } from '../culture.js';
@@ -380,10 +381,71 @@ export function describeSharePolicy() {
 // to it, plus the one that decides what gets built.
 const NEEDS_REPO_MANIFEST = new Set(['engineering_lead', 'cto', 'solutions_architect']);
 
+/**
+ * Who on this agent's team can actually look something up.
+ *
+ * The CEO offered the founder a "real pass on Amadeus's developer/partner API"
+ * by the CTO, reporting back with "actual findings". The CTO cannot see the
+ * internet. Its Solutions Architect can — so the path existed, nothing routed
+ * it, and the likely outcome was the CTO answering from training data under a
+ * label the founder had been promised meant fetched fact.
+ *
+ * Note which half was broken. The tools were wired correctly. What was missing
+ * was any agent knowing who holds them, which is the same failure as a company
+ * that answers a voice note insisting it has no voice channel.
+ *
+ * Derived from the org chart rather than written into each prompt, so moving
+ * search to a different agent cannot leave a sentence behind saying otherwise.
+ * Empty for an agent that can search for itself, and for a leaf, which is
+ * consulted on its own subject rather than asked to run a research pass. A
+ * manager with nobody to delegate to is told that instead — that was the CFO,
+ * the other name in the offer, and silence is how it accepts a task it has no
+ * way to carry out.
+ */
+export function buildResearchRoutingContext(agentId) {
+  const agent = AGENTS[agentId];
+  if (!agent) return '';
+  if ((agent.serverTools || []).length > 0) return ''; // Can look it up itself.
+
+  const reports = agent.reports || [];
+  // A leaf gets nothing. It is consulted on its own subject rather than asked
+  // to run a research pass, and this note on every specialist on every turn is
+  // a real cost for an instruction they cannot act on.
+  if (!reports.length) return '';
+
+  const searchers = reports
+    .map((id) => AGENTS[id])
+    .filter((report) => report && (report.serverTools || []).length > 0);
+
+  // Nobody to delegate to. Silence here is how the CFO ends up accepting a
+  // research task it has no way to do — so it is told the shape of its own
+  // gap instead, which is the part it can act on.
+  if (!searchers.length) {
+    return (
+      'RESEARCH ROUTING: you have no web access, and neither does anyone reporting to you. Anything you say ' +
+      "about the outside world — a competitor's pricing, an API's terms, what a company offers — comes from " +
+      'training data that is stale and may be wrong. Say so when it matters, and when the founder needs a fact ' +
+      'checked, tell them it needs the CEO to route it to an agent that can search rather than accepting the ' +
+      'task yourself. Never present recall as a finding.'
+    );
+  }
+
+  const names = searchers.map((report) => `the ${report.title}`).join(' or ');
+  return (
+    'RESEARCH ROUTING: you have no web access. Anything you say about the outside world — a competitor\'s ' +
+    'pricing, an API\'s terms, whether a company has a partner program — comes from training data that is ' +
+    `stale and may be wrong. ${names.charAt(0).toUpperCase()}${names.slice(1)} reports to you and can fetch ` +
+    'the real page. So when an external fact matters, delegate for it and say who checked. Never present ' +
+    'recall as a finding, and never promise the founder findings you intend to produce from memory — if you ' +
+    'have not had it looked up, say that plainly instead.'
+  );
+}
+
 export function buildPerAgentContext(agentId, { repoManifests = null } = {}) {
   const parts = [buildEarningsContext(agentId)];
   if (agentId === 'agent_operations_engineer') parts.push(buildOperationsContext());
   if (repoManifests && NEEDS_REPO_MANIFEST.has(agentId)) parts.push(repoManifests);
+  parts.push(buildResearchRoutingContext(agentId));
   return parts.filter((p) => p && p.trim()).join('\n\n');
 }
 
