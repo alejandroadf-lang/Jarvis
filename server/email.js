@@ -270,3 +270,47 @@ export async function sendPaymentEmail(venture, details) {
   const { subject, text } = formatPaymentEmail(venture, details);
   return sendEmail(subject, text);
 }
+
+// A call leaves no record the founder can search, and half of what gets said
+// on one is a decision. Speech is also the medium where "I thought we agreed"
+// does the most damage, because neither side can scroll back.
+//
+// Split from the sender so the formatting is testable without SMTP, matching
+// every other alert in this file.
+export function formatCallSummaryEmail({ from, seconds, transcript = [] }) {
+  const minutes = Math.max(1, Math.round(seconds / 60));
+  const asked = transcript.filter((line) => line.who === 'asked the team');
+
+  const lines = [
+    `A ${minutes}-minute call from ${from || 'an allowed number'}.`,
+    '',
+  ];
+
+  if (asked.length) {
+    lines.push(
+      `${asked.length} question${asked.length === 1 ? ' was' : 's were'} put to the team during the call:`,
+      ...asked.map((line) => `  - ${line.text}`),
+      ''
+    );
+  }
+
+  lines.push('What was said:', '');
+  for (const line of transcript) {
+    // The founder's own words are what they will look for, so they are
+    // labelled as theirs rather than as "user".
+    const who = line.who === 'founder' ? 'You' : line.who === 'team' ? 'The team' : 'Asked the team';
+    lines.push(`${who}: ${line.text}`, '');
+  }
+
+  lines.push(
+    'Transcribed from the call as it happened. The voice on the phone answers from the company',
+    'state it was given; anything it put to the team is marked above.'
+  );
+
+  return { subject: `Call summary — ${minutes} min`, text: lines.join('\n') };
+}
+
+export async function sendCallSummary({ from, seconds, transcript }) {
+  const { subject, text } = formatCallSummaryEmail({ from, seconds, transcript });
+  return sendEmail(subject, text);
+}

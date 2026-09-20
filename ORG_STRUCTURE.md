@@ -3400,3 +3400,86 @@ returned −1 for the entire string and the reply was cut mid-word.
 What ties these four together is the same thing as the eight before: each piece
 worked, and the seam between two pieces was never checked against reality. A
 label said ISO-639-1, and everything downstream believed it.
+
+## A real call, not a faster voice note
+
+The founder asked to talk to the company rather than trade recordings with it.
+That is not an extension of the voice-note path — it is a different
+architecture, and the reason is a number the team published about itself:
+
+> On it — recent answers have taken about 15 seconds.
+
+That is the org chart working correctly. A CEO delegating to a CTO delegating
+to a Solutions Architect is three model calls deep, and `TURN_DEADLINE_MS`
+allows two minutes. Human conversation breaks down after roughly one second of
+silence. **A live call cannot sit on the front of a fifteen-second pipeline**;
+it would produce dead air and read as broken rather than as thoughtful.
+
+So a call is answered by something else: one speech-to-speech model holding the
+company's live state in its head, at about half a second a turn.
+
+### The division of labour is the whole design
+
+| Question | Answered by | Latency |
+|---|---|---|
+| What is CircadianAPI priced at? | The voice, from COMPANY STATE | immediate |
+| What is waiting on me? | The voice, from COMPANY STATE | immediate |
+| Should we go after Amadeus as a partner? | `ask_the_team` → the real org chart | ~15s, mid-call |
+| Email this prospect | `ask_the_team`, and then the plan-approval gate | not on this call |
+
+Anything already known is in the brief and answered instantly. Anything needing
+judgment, research or an action in the world goes to the team — and the call
+keeps going while it does. The answer arrives as a system turn mid-call and the
+voice reads it out in its own words, in the language of the call. Those are
+genuinely different questions and they deserve genuinely different latencies;
+collapsing them into one is what makes most voice agents feel either stupid or
+slow.
+
+### Three things that are audible if wrong
+
+**Interruption has two halves.** Cancelling the model is not enough — Twilio
+has already buffered audio it will keep playing. Both have to be cut, or the
+caller talks over a voice answering a question from several seconds ago. That
+is the single most unnatural thing a voice agent does, and it is one line
+(`clear`) away from happening on every call.
+
+**Nothing can be sent before Twilio's `start` event** supplies the stream SID.
+A media frame arriving first must not produce a reply.
+
+**A promise made must be kept.** The caller was told the question was being
+asked. If the company turn throws, silence afterwards is a broken promise they
+have no way to detect — so the failure is spoken.
+
+### What the tests found that review did not
+
+Two real bugs, both caught by writing the test rather than by reading the code.
+
+A `server.on('upgrade')` listener makes the process responsible for **every**
+upgrade: Node only destroys unhandled ones while nobody is listening. The
+original guard returned early for a non-matching path, which left the socket
+open forever — a leak on any stray upgrade, invisible until the process ran out
+of handles.
+
+And `openRealtimeSession` throws when `OPENAI_API_KEY` is missing. That throw
+was inside Twilio's message handler, so the commonest misconfiguration in this
+whole feature would have taken the socket down with no explanation anywhere the
+founder would look. It now ends the call and says why.
+
+Neither was findable without standing a fake Twilio and a fake realtime
+endpoint in front of the bridge, which is why `OPENAI_REALTIME_URL` is
+overridable: an unreachable hardcoded default is a bug nobody can write a test
+for.
+
+### What a call costs, and why it is capped twice
+
+Per-minute for as long as it stays open, on two meters at once — Twilio's and
+the realtime model's. The model has no concept of a phone bill and will happily
+talk until morning. So: a hard ceiling per call, a budget per day, and an
+allowlist that fails closed on every uncertainty, including a withheld caller
+ID. A dead line, though, is indistinguishable from a broken number, so a
+refusal is *spoken* — "this number is not on the call allowlist" tells the
+founder which variable to set, where silence tells them the feature is broken.
+
+Every call ends with a transcript emailed to the founder. A call leaves no
+record anyone can search, half of what gets said on one is a decision, and
+speech is the medium where "I thought we agreed" does the most damage.

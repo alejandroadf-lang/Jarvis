@@ -24,6 +24,7 @@ import { isWorkspaceConfigured, workspaceConfig } from './workspace/vault.js';
 import { isWhatsAppConfigured, allowedNumbers, GRAPH_API } from './channels/whatsapp.js';
 import { isOpenAIConfigured, chatModel, fallbackModel, transcribeModel } from './agents/openai.js';
 import { speechModel } from './speech.js';
+import { isCallingEnabled, describeCalling, callAllowedNumbers } from './realtime/callPolicy.js';
 import { isGeminiConfigured, geminiModel, listModelsUrl } from './agents/gemini.js';
 import { MODELS, CHEAP_TIER } from './agents/models.js';
 import { readSecret } from './env.js';
@@ -192,6 +193,31 @@ async function probeWhatsApp() {
   } catch (err) {
     return { configured: true, ok: false, detail: `Couldn't reach the Graph API: ${err.message}` };
   }
+}
+
+/**
+ * The phone line.
+ *
+ * Not a live API check: there is nothing to probe without placing a call, and
+ * a probe that costs a phone call is a probe nobody runs. What it does check
+ * is the thing that actually goes wrong — every piece being present except
+ * one, which is only discovered by dialling and hearing nothing.
+ */
+function probeCalling() {
+  if (!isCallingEnabled()) {
+    return notConfigured('Not set — the company cannot take phone calls. VOICE_CALLS=true turns them on.');
+  }
+  if (!isOpenAIConfigured()) {
+    return { configured: true, ok: false, detail: 'Calls are on, but OPENAI_API_KEY is not set — nothing can answer.' };
+  }
+  if (!callAllowedNumbers().length) {
+    return {
+      configured: true,
+      ok: false,
+      detail: 'Calls are on, but no number is allowed to call. Set CALL_ALLOWED_NUMBERS or WHATSAPP_ALLOWED_NUMBERS.',
+    };
+  }
+  return { configured: true, ok: true, detail: describeCalling() };
 }
 
 /**
@@ -399,6 +425,9 @@ export async function getIntegrationStatus() {
     deepseek,
     honcho,
     whatsapp,
+    // Synchronous: there is nothing to probe without placing a call, and a
+    // check that costs a phone call is a check nobody runs.
+    calling: probeCalling(),
     // These two predate the probes and fail loudly at the point of use (an
     // action tool returns the reason), so presence is the useful signal.
     email: {
