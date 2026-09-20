@@ -3247,3 +3247,44 @@ One breaking change worth noting: `transcribeAudio` now returns
 `{ text, language }` rather than a bare string, since the language is the thing
 that makes answering in it possible. Both call sites and the existing test were
 updated with it.
+
+### Instance nine: the company that denied having ears
+
+The first real voice note the founder sent was transcribed, understood, and
+answered — with this:
+
+> I can't "hear" anything — I only work from text, no audio or voice channel
+> exists on my end.
+
+Every mechanical part had worked. Whisper had run, the words had arrived, the
+turn had executed. The only thing that failed was what the team knew about
+itself, and that was the only part the founder could see.
+
+The cause is one line of plumbing. `spokenIn` was threaded from the
+transcription into the company turn, where it fed exactly one thing —
+`replyLanguageInstruction` — which returns **an empty string for English**. So
+an English voice note produced no context at all. The agents received ordinary
+text, consulted their self-model, and reported accurately on what they could
+see. They were not hallucinating. They were reading an input that had been
+stripped of the one fact that mattered.
+
+The tell was already in the code, two lines apart. An image arrives and gets
+marked in history as `[sent an image]`. A voice note arrived and got nothing.
+The image case had been thought through and the voice case had been assumed.
+
+`spokenReplyInstruction()` fixes it by telling the team three things: that the
+founder spoke rather than typed, that they were therefore heard, and that the
+first `VOICE_REPLY_MAX_CHARS` of the answer are read back aloud — so the
+conclusion belongs in the opening sentences, because a reply that builds to its
+point loses the point to the cut. It returns empty for a typed message, which
+is nearly all of them, so the cost falls only where the instruction is true.
+
+Note what would *not* have caught this. Every test passed. The upload shape was
+covered, the transcription was covered, the language mapping was covered. The
+integration probe said the key was accepted. What no test asserted was whether
+the team knew what had just happened to it — and a capability nobody is told
+they have is a capability the founder gets told does not exist.
+
+This is the same failure as the eight before it, one layer further in. Those
+were capabilities behind doors the agents could not open. This was a capability
+behind a door with no sign on it: open, in use, and unmarked.

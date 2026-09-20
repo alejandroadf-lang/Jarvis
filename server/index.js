@@ -120,7 +120,7 @@ import {
   formatPlanForWhatsApp,
 } from './dailyPlan.js';
 import { isOpenAIConfigured, transcribeAudio } from './agents/openai.js';
-import { isSpeechConfigured, synthesize, spokenExcerpt } from './speech.js';
+import { isSpeechConfigured, synthesize, spokenExcerpt, spokenReplyInstruction } from './speech.js';
 import { replyLanguageInstruction, describeLanguageSetting } from './language.js';
 import { listWeeklyReflections, getWeeklyReflection, getLatestWeeklyReflection } from './weeklyReflections.js';
 import { startWeeklyReflectionScheduler, runWeeklyReflectionNow, isWeeklyReflectionRunning } from './weeklyScheduler.js';
@@ -269,7 +269,7 @@ function joinContext(...parts) {
   return parts.filter((part) => part && part.trim()).join('\n\n');
 }
 
-async function runCompanyTurn(sessionId, message, { deadlineAt = null, image = null, spokenIn = '' } = {}) {
+async function runCompanyTurn(sessionId, message, { deadlineAt = null, image = null, spokenIn = '', arrivedAsVoice = false } = {}) {
   const history = companySessions.get(sessionId) || [];
   // What is already committed, for the agents that build. One call per repo,
   // never fatal — see buildRepoManifests for the week that bought this.
@@ -402,6 +402,10 @@ async function runCompanyTurn(sessionId, message, { deadlineAt = null, image = n
       buildCompanyContext(),
       steering,
       founderContext,
+      // That the founder spoke rather than typed, and that the answer is read
+      // back to them. Without it the team answers a voice note insisting it
+      // has no voice channel. Empty for a typed message.
+      spokenReplyInstruction({ arrivedAsVoice }),
       // Last, so it is the nearest instruction to the answer. Empty for an
       // English question to an English-speaking team, which is most of them.
       replyLanguageInstruction({ detected: spokenIn })
@@ -413,7 +417,11 @@ async function runCompanyTurn(sessionId, message, { deadlineAt = null, image = n
   // those bytes to every agent, and a few screenshots would quietly become
   // the most expensive thing in the session. What the CEO said about it is
   // in its reply, which is the part worth remembering.
-  history.push({ role: 'user', content: image ? `[sent an image] ${message}`.trim() : message });
+  // An image is already marked here; a voice note was not, so a later turn
+  // reading back the session saw a typed message and lost the fact that the
+  // founder had been speaking.
+  const inboundMarker = image ? '[sent an image] ' : arrivedAsVoice ? '[sent a voice note] ' : '';
+  history.push({ role: 'user', content: `${inboundMarker}${message}`.trim() });
   history.push({ role: 'assistant', content: text });
   const trimmed = trimHistory(history);
   companySessions.set(sessionId, trimmed);
@@ -1013,6 +1021,7 @@ async function handleWhatsAppMessage(message) {
       deadlineAt: Date.now() + TURN_DEADLINE_MS,
       image,
       spokenIn,
+      arrivedAsVoice,
     });
 
     if (ranOutOfTime) {

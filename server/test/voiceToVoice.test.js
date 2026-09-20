@@ -181,3 +181,74 @@ test('language codes are matched case- and region-insensitively', () => {
   assert.equal(language.languageName('pt-BR'), 'Portuguese');
   assert.equal(language.languageName('  de  '), 'German');
 });
+
+// The company listened to a voice note, transcribed it, answered it aloud —
+// and told the founder "I only work from text, no audio or voice channel
+// exists on my end." Every mechanical part worked. The only broken part was
+// what the agents knew about themselves, and that was the part the founder
+// saw. A capability nobody is told they have is one they will deny having.
+test('a voice note tells the team they were spoken to, and not to deny it', async () => {
+  const savedKey = process.env.OPENAI_API_KEY;
+  const savedReplies = process.env.VOICE_REPLIES;
+  process.env.OPENAI_API_KEY = 'k';
+  delete process.env.VOICE_REPLIES;
+  try {
+    const { spokenReplyInstruction } = await import('../speech.js');
+    const said = spokenReplyInstruction({ arrivedAsVoice: true });
+    assert.match(said, /voice note/i, 'names how it arrived');
+    assert.match(said, /did hear them/i, 'and that hearing it happened');
+    assert.match(said, /never tell them/i, 'the denial is barred explicitly, not merely made unlikely');
+  } finally {
+    if (savedKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = savedKey;
+    if (savedReplies === undefined) delete process.env.VOICE_REPLIES;
+    else process.env.VOICE_REPLIES = savedReplies;
+  }
+});
+
+test('a typed message says nothing about voice at all', async () => {
+  // The instruction costs tokens on every turn. Most turns are typed, and a
+  // typed turn that carries voice guidance is paying for nothing.
+  const { spokenReplyInstruction } = await import('../speech.js');
+  assert.equal(spokenReplyInstruction({ arrivedAsVoice: false }), '');
+  assert.equal(spokenReplyInstruction(), '');
+});
+
+test('the team is told the answer gets cut for reading aloud, and where to put the point', async () => {
+  const savedKey = process.env.OPENAI_API_KEY;
+  const savedLimit = process.env.VOICE_REPLY_MAX_CHARS;
+  process.env.OPENAI_API_KEY = 'k';
+  process.env.VOICE_REPLY_MAX_CHARS = '400';
+  try {
+    const { spokenReplyInstruction } = await import('../speech.js');
+    const said = spokenReplyInstruction({ arrivedAsVoice: true });
+    assert.match(said, /400/, 'the real limit, not a guess at one');
+    assert.match(said, /opening sentences/i, 'and what that means for the shape of the answer');
+  } finally {
+    if (savedKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = savedKey;
+    if (savedLimit === undefined) delete process.env.VOICE_REPLY_MAX_CHARS;
+    else process.env.VOICE_REPLY_MAX_CHARS = savedLimit;
+  }
+});
+
+test('with spoken replies off, the team still knows it was heard', async () => {
+  // Switching off the voice must not switch the ears back off too. This is
+  // the half that was wrong in the first place.
+  const savedKey = process.env.OPENAI_API_KEY;
+  const savedReplies = process.env.VOICE_REPLIES;
+  process.env.OPENAI_API_KEY = 'k';
+  process.env.VOICE_REPLIES = 'false';
+  try {
+    const { spokenReplyInstruction } = await import('../speech.js');
+    const said = spokenReplyInstruction({ arrivedAsVoice: true });
+    assert.match(said, /did hear them/i);
+    assert.match(said, /text only/i, 'and is honest that the answer is not spoken back');
+    assert.doesNotMatch(said, /read back to them aloud/i);
+  } finally {
+    if (savedKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = savedKey;
+    if (savedReplies === undefined) delete process.env.VOICE_REPLIES;
+    else process.env.VOICE_REPLIES = savedReplies;
+  }
+});
