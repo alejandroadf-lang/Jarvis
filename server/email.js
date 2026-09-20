@@ -67,6 +67,11 @@ export function formatReportEmail(report) {
   const claims = describeUnsupportedClaims(report.unsupportedClaims);
   if (claims) lines.push('', claims);
 
+  // Also before the report, and for a related reason: how the research was
+  // shaped decides how much the conclusions are worth, and it cannot be
+  // recovered by reading them.
+  if (report.searchBalance) lines.push('', report.searchBalance);
+
   lines.push(
     '',
     '=== Leadership Sync (Executive Team) ===',
@@ -214,6 +219,14 @@ export function formatOutreachDryRunEmail(venture, { to, subject, text }) {
 export async function sendOutreachDryRunEmail(venture, details) {
   const { subject, text } = formatOutreachDryRunEmail(venture, details);
   return sendEmail(subject, text); // to the founder — no override, and no parameter for one
+}
+
+// The morning pitch. Its own email rather than a section of the daily report,
+// because it is a different kind of thing: the report says what happened, and
+// this says what could. Burying a provocation inside a status update is how it
+// stops being read.
+export async function sendPitchEmail({ subject, text }) {
+  return sendEmail(subject, text); // to the founder, like every other alert here
 }
 
 // A real person answered. That is the single most important thing that can

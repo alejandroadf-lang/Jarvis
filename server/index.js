@@ -21,7 +21,7 @@ import {
   linkOutreachScope,
   setOutreachEnabled,
 } from './finance/ventures.js';
-import { buildCompanyContext, buildStudioContext, buildPerAgentContext } from './finance/context.js';
+import { buildCompanyContext, buildStudioContext, buildPerAgentContext, buildRepoManifests } from './finance/context.js';
 import { recordExchange, buildFounderContext } from './memory/honcho.js';
 import { readFounderSteering } from './workspace/vault.js';
 import {
@@ -38,6 +38,9 @@ import {
   handleCheckUsage,
   handleCreatePaymentLink,
   handleUpdatePipeline,
+  handleDraftCustomerEmail,
+  handleListDrafts,
+  releaseDraft,
   handleSetObjective,
   handleOpenPullRequest,
   handleRevertCommit,
@@ -78,6 +81,7 @@ import {
   extractMessage,
   isAllowedSender,
   sendWhatsAppMessage,
+  sendWhatsAppAudio,
   isDuplicate,
   unsupportedTypeReply,
   downloadMedia,
@@ -87,6 +91,7 @@ import { isImage, SUPPORTED_IMAGE_TYPES } from './channels/whatsapp.js';
 import { parseFounderCommand, runFounderCommand } from './channels/founderCommands.js';
 import { dryRunOutreach } from './outreachDryRun.js';
 import { runEval } from './eval/run.js';
+import { runFactCheck, describeFactCheck } from './factCheck.js';
 import { listTasks } from './tasks.js';
 import { getDegradationToday } from './degradation.js';
 import { privacyPolicyHtml } from './privacy.js';
@@ -115,6 +120,8 @@ import {
   formatPlanForWhatsApp,
 } from './dailyPlan.js';
 import { isOpenAIConfigured, transcribeAudio } from './agents/openai.js';
+import { isSpeechConfigured, synthesize, spokenExcerpt } from './speech.js';
+import { replyLanguageInstruction, describeLanguageSetting } from './language.js';
 import { listWeeklyReflections, getWeeklyReflection, getLatestWeeklyReflection } from './weeklyReflections.js';
 import { startWeeklyReflectionScheduler, runWeeklyReflectionNow, isWeeklyReflectionRunning } from './weeklyScheduler.js';
 import { startInboxWatcher } from './inboxWatch.js';
@@ -262,8 +269,14 @@ function joinContext(...parts) {
   return parts.filter((part) => part && part.trim()).join('\n\n');
 }
 
-async function runCompanyTurn(sessionId, message, { deadlineAt = null, image = null } = {}) {
+async function runCompanyTurn(sessionId, message, { deadlineAt = null, image = null, spokenIn = '' } = {}) {
   const history = companySessions.get(sessionId) || [];
+  // What is already committed, for the agents that build. One call per repo,
+  // never fatal — see buildRepoManifests for the week that bought this.
+  const repoManifests = await buildRepoManifests().catch((err) => {
+    console.error('Could not list the linked repos for context:', err.message);
+    return '';
+  });
   // An image goes to the CEO as a real image block. Delegation downstream is
   // text, which is the right shape anyway: the orchestrator looks at the
   // picture and tells its specialists what is in it, exactly as a person
@@ -325,6 +338,8 @@ async function runCompanyTurn(sessionId, message, { deadlineAt = null, image = n
       // Creating a link charges nobody; sending it goes through email and its
       // gates. Pipeline and objectives are internal book-keeping.
       create_payment_link: (input, ctx) => handleCreatePaymentLink(input, ctx),
+      draft_customer_email: (input, ctx) => handleDraftCustomerEmail(input, ctx),
+      list_drafts: (input) => handleListDrafts(input),
       update_pipeline: (input, ctx) => handleUpdatePipeline(input, ctx),
       set_objective: (input, ctx) => handleSetObjective(input, ctx),
       // Finished work that has not landed. Not behind the plan — see
@@ -383,8 +398,15 @@ async function runCompanyTurn(sessionId, message, { deadlineAt = null, image = n
       // the building (see actionHandlers.js).
       log_contact_note: handleLogContactNote,
     },
-    extraContext: joinContext(buildCompanyContext(), steering, founderContext),
-    perAgentContext: buildPerAgentContext,
+    extraContext: joinContext(
+      buildCompanyContext(),
+      steering,
+      founderContext,
+      // Last, so it is the nearest instruction to the answer. Empty for an
+      // English question to an English-speaking team, which is most of them.
+      replyLanguageInstruction({ detected: spokenIn })
+    ),
+    perAgentContext: (agentId) => buildPerAgentContext(agentId, { repoManifests }),
   });
 
   // The image itself is not kept in history. Every later turn would resend
@@ -798,8 +820,44 @@ app.post('/api/whatsapp/webhook', (req, res) => {
   });
 });
 
+/**
+ * Answers in the medium the question arrived in.
+ *
+ * The text always goes out. The voice note is added on top, never instead of:
+ * a spoken reply carries the top of the answer and the message carries all of
+ * it, and if speech fails for any reason the founder still has their answer.
+ * Losing a reply to a TTS outage would be a worse bug than never having built
+ * this.
+ */
+async function replyToWhatsApp(message, reply, { asVoice = false, language = '' } = {}) {
+  await sendWhatsAppMessage(message.from, reply);
+  if (!asVoice || !isSpeechConfigured() || process.env.VOICE_REPLIES === 'false') return;
+
+  try {
+    const { text: spoken, truncated } = spokenExcerpt(reply);
+    if (!spoken) return;
+    const body = truncated ? `${spoken} The rest is in the message.` : spoken;
+    const { buffer, mimeType, filename } = await synthesize(body, {
+      // Whisper reports the language it heard; saying it back lets the voice
+      // keep the accent rather than reading Spanish with an English mouth.
+      instructions: language ? `Speak naturally in ${language}.` : '',
+    });
+    await sendWhatsAppAudio(message.from, buffer, { mimeType, filename });
+  } catch (err) {
+    // Deliberately quiet to the founder: they already have the answer, and a
+    // second message apologising for the absence of the first would be noise.
+    console.error('Could not send the spoken reply:', err.message);
+  }
+}
+
 async function handleWhatsAppMessage(message) {
   let text = message.text.trim();
+  // Set when the founder spoke rather than typed: the language they spoke, and
+  // the fact that a voice note deserves a voice answer. Somebody sends one
+  // because their hands are full, and a wall of text is the wrong shape for
+  // that moment.
+  let spokenIn = '';
+  let arrivedAsVoice = false;
 
   // A voice note is the natural way to brief a team while walking, and it
   // used to get an apology. Transcribed here rather than inside the company
@@ -808,7 +866,10 @@ async function handleWhatsAppMessage(message) {
   if (isVoiceNote(message) && message.mediaId && isOpenAIConfigured()) {
     try {
       const { buffer, filename } = await downloadMedia(message.mediaId);
-      text = (await transcribeAudio(buffer, filename)).trim();
+      const heard = await transcribeAudio(buffer, filename);
+      text = heard.text.trim();
+      spokenIn = heard.language;
+      arrivedAsVoice = true;
       if (!text) {
         recordInbound({ stage: STAGES.UNSUPPORTED_TYPE, from: message.from, detail: 'Voice note had no speech in it' });
         await sendWhatsAppMessage(message.from, "I couldn't make out any words in that one — try again?");
@@ -896,9 +957,21 @@ async function handleWhatsAppMessage(message) {
         // the same one every agent turn uses — a dry run against a different
         // client would be rehearsing a different company.
         dryRunOutreach: (args) => dryRunOutreach({ ...args, anthropic }),
+        // Releasing a draft runs the ordinary send path, gates and all — the
+        // founder's yes is an extra opinion on the message, never a way past
+        // the allowlist.
+        releaseDraft: (id) => releaseDraft(id, { anthropic }),
         // Started, not awaited: the eval takes minutes of real API calls, and
         // holding the webhook open for it would time out long before it
         // finished. The result finds the founder when it exists.
+        // Same shape as the eval and for the same reason: it takes minutes of
+        // real calls and the webhook would time out long before it finished.
+        startFactCheck: () => {
+          runFactCheck({ anthropic })
+            .then((result) => sendWhatsAppMessage(message.from, describeFactCheck(result)))
+            .catch((err) => sendWhatsAppMessage(message.from, `The fact check could not finish — ${err.message}`))
+            .catch((sendErr) => console.error('Could not deliver the fact check:', sendErr));
+        },
         startEval: (scenarioId) => {
           runEval({ scenarioId })
             .then(({ summary }) => sendWhatsAppMessage(message.from, `Eval finished.\n\n${summary}`))
@@ -907,7 +980,7 @@ async function handleWhatsAppMessage(message) {
         },
       });
       recordInbound({ stage: STAGES.ANSWERED, from: message.from, text, detail: `founder command: ${founderCommand.kind}` });
-      await sendWhatsAppMessage(message.from, reply);
+      await replyToWhatsApp(message, reply, { asVoice: arrivedAsVoice, language: spokenIn });
     } catch (err) {
       // A mistyped venture id is the common case, and the founder needs to
       // see which one it was rather than a generic failure.
@@ -939,6 +1012,7 @@ async function handleWhatsAppMessage(message) {
     const { reply, ranOutOfTime } = await runCompanyTurn(`whatsapp-${message.from}`, text, {
       deadlineAt: Date.now() + TURN_DEADLINE_MS,
       image,
+      spokenIn,
     });
 
     if (ranOutOfTime) {
@@ -967,7 +1041,7 @@ async function handleWhatsAppMessage(message) {
       return;
     }
 
-    await sendWhatsAppMessage(message.from, reply);
+    await replyToWhatsApp(message, reply, { asVoice: arrivedAsVoice, language: spokenIn });
     recordInbound({
       stage: STAGES.ANSWERED,
       from: message.from,

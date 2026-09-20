@@ -38,6 +38,7 @@ import {
   markRepliesRead,
   blockContact,
   updatePipeline,
+  outreachGates,
   setObjective,
   listObjectives,
   monthlyRecurringRevenue,
@@ -80,6 +81,16 @@ import { deployReadiness, outreachReadiness, formatReadiness } from './readiness
 import { withComplianceFooter, isUnsubscribe } from './outreachCompliance.js';
 import { priceFloorRefusal, reviewOutbound } from './review.js';
 import { evaluate as evaluateArithmetic, formatNumber as formatCalcNumber } from './arithmetic.js';
+import {
+  createDraft,
+  approveDraft,
+  rejectDraft,
+  markSent,
+  recordSendFailure,
+  getDraft,
+  pendingDrafts,
+  releasableDrafts,
+} from './outreachDrafts.js';
 import { fetchCitedPage } from './claimVerify.js';
 import { createCheckoutLink, isPaymentsConfigured } from './payments.js';
 import { usageSummary, hasIngestKey } from './ventureUsage.js';
@@ -1286,13 +1297,21 @@ function assertRealActionsAllowedForLink() {
 
 // --- The pipeline ------------------------------------------------------------------
 export function handleUpdatePipeline(input, ctx = {}) {
-  const { ventureId, email, stage, dealValueMonthly, nextAction } = input || {};
+  const { ventureId, email, handle, source, stage, dealValueMonthly, nextAction } = input || {};
   try {
-    const { entry } = updatePipeline(ventureId, { email, stage, dealValueMonthly, nextAction });
-    recordContribution({ agentId: ctx.agentId, kind: 'update_pipeline', ventureId, detail: `${entry.email} -> ${entry.stage || '?'}` });
-    return `Pipeline updated: ${entry.email} is at "${entry.stage || 'lead'}"${
-      entry.dealValueMonthly ? `, worth ${entry.dealValueMonthly}/month` : ''
-    }${entry.nextAction ? `. Next: ${entry.nextAction}` : '.'}`;
+    const { entry } = updatePipeline(ventureId, { email, handle, source, stage, dealValueMonthly, nextAction });
+    const who = entry.email || entry.handle || entry.key;
+    recordContribution({ agentId: ctx.agentId, kind: 'update_pipeline', ventureId, detail: `${who} -> ${entry.stage || '?'}` });
+    return [
+      `Pipeline updated: ${who} is at "${entry.stage || 'lead'}"${
+        entry.dealValueMonthly ? `, worth ${entry.dealValueMonthly}/month` : ''
+      }${entry.nextAction ? `. Next: ${entry.nextAction}` : '.'}`,
+      // A lead with no address is a real lead and also an incomplete one. Say
+      // which, so nobody discovers at send time that the list cannot be mailed.
+      entry.email ? '' : 'No email on this one yet, so nothing can be sent to them until there is. That is a research task, not a blocker.',
+    ]
+      .filter(Boolean)
+      .join(' ');
   } catch (err) {
     return `Could not update the pipeline: ${err.message}`;
   }
@@ -1358,5 +1377,97 @@ export async function handleVerifyClaim(input, ctx = {}) {
     'Answer in one line, starting with SUPPORTED, UNSUPPORTED or PARTIAL, then the reason. ' +
       'The page being on-topic is not support — the figure or statement in the claim has to appear. ' +
       'If the page says something close but different, that is PARTIAL and the difference is the finding.',
+  ].join('\n');
+}
+
+
+// --- Writing outreach before it can be sent -------------------------------------------
+
+export function handleDraftCustomerEmail(input, ctx = {}) {
+  const { ventureId, to, subject, body, why } = input || {};
+  const venture = getVenture(ventureId);
+  if (!venture) return 'Could not draft: venture not found. Check the id against the business context.';
+  if (venture.status !== 'active') return `Could not draft: venture is ${venture.status}.`;
+
+  try {
+    const draft = createDraft({ ventureId, to, subject, body, why, agentId: ctx.agentId });
+    recordContribution({ agentId: ctx.agentId, kind: 'draft_customer_email', ventureId, detail: `to ${draft.to}` });
+
+    // What would happen if the founder said yes right now. Said at drafting
+    // time rather than discovered at approval time, so the team knows whether
+    // it is writing into a queue that can currently empty.
+    const blocked = outreachGates(ventureId, { to: draft.to }).filter((gate) => !gate.open);
+    const state = blocked.length
+      ? `\n\nIt cannot go out yet — ${blocked.length} gate${blocked.length === 1 ? '' : 's'} shut, first is: ${blocked[0].reason}`
+      : '\n\nEvery gate is open, so it will go out the moment the founder approves it.';
+
+    return `Draft ${draft.id} saved for ${draft.to}: "${draft.subject}". Nothing has been sent.${state}`;
+  } catch (err) {
+    return `Could not draft: ${err.message}`;
+  }
+}
+
+/**
+ * Release one approved draft through the ordinary outreach path.
+ *
+ * Every gate applies. The founder approving a message is a second opinion on
+ * top of the standing grant, never a replacement for it: this calls the same
+ * handler an agent calls, so the allowlist, the caps, the cooldown, the
+ * blocklist, the consent rule, the compliance footer and the CEO's veto all
+ * run exactly as they would have. A queue that skipped them would be a way
+ * around them with a friendly name.
+ */
+export async function releaseDraft(id, ctx = {}) {
+  const draft = getDraft(id);
+  if (!draft) return { ok: false, message: `No draft "${id}".` };
+  if (draft.status === 'sent') return { ok: false, message: `Draft ${draft.id} was already sent.` };
+
+  const result = await handleSendCustomerEmail(
+    { ventureId: draft.ventureId, to: draft.to, subject: draft.subject, body: draft.body },
+    'founder_approved',
+    { ...ctx, agentId: draft.agentId || ctx.agentId }
+  );
+
+  // handleSendCustomerEmail reports failure as prose rather than throwing, so
+  // the shape of the reply is what says whether a real person got this.
+  if (/^(Could not send|Not sent)/.test(result)) {
+    recordSendFailure(draft.id, result);
+    return { ok: false, message: result };
+  }
+  markSent(draft.id);
+  return { ok: true, message: result };
+}
+
+/**
+ * Try every approved draft that has not gone out yet.
+ *
+ * Runs in the daily cycle, because the usual reason a draft is stuck is that
+ * the founder had not finished configuring SMTP when they approved it — and
+ * the moment that changes, nobody is going to remember to come back and press
+ * send on eleven messages.
+ */
+export async function releaseApprovedDrafts(ctx = {}) {
+  const queued = releasableDrafts();
+  const sent = [];
+  const stuck = [];
+  for (const draft of queued) {
+    // Serial, not parallel: each send counts against a per-venture cap and a
+    // cooldown, and firing them together would race the very limits that make
+    // this safe.
+    const { ok, message } = await releaseDraft(draft.id, ctx);
+    if (ok) sent.push(draft);
+    else stuck.push({ draft, message });
+  }
+  return { sent, stuck, considered: queued.length };
+}
+
+export function handleListDrafts(input) {
+  const ventureId = typeof input?.ventureId === 'string' ? input.ventureId : null;
+  const waiting = pendingDrafts(ventureId);
+  const approved = releasableDrafts(ventureId);
+  if (!waiting.length && !approved.length) return 'No drafts are queued.';
+  return [
+    ...waiting.map((d) => `${d.id} (waiting on the founder) → ${d.to}: "${d.subject}"`),
+    ...approved.map((d) => `${d.id} (approved, not yet sent) → ${d.to}: "${d.subject}"${d.lastError ? ` — last attempt: ${d.lastError}` : ''}`),
   ].join('\n');
 }

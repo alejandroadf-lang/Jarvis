@@ -21,6 +21,8 @@
 // an instruction to stop the company, and treating it as one would be the
 // worst kind of helpful.
 
+import { pendingDrafts, releasableDrafts, getDraft, approveDraft, rejectDraft } from '../outreachDrafts.js';
+import { listSearches, searchBalance } from '../searchLog.js';
 import { haltRealActions, resumeRealActions } from '../killSwitch.js';
 import { getSpendSummary } from '../spend.js';
 import {
@@ -132,6 +134,19 @@ const COMMANDS = [
   // The rehearsal. Everything after the address is optional: "| subject |
   // body" to rehearse the founder's own words instead of the sample.
   { kind: 'dryrun', re: /^dry\s*run\s+(v_\S+)\s+(\S+@\S+)\s*(?:\|([^|]*)(?:\|([\s\S]*))?)?$/i },
+  // Outreach the team wrote and cannot send. Short ids because these are typed
+  // on a phone: "SEND d7", not a uuid pasted from somewhere there is nothing
+  // to paste from.
+  // What the team went looking for. The bias that matters lives in the
+  // queries, not the findings — see searchLog.js.
+  { kind: 'searches', re: /^searches?$/i },
+  // Does our own output survive being checked? Costs a fetch and a cheap call
+  // per claim, so it runs when asked.
+  { kind: 'factcheck', re: /^fact\s*check$/i },
+  { kind: 'drafts', re: /^drafts?$/i },
+  { kind: 'draft_show', re: /^draft\s+(d\d+)$/i, arg: 'draftId' },
+  { kind: 'draft_send', re: /^send\s+(d\d+)$/i, arg: 'draftId' },
+  { kind: 'draft_bin', re: /^bin\s+(d\d+)(?:\s+(.+))?$/i },
 ];
 
 // "outreach v_123 @acme.com, someone@corp.com" — the grant itself, which
@@ -203,6 +218,7 @@ export function parseFounderCommand(text) {
       if (kind === 'unblock') return { kind, ventureId: match[1], email: match[2] };
       if (kind === 'discount') return { kind, ventureId: match[1], floor: Number(match[2]) };
       if (kind === 'mcp') return { kind, ventureId: match[1], url: match[2] };
+      if (kind === 'draft_bin') return { kind, draftId: match[1].toLowerCase(), reason: (match[2] || '').trim() };
       if (kind === 'dryrun') {
         return {
           kind,
@@ -381,6 +397,12 @@ MCP <ventureId> <https://...> — where other people's agents can reach the prod
 MCP CLEAR <ventureId> — remove it
 DRYRUN <ventureId> <email> — rehearse the whole outreach path; the message comes to you, never to them
 DRYRUN <ventureId> <email> | subject | body — same, with your own words
+SEARCHES — what the team actually went looking for
+FACTCHECK — open the sources the team cited and see if they say what was claimed
+DRAFTS — outreach the team has written and is waiting on you
+DRAFT d1 — read one in full
+SEND d1 — release it (still passes every gate a normal send passes)
+BIN d1 <reason> — bin it
 DEPLOY OFF <ventureId> — stop commits for one venture
 DEPLOY ON <ventureId> — allow them again
 
@@ -527,6 +549,95 @@ export async function runFounderCommand(command, deps = {}) {
     case 'unblock': {
       const venture = unblockContact(command.ventureId, command.email);
       return `${command.email.toLowerCase()} is no longer blocked on "${venture.title}".`;
+    }
+
+    case 'factcheck': {
+      if (!deps.startFactCheck) return 'The fact check is not available on this build.';
+      deps.startFactCheck();
+      return 'Checking the claims the team has cited over the last fortnight against the pages they cite. It costs a fetch and a cheap model call each, so it takes a minute — the result finds you when it is done.';
+    }
+
+    case 'searches': {
+      const recent = listSearches({ limit: 25 });
+      if (!recent.length) return 'No searches on record yet. They are captured from the team\'s own turns, not self-reported.';
+      const { total, disconfirming } = searchBalance();
+      const lines = recent.map((entry) => `${entry.disconfirming ? '↯' : ' '} ${entry.agentId || '?'}: ${entry.query}`);
+      return [
+        `${total} search${total === 1 ? '' : 'es'} on record, ${disconfirming} of them looking for a reason something would not work (marked ↯).`,
+        '',
+        ...lines,
+        '',
+        'A pass with none of these produces supportive citations whether the idea is good or not — which is why the findings alone cannot tell you.',
+      ].join('\n');
+    }
+
+    case 'drafts': {
+      const waiting = pendingDrafts();
+      const approved = releasableDrafts();
+      if (!waiting.length && !approved.length) {
+        return 'No outreach drafts are queued. The team writes them with draft_customer_email; nothing is sent until you release it.';
+      }
+      const lines = [];
+      if (waiting.length) {
+        lines.push(`${waiting.length} waiting on you:`);
+        for (const d of waiting) lines.push(`  ${d.id} → ${d.to}\n     "${d.subject}"${d.why ? `\n     why: ${d.why}` : ''}`);
+      }
+      if (approved.length) {
+        lines.push('', `${approved.length} approved, not yet gone out:`);
+        for (const d of approved) lines.push(`  ${d.id} → ${d.to}${d.lastError ? `\n     stuck: ${d.lastError}` : ''}`);
+      }
+      lines.push('', 'DRAFT d1 to read one in full. SEND d1 to release it. BIN d1 <reason> to bin it.');
+      return lines.join('\n');
+    }
+
+    case 'draft_show': {
+      const draft = getDraft(command.draftId);
+      if (!draft) return `No draft "${command.draftId}". Send DRAFTS to see what is queued.`;
+      return [
+        `${draft.id} — ${draft.status}`,
+        `To: ${draft.to}`,
+        `Subject: ${draft.subject}`,
+        draft.why ? `Why them: ${draft.why}` : '',
+        '',
+        draft.body,
+        '',
+        '(The AI disclosure and opt-out line are added on send, not shown here.)',
+        draft.status === 'pending' ? `\nSEND ${draft.id} to release it, BIN ${draft.id} <reason> to bin it.` : '',
+      ]
+        .filter((line) => line !== '')
+        .join('\n');
+    }
+
+    case 'draft_send': {
+      if (!deps.releaseDraft) return 'Releasing drafts is not available on this build.';
+      const draft = getDraft(command.draftId);
+      if (!draft) return `No draft "${command.draftId}". Send DRAFTS to see what is queued.`;
+      try {
+        approveDraft(command.draftId);
+      } catch (err) {
+        return err.message;
+      }
+      const { ok, message } = await deps.releaseDraft(command.draftId);
+      if (ok) return `Sent ${draft.id} to ${draft.to}.\n\n${message}`;
+      // Approved and refused is the normal state before the mailbox is
+      // configured, so this says what is missing rather than reading as a
+      // verdict on the message.
+      return [
+        `${draft.id} is approved but did not go out yet.`,
+        '',
+        message,
+        '',
+        'It stays in the queue and goes out on its own once that is fixed — you do not need to approve it again.',
+      ].join('\n');
+    }
+
+    case 'draft_bin': {
+      try {
+        const draft = rejectDraft(command.draftId, command.reason);
+        return `Binned ${draft.id}${command.reason ? `: ${command.reason}` : '.'} The team can write another.`;
+      } catch (err) {
+        return err.message;
+      }
     }
 
     case 'dryrun': {

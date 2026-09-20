@@ -25,10 +25,12 @@
 // one.
 
 import { unsupportedClaims } from './claimCheck.js';
+import { describeSearchBalance } from './searchLog.js';
+import { generatePitch, formatPitchEmail } from './pitchOfTheDay.js';
 import { runAgent } from './agents/agentRunner.js';
 import { AGENTS as COMPANY_AGENTS, ROOT_AGENT_ID as COMPANY_ROOT } from './agents/orgChart.js';
 import { AGENTS as STUDIO_AGENTS, ROOT_AGENT_ID as STUDIO_ROOT } from './agents/ideationTeam.js';
-import { buildCompanyContext, buildStudioContext, buildPerAgentContext } from './finance/context.js';
+import { buildCompanyContext, buildStudioContext, buildPerAgentContext, buildRepoManifests } from './finance/context.js';
 import { getLedger } from './finance/ledger.js';
 import { listVentures } from './finance/ventures.js';
 import { planSyncScope } from './movement.js';
@@ -40,6 +42,9 @@ import {
   handleCheckUsage,
   handleCreatePaymentLink,
   handleUpdatePipeline,
+  handleDraftCustomerEmail,
+  handleListDrafts,
+  releaseApprovedDrafts,
   handleSetObjective,
   handleOpenPullRequest,
   handleRevertCommit,
@@ -62,7 +67,7 @@ import {
   handleListApprovedRepos,
 } from './actionHandlers.js';
 import { todayKey, saveDailyReport, getLatestDailyReport } from './dailyReports.js';
-import { sendDailyReportEmail } from './email.js';
+import { sendDailyReportEmail, sendPitchEmail } from './email.js';
 import { publishDailyReport, publishVenture, readFounderSteering } from './workspace/vault.js';
 import { estimateCostUsd, sumUsage, emptyUsage } from './usage.js';
 import { isPlanRequired, getPlan } from './dailyPlan.js';
@@ -237,6 +242,11 @@ export function dailyCycleActionHandlers() {
     // A payment link charges nobody until a person opens it, and the pipeline
     // and objectives are the company's own notebook. None need the founder.
     create_payment_link: (input, ctx) => handleCreatePaymentLink(input, ctx),
+    // Drafting reaches nobody and spends nothing, so it is safe unattended in a
+    // way sending is not — and it is the only outreach work available while the
+    // founder's mailbox config is unfinished.
+    draft_customer_email: (input, ctx) => handleDraftCustomerEmail(input, ctx),
+    list_drafts: (input) => handleListDrafts(input),
     update_pipeline: (input, ctx) => handleUpdatePipeline(input, ctx),
     set_objective: (input, ctx) => handleSetObjective(input, ctx),
     // Finished work that has not landed. Not behind the plan — see
@@ -383,7 +393,15 @@ quick daily check-in, not a full brainstorming session.`;
 export async function runDailyMeeting({ anthropic }) {
   const date = todayKey();
   const startedAt = Date.now();
+  const startedAtIso = new Date(startedAt).toISOString();
   const companyContext = buildCompanyContext();
+
+  // Never throws: a GitHub outage must not take the morning down, and the
+  // manifest is context rather than a gate.
+  const repoManifests = await buildRepoManifests().catch((err) => {
+    console.error('Could not list the linked repos for context:', err.message);
+    return '';
+  });
   // Standing direction matters most here: an unattended run is exactly when
   // the founder isn't around to say "focus on X this week".
   const steering = await readFounderSteering();
@@ -416,7 +434,10 @@ export async function runDailyMeeting({ anthropic }) {
       // when the book-keeping and venture-status actions still aren't.
       actionHandlers: dailyCycleActionHandlers(),
       extraContext: [companyContext, steering].filter(Boolean).join('\n\n'),
-      perAgentContext: buildPerAgentContext,
+      // Fetched once for the whole run rather than per agent, and handed only
+      // to the agents that build. See buildRepoManifests for the week that
+      // paid for this.
+      perAgentContext: (agentId) => buildPerAgentContext(agentId, { repoManifests }),
     });
   } catch (err) {
     leadershipFailed = true;
@@ -478,6 +499,9 @@ export async function runDailyMeeting({ anthropic }) {
       ...unsupportedClaims({ text: studio.text, trace: studio.trace }),
     ],
     proposedVentureIds,
+    // The shape of today's research, not only its conclusions. A pass with no
+    // disconfirming query reads identically whether the idea was good or bad.
+    searchBalance: describeSearchBalance({ since: startedAtIso }),
     business: { revenue, expenses, net },
     usage,
     costUsd: estimateCostUsd(usage),
@@ -492,6 +516,41 @@ export async function runDailyMeeting({ anthropic }) {
   const startedVentures = listVentures().filter((v) => proposedVentureIds.includes(v.id));
   await publishDailyReport({ ...report, proposedVentureNames: startedVentures.map((v) => v.title) });
   for (const venture of startedVentures) await publishVenture(venture);
+
+  // The morning pitch. Deliberately outside the scope check that skips the
+  // Studio on a quiet day: the founder asked for one every morning, and a
+  // provocation does not depend on there having been company news. It starts
+  // nothing, so it is safe to run unattended — there is no propose_venture in
+  // its handler map and it cannot create a venture.
+  if (process.env.DAILY_PITCH !== 'false') {
+    try {
+      const { pitch, note } = await generatePitch({
+        anthropic,
+        runAgent,
+        agents: soloRoster(STUDIO_AGENTS, STUDIO_ROOT),
+        agentId: STUDIO_ROOT,
+      });
+      if (pitch || note) await sendPitchEmail(formatPitchEmail(pitch || {}, { note }));
+    } catch (err) {
+      // Never takes the morning down. It is the least important thing in this
+      // function and the report is what the founder actually needs.
+      console.error('Could not produce the pitch of the day:', err);
+    }
+  }
+
+  // Approved drafts that never went out, usually because the mailbox was not
+  // configured yet when the founder said yes. Nobody is going to remember to
+  // come back and press send on eleven messages the day the config lands, so
+  // the cycle does it.
+  let released = { sent: [], stuck: [], considered: 0 };
+  try {
+    released = await releaseApprovedDrafts({ anthropic });
+    if (released.sent.length) {
+      console.log(`Released ${released.sent.length} approved outreach draft(s).`);
+    }
+  } catch (err) {
+    console.error('Could not release approved drafts:', err);
+  }
 
   try {
     await sendDailyReportEmail(report);

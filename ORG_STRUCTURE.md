@@ -2876,3 +2876,374 @@ sells them. Every "path to €1M" the Studio produces remains an assumption chai
 in the shape of a forecast until someone talks to ten named buyers. The
 engineering above raises the Studio from confident narration to competent desk
 screen; the last step is not an engineering step.
+
+## "There is no clear proactivity"
+
+The founder's words, after a daily report in which every go-to-market action
+was addressed to him. It read as a team with no initiative. It was not. Two
+structural facts made proactive selling impossible, and the report was what a
+competent team produces when it can see the right move and cannot perform it.
+
+**Nobody who sells could see the internet.** `RESEARCH_TOOLS` reached the
+Solutions Architect and the SEO Specialist — one technical role, one content
+role — and nobody in the commercial line. So when the CMO recommended "direct
+outreach to people already hand-rolling this problem in public", that was work
+no agent in the company could do. The only honest thing left was to recommend
+the founder do it, which is what every GTM section of every report had been
+doing.
+
+**And the pipeline refused a lead without an email.** `updatePipeline` opened
+with `if (!address.includes('@')) throw new Error('email is required')`. A
+prospect found the way prospects are actually found is a username and a URL.
+The company's only representation of a customer demanded the one field you do
+not have at discovery time, so the list could not be recorded even if it could
+have been found. Faced with that, the team set an objective with a due date —
+scheduling is what is left when acting is impossible.
+
+Both are the same disease this file has now documented seven times: a
+capability behind a door nobody can open. The tell is always identical — the
+failure looks like judgement from the outside.
+
+### The fix, and why it was those two agents
+
+The Sales & Commercial Manager and the CMO got `RESEARCH_TOOLS`. Both already
+ran on the frontier tier for other reasons, so attaching hosted tools changed
+no model and cost nothing. The Marketing Manager did not, deliberately: it runs
+on the cheap tier, and a hosted tool would have promoted it at roughly 15x for
+a role that writes copy rather than finds people. An unexplained omission is
+how the next person "fixes" something by accident, so it is explained in the
+code and asserted in a test.
+
+A lead can now be keyed by a `handle` — a GitHub username, a forum handle, a
+profile URL — with the `source` that found it. The email stays required for
+*sending*: `authorizeOutreach` is untouched and a handle can never match an
+allowlist. Finding someone and writing to them are different acts, and only the
+second reaches a stranger. Tests assert both halves of that seam, including
+that a handle-keyed lead becomes writable the moment a real address lands on
+the row.
+
+Finding the address later moves the row rather than duplicating it. That is the
+normal path, not an edge case: a list that silently double-counts everyone it
+successfully researched would be worse than no list.
+
+### The instruction that follows from having the tools
+
+> Never end a turn having recommended that someone build a prospect list —
+> build it; the tools are yours and the founder is not a research assistant.
+> And never report a segment or a channel you have not looked at: "developers
+> who travel" is a guess until you can name five of them and link to what each
+> one said.
+
+A prompt is a request and code is a rule, so the prompt is the smaller half of
+this change. But it is the half that closes the loop: the tools arrived, and
+without it the habit of recommending would have survived them.
+
+### The one still hiding in the same report
+
+*"Bonus find: full API-key auth + FastAPI layer already exists — nobody had
+flagged it."* A week went into building auth that was already written. Same
+disease, engineering lane, and the read-the-repo tools that should have caught
+it landed only recently. Worth watching whether the next instance is caught by
+them or by accident.
+
+## The week spent building what was already committed
+
+From the same report that prompted the section above, filed as good news:
+
+> Bonus find: full API-key auth + FastAPI layer already exists — nobody had
+> flagged it.
+
+A week went into writing an auth layer that was in the repo the whole time.
+Nobody had flagged it, and nobody could have. `list_repo_files` had existed for
+a while — but **a tool only helps an agent that already suspects it needs one**,
+and an agent about to write a file from scratch has no reason to suspect
+anything. The capability was present; the door was one nobody thought to open.
+Eighth instance.
+
+A guard on the commit would not have caught this. The team never got as far as
+committing — they spent the week failing to create a file that already existed.
+The catch has to land before the work starts, not at the write.
+
+So the file list stops being an answer to a question and becomes a fact in the
+room. `buildRepoManifests()` lists every file in every linked repo, once per
+cycle, and `buildPerAgentContext` hands it to the three agents that build —
+Engineering Lead, CTO, Solutions Architect. Nobody else pays tokens for it.
+With `src/auth.py` on the screen, "let's build auth.py" is not a sentence
+anyone can write.
+
+### The distinction the whole thing turns on
+
+An unreachable repo must never read as an empty one. Those are the same
+sentence to a reader — a blank list — and one of them means *go ahead and build
+it*. So the four states are four different messages:
+
+| State | What it says |
+|---|---|
+| Files found | the list, plus "open it with `read_repo_file` first" |
+| Repo genuinely empty (409) | "exists and is empty. Nothing has been built yet." |
+| Branch missing (404) | "a list of nothing, not an empty repo. Check the branch." |
+| Call failed | "could not be listed. Treat what is in it as unknown — **not as empty**." |
+
+A truncated listing says so too, so an absent path is never read as proof of
+absence. Each of those is a test, because the failure they prevent is the one
+that already cost a week and it does not announce itself.
+
+One repo failing does not lose the others, and the whole call is caught at both
+call sites: a GitHub outage must not take the morning down, since this is
+context rather than a gate.
+
+## Outreach written before it can be sent
+
+The company could build a prospect list and could not email anyone: SMTP and
+the allowlist are founder configuration, and until they exist every send
+refuses. That left the commercial side with nothing to do but wait, which is
+how a week produces a report full of recommendations and no work.
+
+So drafting is separated from sending. `draft_customer_email` parks a real
+message: no scope, no cap, no cooldown, because it reaches nobody and costs
+nothing. The team can write fifteen tonight. The founder reads them on a phone
+— `DRAFTS` to list, `DRAFT d1` to read one in full, `SEND d1` to release, `BIN
+d1 <reason>` to bin it. Short ids because these are typed one-handed; a uuid is
+something you paste and there is nothing to paste from in a WhatsApp thread.
+
+### Approval is an extra gate, never a substitute for one
+
+This is the rule the whole design turns on, and the one that would be easiest
+to lose. Saying yes to a draft does not widen the allowlist, lift a cap, skip
+the compliance footer or bypass the CEO's veto. `releaseDraft` calls the same
+handler an agent calls, so every check runs exactly as it would have — the
+founder's yes is a second opinion on the *message*, on top of the standing
+grant, not in place of it. A queue that dissolved those checks would be a way
+around them wearing a helpful face.
+
+Tests come at that from several angles on purpose: approving a draft to an
+address outside the allowlist still refuses, approving during a halt still
+refuses, and a released draft spends the cap like any other send because it
+*is* any other send.
+
+### Approved and unsent is a normal state, not a failure
+
+The usual reason a draft is stuck is that the mailbox was not configured when
+the founder approved it. That is a fact about the world, not a verdict on the
+message — so a refused send keeps the draft approved, records why, and leaves
+it in the queue. `releaseApprovedDrafts()` runs in the daily cycle and sends
+whatever can now go, because nobody is going to remember to come back and press
+send on eleven messages the day the config lands.
+
+The WhatsApp reply says as much rather than letting a refusal read as a
+rejection: *"It stays in the queue and goes out on its own once that is fixed —
+you do not need to approve it again."*
+
+Two smaller decisions worth recording. A draft needs a real address, so a lead
+that is still only a handle stays in the pipeline until someone finds one — and
+the refusal says exactly that rather than just "no". And the queue is in the
+agents' context, because a draft written yesterday is invisible to the turn
+that starts today, and an invisible draft gets written again every morning.
+
+## What the team went looking for
+
+The measured confirmation bias in research agents is not in how evidence gets
+interpreted. Across eleven models it sits in **which evidence gets selected** —
+agents propose searches that confirm rather than falsify. That is why reading
+the output cannot catch it: every citation shown genuinely supports the claim,
+because the disconfirming sources were never retrieved. Ten searches beginning
+"benefits of" and five beginning "why did X fail" produce write-ups that read
+identically.
+
+So `searchLog.js` records the queries. Captured from the model's own
+`server_tool_use` blocks in the runner, not reported by the agent — a
+self-reported search history is a claim, and the point of this file is to have
+something that is not. The query text exists nowhere else: the hosted
+`web_search` tool runs inside Anthropic's infrastructure and the agent never
+writes its queries into its own answer.
+
+`SEARCHES` shows the founder the last twenty-five with a `↯` against the ones
+that went looking for the counter-case, and the daily report carries the ratio
+above the report rather than after it, for the same reason the unsupported-claim
+warning does: how the research was shaped decides what the conclusions are
+worth, and it cannot be recovered by reading them.
+
+The one case named out loud is a pass with **no** disconfirming query: *"the
+citations would read the same way if the idea were bad."* That is the state the
+output is structurally incapable of revealing.
+
+Two deliberate limits. The classifier is crude regex matching, and it reports a
+ratio rather than a verdict — there is no correct percentage, since a pass that
+is *entirely* disconfirming never checked whether the thing works. And it is
+explicitly not a score anybody is judged on: an agent could satisfy a regex
+without changing what it looked for, and the day this becomes a target is the
+day it stops measuring anything.
+
+## Checking our own homework
+
+Every fix this week — the search budget, the calculator, the critic's
+retrieval, the enumerable sizing — was made on the strength of published
+evidence about what goes wrong in research agents. None of it was measured
+*here*. The published band for claim-level citation support runs **39% to 77%**
+across deep-research systems, a fifty-three point spread, and this company had
+no idea where in it sat.
+
+`FACTCHECK` samples claims the team has actually written over the last
+fortnight, opens the page each one cites, and asks whether that page says what
+the claim says it says. The three dimensions are kept apart deliberately,
+because collapsing them is how a system scores well on the easy two: does the
+link resolve, is the page on topic, and does it support *this* claim. Models
+are reliably good at the first two. The third is what separates systems.
+
+The judge is the cheap tier on purpose — small models are measurably good at
+verification against retrieved evidence, and it keeps a full pass affordable
+enough to run more than once.
+
+### Three ways it refuses to flatter itself
+
+**An unparseable judgement is never support.** If the model answers "well, it
+depends", that is `UNJUDGED` and it leaves the denominator. Defaulting it to
+SUPPORTED would inflate the only number the file exists to produce.
+
+**An unreachable source is not a failed claim.** Dimension one failing makes
+the other two unanswerable rather than false — blaming the claim for the
+network would be measuring the wrong thing. Those are reported separately, with
+the observation that a citation nobody can follow is not much of a citation.
+
+**"Nothing could be judged" never renders as 0%.** `supportRate` is `null`
+rather than zero in that case. The two are different findings and one of them
+is an indictment; a number that conflated them would be worse than no number.
+
+And the rate is always printed against the 39–77% band, because a bare
+percentage means nothing without knowing what good looks like.
+
+### What it cannot see
+
+It measures claims that carry a citation. A confident sentence with no URL
+attached is invisible to it — and that is the more dangerous kind. `claimCheck.js`
+catches a different slice (claimed real-world acts with no action in the
+trace). Neither substitutes for the other, and an empty result is reported as a
+finding rather than a blank: an uncited claim cannot be checked by anyone,
+including the team that made it.
+
+## One pitch a morning
+
+The founder asked for an elevator pitch every day at 8am — a revolutionary
+idea, argued as if to an investor. The obvious build is a prompt and a cron.
+That build fails in about three weeks, for a reason worth writing down.
+
+Idea homogenisation in LLMs is **collective, not individual**: each person gets
+more ideas, and everyone gets the *same* ideas. The effect **survives prompt
+and temperature modification** — "be more original" does not fix it. And inside
+a single context, early outputs constrain later ones, so a generator that never
+sees what it said before circles the same attractor forever. Pioneer Square
+Labs generated 160,000 candidate ideas, culled them to 10,000, and needed
+automated near-duplicate detection as core pipeline infrastructure to do it: a
+16:1 cull for similarity alone.
+
+So the defence is structural rather than instructional. Past pitches go into
+the prompt *and* every new pitch is checked against them by token overlap
+before it is sent. The prompt half is not useless — it is just not sufficient,
+and a generator with no memory is guaranteed to repeat rather than merely
+likely to.
+
+A repeat is re-asked once, with the match named: *"too close to SleepSync from
+the 14th — a different buyer, a different problem, not the same idea renamed"*.
+Naming it is what makes the instruction usable. A second repeat sends **no
+pitch**, and says so:
+
+> Both attempts came back close to "SleepSync", so nothing new was actually
+> generated. That usually means the recent pitches have boxed the generator in,
+> and a steer from you would break it out.
+
+Sending the repeat anyway would be the easy behaviour and the wrong one: a
+founder who reads the same idea twice stops reading.
+
+The similarity check is deliberately crude — token overlap, with startup filler
+(`platform`, `agent`, `solution`, `market`) in the stopword list so generic
+vocabulary cannot manufacture a match. Embeddings would be better and would
+cost a call per comparison forever; this catches the failure that actually
+happens, which is not a subtle paraphrase but the same idea with the nouns
+swapped.
+
+### Two things that keep it honest
+
+**It cannot start anything.** There is no `propose_venture` in its handler map,
+so a daily idea generator cannot quietly fill the portfolio, and the email says
+as much out loud: *"This is a provocation, not a proposal."*
+
+**Every pitch carries its own counter-case.** `what_would_have_to_be_true` and
+`how_to_kill_it_this_week` are required fields. A daily "revolutionary idea"
+generator is a hype machine by default — this codebase already has
+`claimCheck.js` because claims outran reality once — and those two slides are
+what make it worth reading on day thirty rather than day one. The path to €1M
+must be arithmetic, not a TAM, for the same reason it must be on a venture
+proposal.
+
+It rides the existing 8am scheduler rather than a second one, and runs
+*outside* the scope check that skips the Studio on a quiet day: the founder
+asked for one every morning, and a provocation does not depend on there having
+been company news. `DAILY_PITCH=false` switches it off. A failure never takes
+the morning down — the report is what the founder actually needs.
+
+### Two bugs the tests caught, both on the no-pitch path
+
+The retry reached into the previous attempt's candidate to write its corrective
+steer, which crashes when the first attempt produced nothing at all rather than
+a repeat. And `formatPitchEmail` dereferenced a pitch that does not exist on a
+no-pitch morning. Both live on the path nobody watches, which is exactly why
+the no-pitch case got its own tests.
+
+## Voice to voice, in the founder's own language
+
+Half of this already worked. A WhatsApp voice note was downloaded and run
+through Whisper, and the words reached the team — a founder could brief the
+company while walking. The other half did not exist, and the gap was worse than
+missing: the only text-to-speech in the codebase lives in the browser client,
+speaking through the viewer's own device and unreachable from a webhook. So
+somebody who sent a voice note *because their hands were full* got a wall of
+text back.
+
+And nothing handled language at all. A Spanish voice note was transcribed
+correctly and answered in English, because every system prompt is written in
+English and that is what the model matches. A translation was happening —
+silently, in the wrong direction, and nobody asked for it.
+
+### The outbound leg
+
+`speech.js` synthesises the reply on the same `OPENAI_API_KEY` the
+transcription already uses. That mattered: everything else here could be
+finished and one missing credential would leave all of it inert.
+
+Opus in an ogg container, because that is what WhatsApp renders as a playable
+voice note. An mp3 arrives as a file you download, and that difference decides
+whether the feature gets used at all.
+
+**The text always goes out; the voice note is added on top, never instead of.**
+The spoken part carries the top of the answer and the message carries all of
+it, so a TTS outage costs the audio and never the answer — losing a reply to a
+speech failure would be a worse bug than never having built this. A cut
+excerpt ends at a sentence and says "the rest is in the message", because a
+voice note that stops mid-thought reads as a bug.
+
+### Two mechanisms for language, because they fail differently
+
+**Mirror** (the default) answers in whatever language the founder used, taken
+from Whisper's own detection rather than a guess. When Whisper is not
+confident, or reports a language this app has no name for, **nothing is
+instructed at all** — a model told "reply in zz" will obey, so silence is safer
+than a guess. An English question to an English-speaking team gets no
+instruction either, since that would be tokens spent to change nothing.
+
+**Pinned** (`REPLY_LANGUAGE=es`) answers in one language whatever comes in.
+This is the actual translation case: brief the company in one language, read
+the answer in another.
+
+Either way, product names, commands and ventureIds are named as things *not* to
+translate — a helpfully localised `v_1789201169411_ekka7z` would be useless.
+
+The instruction goes in the prompt rather than through a translation API on the
+way out. Translating a finished English answer produces English sentences
+wearing Spanish words; idiom, register and the company's own vocabulary all
+survive better when the answer is composed in the target language to begin
+with.
+
+One breaking change worth noting: `transcribeAudio` now returns
+`{ text, language }` rather than a bare string, since the language is the thing
+that makes answering in it possible. Both call sites and the existing test were
+updated with it.
