@@ -220,3 +220,72 @@ test('a pasted list is diagnosed as a list, not as an unusable model', async () 
     else process.env.GEMINI_MODEL = savedModel;
   }
 });
+
+// The probe listed three OpenAI models and used four. The one it left out was
+// the one that speaks — so an account that could transcribe but not synthesise
+// read as fully working, and the founder learned otherwise by sending a voice
+// note and getting only text back. These two pin both halves: the gap must be
+// caught, and catching it must not cost the working case its green.
+function openAIStub(available) {
+  return async (url) =>
+    String(url).includes('api.openai.com/v1/models')
+      ? { ok: true, status: 200, json: async () => ({ data: available.map((id) => ({ id })) }) }
+      : { ok: false, status: 404, text: async () => '' };
+}
+
+async function withOpenAIEnv(env, run) {
+  const savedFetch = global.fetch;
+  const names = ['OPENAI_API_KEY', 'OPENAI_MODEL', 'OPENAI_FALLBACK_MODEL', 'OPENAI_TRANSCRIBE_MODEL', 'OPENAI_SPEECH_MODEL'];
+  const previous = Object.fromEntries(names.map((n) => [n, process.env[n]]));
+  Object.assign(process.env, env);
+  try {
+    await run();
+  } finally {
+    global.fetch = savedFetch;
+    for (const n of names) {
+      if (previous[n] === undefined) delete process.env[n];
+      else process.env[n] = previous[n];
+    }
+  }
+}
+
+test('an account that cannot use the speech model is not reported as ready for voice', async () => {
+  await withOpenAIEnv(
+    {
+      OPENAI_API_KEY: 'k',
+      OPENAI_MODEL: 'gpt-4o-mini',
+      OPENAI_FALLBACK_MODEL: 'gpt-4o',
+      OPENAI_TRANSCRIBE_MODEL: 'whisper-1',
+      OPENAI_SPEECH_MODEL: 'gpt-4o-mini-tts',
+    },
+    async () => {
+      // Everything present except the voice. Before this, the probe passed.
+      global.fetch = openAIStub(['gpt-4o-mini', 'gpt-4o', 'whisper-1']);
+      const { getIntegrationStatus } = await import('../integrations.js');
+      const { openai } = await getIntegrationStatus();
+      assert.equal(openai.ok, false, 'half a voice path is not a working voice path');
+      assert.match(openai.detail, /gpt-4o-mini-tts/, 'names the model it cannot use');
+      assert.match(openai.detail, /OPENAI_SPEECH_MODEL/, 'and the variable that fixes it');
+    }
+  );
+});
+
+test('all four models present reads as ok and says the reply is spoken, not just heard', async () => {
+  await withOpenAIEnv(
+    {
+      OPENAI_API_KEY: 'k',
+      OPENAI_MODEL: 'gpt-4o-mini',
+      OPENAI_FALLBACK_MODEL: 'gpt-4o',
+      OPENAI_TRANSCRIBE_MODEL: 'whisper-1',
+      OPENAI_SPEECH_MODEL: 'gpt-4o-mini-tts',
+    },
+    async () => {
+      global.fetch = openAIStub(['gpt-4o-mini', 'gpt-4o', 'whisper-1', 'gpt-4o-mini-tts']);
+      const { getIntegrationStatus } = await import('../integrations.js');
+      const { openai } = await getIntegrationStatus();
+      assert.equal(openai.ok, true);
+      assert.match(openai.detail, /whisper-1/, 'the listening half');
+      assert.match(openai.detail, /gpt-4o-mini-tts/, 'and the speaking half');
+    }
+  );
+});
