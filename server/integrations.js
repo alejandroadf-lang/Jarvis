@@ -23,6 +23,7 @@ import { isGithubConfigured } from './deploy/github.js';
 import { isWorkspaceConfigured, workspaceConfig } from './workspace/vault.js';
 import { isWhatsAppConfigured, allowedNumbers, GRAPH_API } from './channels/whatsapp.js';
 import { isOpenAIConfigured, chatModel, fallbackModel, transcribeModel } from './agents/openai.js';
+import { speechModel } from './speech.js';
 import { isGeminiConfigured, geminiModel, listModelsUrl } from './agents/gemini.js';
 import { MODELS, CHEAP_TIER } from './agents/models.js';
 import { readSecret } from './env.js';
@@ -222,21 +223,31 @@ async function probeOpenAI() {
 
     const body = await res.json().catch(() => ({}));
     const available = new Set((body?.data || []).map((m) => m.id));
-    const missing = [chatModel(), fallbackModel(), transcribeModel()].filter(
+    // The speech model belongs in this list as much as the other three.
+    // Leaving it out meant this check could report the key accepted and voice
+    // notes working while the model that actually speaks was unavailable to
+    // the account — the failure then surfaced as a silent missing voice note
+    // and a line in the server log, which is the one place the founder isn't
+    // looking. A readiness check has to cover the whole capability it claims.
+    const missing = [chatModel(), fallbackModel(), transcribeModel(), speechModel()].filter(
       (name) => available.size > 0 && !available.has(name)
     );
     if (missing.length) {
       return {
         configured: true,
         ok: false,
-        detail: `Key works, but this account can't use ${missing.join(', ')}. Set OPENAI_MODEL / OPENAI_FALLBACK_MODEL / OPENAI_TRANSCRIBE_MODEL to names it can.`,
+        detail:
+          `Key works, but this account can't use ${missing.join(', ')}. Set OPENAI_MODEL / OPENAI_FALLBACK_MODEL / ` +
+          'OPENAI_TRANSCRIBE_MODEL / OPENAI_SPEECH_MODEL to names it can.',
       };
     }
 
     return {
       configured: true,
       ok: true,
-      detail: `Key accepted — voice notes transcribe with ${transcribeModel()}, and ${fallbackModel()} covers an Anthropic outage.`,
+      detail:
+        `Key accepted — voice notes transcribe with ${transcribeModel()} and are answered aloud with ${speechModel()}. ` +
+        `${fallbackModel()} covers an Anthropic outage.`,
     };
   } catch (err) {
     return { configured: true, ok: false, detail: `Couldn't reach OpenAI: ${err.message}` };

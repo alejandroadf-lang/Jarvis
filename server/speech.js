@@ -99,3 +99,39 @@ export async function synthesize(text, { voice = speechVoice(), instructions = '
   const buffer = Buffer.from(await response.arrayBuffer());
   return { buffer, mimeType: 'audio/ogg', filename: 'reply.ogg' };
 }
+
+/**
+ * What the team is told when the founder spoke instead of typed.
+ *
+ * Without this the transcription is invisible: the agents receive ordinary
+ * text, and when asked about voice they answer from a self-model that says
+ * they have none — "I only work from text, no audio or voice channel exists
+ * on my end", sent by a company that had just listened to a voice note and
+ * was about to answer in one. A capability nobody knows they have is a
+ * capability the founder gets told does not exist.
+ *
+ * It also changes the right shape for the answer. Only the first
+ * `spokenLimit()` characters are read aloud, so the conclusion has to be at
+ * the top — a reply that builds to its point loses the point to the cut.
+ *
+ * Empty for a typed message, which is most of them.
+ */
+export function spokenReplyInstruction({ arrivedAsVoice = false } = {}) {
+  if (!arrivedAsVoice) return '';
+
+  const spoken = isSpeechConfigured() && process.env.VOICE_REPLIES !== 'false';
+  if (!spoken) {
+    return (
+      'The founder sent this as a voice note and it was transcribed for you, so you did hear them — say so ' +
+      'plainly if it comes up. Your answer goes back as text only, because spoken replies are switched off.'
+    );
+  }
+
+  return (
+    'The founder sent this as a voice note. It was transcribed for you, so you did hear them: never tell them ' +
+    'you cannot receive audio or have no voice channel — you have both, and this message came through one. ' +
+    `Your answer is sent as text and the first ${spokenLimit()} characters are also read back to them aloud. ` +
+    'So put the answer in the opening sentences and the detail after it. Anything that only makes sense on a ' +
+    'screen — a table, a list of ids, a long number — belongs below that opening, not inside it.'
+  );
+}
