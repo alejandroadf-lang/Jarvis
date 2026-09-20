@@ -3294,3 +3294,52 @@ they have is a capability the founder gets told does not exist.
 This is the same failure as the eight before it, one layer further in. Those
 were capabilities behind doors the agents could not open. This was a capability
 behind a door with no sign on it: open, in use, and unmarked.
+
+### Instance ten: a research pass promised by an agent with no eyes
+
+The voice fix shipped, and the next real exchange produced this offer from the
+CEO:
+
+> Want me to have CTO do a real pass on Amadeus's developer/partner API
+> (self-service travel data access, cost, terms) and report back with actual
+> findings?
+
+The CTO has no web access. Four agents carry `RESEARCH_TOOLS` — the CMO, the
+Solutions Architect, the Sales & Commercial Manager and the SEO Specialist —
+and the CTO is not among them.
+
+What makes this instance worth its own entry is that the capability was not
+missing and the path was not broken. The Solutions Architect *reports to the
+CTO* and can fetch the page. Every piece was in place. Nothing routed it,
+because nothing told the CTO that the thing it lacked was held by somebody
+sitting directly beneath it.
+
+The cost of that gap is specific. The same reply that made the offer had just
+refused to guess — "rather than me guessing at facts I don't have" — which is
+exactly the judgment we want. Then it promised findings from an agent whose
+only source is training data. Had the founder said yes, stale recall would have
+arrived under a label the founder had been told meant fetched fact, and the
+refusal to guess would have made it more credible, not less.
+
+`buildResearchRoutingContext()` derives the note from the org chart rather than
+writing it into each prompt, so moving search to a different agent cannot leave
+a sentence behind claiming otherwise. Three outcomes:
+
+- **Holds search itself** — nothing. The instruction would be false for it, and
+  telling an agent it cannot see the internet is how you stop it looking.
+- **Has a report that can search** — named explicitly, plus the one bar that
+  matters: never promise the founder findings you intend to produce from
+  memory.
+- **Has reports but none can search** — told the shape of its own gap and to
+  send the request back to the CEO rather than accept it. This is the CFO, the
+  other name in that offer. Silence here is how an agent accepts a task it has
+  no way to carry out.
+
+A leaf gets nothing: it is consulted on its own subject rather than asked to
+run a research pass, and the note on every specialist on every turn is a real
+cost for an instruction they cannot act on.
+
+The pattern by now is not about any one missing wire. It is that this company
+keeps building working capabilities and forgetting to tell anyone they exist —
+and an agent reporting honestly on a self-model nobody updated will mislead the
+founder with perfect sincerity.
