@@ -52,17 +52,77 @@ export function spokenLimit() {
  * stops mid-thought with no explanation reads as a bug, and the founder would
  * be right to think something broke.
  */
+// How much speech a character is worth, by script.
+//
+// The budget was a flat character count, which silently meant "however long
+// 700 English characters take". 700 Chinese characters is several minutes:
+// each one is a syllable or a whole word, where a Latin character is a
+// fraction of one. Thai sits in between and writes without spaces, so it
+// overran too. The limit is a listening budget, so it is spent in units of
+// speech rather than units of storage.
+const CJK = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]/;
+const THAI_LAO_KHMER_MYANMAR = /[\u0e00-\u0eff\u1780-\u17ff\u1000-\u109f]/;
+
+function speechWeight(char) {
+  if (CJK.test(char)) return 3;
+  if (THAI_LAO_KHMER_MYANMAR.test(char)) return 1.6;
+  return 1;
+}
+
+/** How far into `body` the listening budget reaches. */
+function budgetedEnd(body, limit) {
+  let spent = 0;
+  for (let i = 0; i < body.length; i += 1) {
+    spent += speechWeight(body[i]);
+    if (spent > limit) return i;
+  }
+  return body.length;
+}
+
+// Sentence enders. The Latin ones need a space after them so "29.00" and
+// "Dr. Vega" are not sentence breaks; the CJK and Indic ones are unambiguous
+// on their own and are written with no following space at all — which is why
+// a Chinese reply used to find no break and get cut mid-clause.
+const HARD_STOPS = ['。', '！', '？', '…', '۔', '।', '॥', '॰'];
+const LATIN_STOPS = ['. ', '? ', '! ', '." ', '?" ', '!" '];
+
+function lastSentenceEnd(window) {
+  let best = -1;
+  for (const stop of LATIN_STOPS) {
+    const at = window.lastIndexOf(stop);
+    if (at > best) best = at; // index of the punctuation itself
+  }
+  for (const stop of HARD_STOPS) {
+    const at = window.lastIndexOf(stop);
+    if (at > best) best = at;
+  }
+  return best;
+}
+
 export function spokenExcerpt(text, limit = spokenLimit()) {
   const body = String(text || '').replace(/\s+/g, ' ').trim();
   if (!body) return { text: '', truncated: false };
-  if (body.length <= limit) return { text: body, truncated: false };
 
-  const window = body.slice(0, limit);
-  const lastStop = Math.max(window.lastIndexOf('. '), window.lastIndexOf('? '), window.lastIndexOf('! '));
+  const end = budgetedEnd(body, limit);
+  if (end >= body.length) return { text: body, truncated: false };
+
+  const window = body.slice(0, end);
+  const lastStop = lastSentenceEnd(window);
   // Only break at a sentence if one lands reasonably late; otherwise a single
   // long opening sentence would be cut to almost nothing.
-  const cut = lastStop > limit * 0.5 ? lastStop + 1 : window.lastIndexOf(' ');
-  return { text: body.slice(0, cut > 0 ? cut : limit).trim(), truncated: true };
+  let cut = lastStop > end * 0.5 ? lastStop + 1 : -1;
+
+  // No usable sentence break: fall back to a word boundary, and then — for
+  // Thai, Chinese and Japanese, which are written without spaces and where
+  // lastIndexOf(' ') is always -1 — to the budget itself. A character cut in
+  // those scripts is a normal line break, not the mid-word break it would be
+  // in English.
+  if (cut <= 0) {
+    const lastSpace = window.lastIndexOf(' ');
+    cut = lastSpace > end * 0.5 ? lastSpace : end;
+  }
+
+  return { text: body.slice(0, cut).trim(), truncated: true };
 }
 
 /**

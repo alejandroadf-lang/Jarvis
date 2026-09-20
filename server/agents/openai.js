@@ -94,9 +94,16 @@ export async function transcribeAudio(audio, filename = 'voice.ogg') {
   const data = await response.json();
   return {
     text: (data?.text || '').trim(),
-    // ISO-639-1 where Whisper is confident, empty where it is not. Empty is a
-    // real answer: it means answer in whatever the text looks like rather than
-    // guessing a language and being confidently wrong in it.
+    // Whatever Whisper calls the language it heard, lowercased and otherwise
+    // untouched. This was labelled ISO-639-1 and is not: whisper-1 returns an
+    // English word ("spanish"), and the consumer read the first two letters of
+    // it, so half the languages resolved to nothing and were answered in
+    // English. languageName() now accepts either form — the label was the bug,
+    // so this one describes the value instead of asserting a format.
+    //
+    // Empty where Whisper is not confident, which is a real answer: it means
+    // answer in whatever the text looks like rather than guessing a language
+    // and being confidently wrong in it.
     language: String(data?.language || '').trim().toLowerCase(),
   };
 }

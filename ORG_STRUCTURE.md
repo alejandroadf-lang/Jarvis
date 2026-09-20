@@ -3343,3 +3343,60 @@ The pattern by now is not about any one missing wire. It is that this company
 keeps building working capabilities and forgetting to tell anyone they exist —
 and an agent reporting honestly on a self-model nobody updated will mislead the
 founder with perfect sincerity.
+
+### Instance eleven: multilingual as a coin flip
+
+The founder asked for a real multilingual voice experience. The path was
+already built — transcription, language detection, a mirroring instruction, a
+translation mode, a voice. Four separate defects meant it worked for some
+languages and silently did the wrong thing for others, and no test noticed
+because every test agreed with the code's own label rather than with the API.
+
+**The detection never matched the lookup.** `transcribeAudio` documented its
+return value as "ISO-639-1 where Whisper is confident". whisper-1's
+`verbose_json` returns an English word — `"spanish"`, not `"es"` — and
+`languageName()` read the first two characters of it. That made the whole
+feature a coin flip:
+
+| Whisper says | Read as | Result |
+|---|---|---|
+| `french`, `thai`, `japanese`, `korean`, `italian`, `russian`, `arabic` | `fr`, `th`, `ja`… | worked, by accident |
+| `spanish` | `sp` | not in the table → answered in English |
+| `german` | `ge` | not in the table → answered in English |
+| `portuguese`, `polish` | `po` | not in the table → answered in English |
+| `chinese` | `ch` | not in the table → answered in English |
+| `dutch` | `du` | not in the table → answered in English |
+
+The languages that worked did so because their English names happen to begin
+with their own ISO codes. The one bug the feature exists to prevent — a Spanish
+voice note answered in English — was alive inside it, and the tests all passed
+`'es'` because they were written from the label.
+
+`languageName()` now takes either form, plus Whisper's own alternative
+spellings and BCP-47 tags matched **by shape** (`pt-BR`, `zh-Hans`) rather than
+by taking a prefix, which is the distinction the original bug turned on.
+
+**The voice was told the wrong language in the translation case.** With
+`REPLY_LANGUAGE=es` and an English question, the text reply is Spanish while
+Whisper reports `english` — and `english` is what the TTS was told to speak.
+`spokenLanguage()` resolves pinned-beats-detected, so the voice now speaks the
+language the words are actually in.
+
+**The cut notice was hardcoded English.** A Thai voice note ended with an
+English sentence in a Thai voice. That sentence appears at the one moment the
+reply admits it is incomplete, which is the worst possible place to break the
+illusion. Translated for the languages we can check, falling back to English
+for the rest — a mistranslated apology is worse than a clearly foreign one.
+
+**The length budget was script-blind.** 700 characters is about forty seconds
+of English and several minutes of Chinese, because a CJK character is a
+syllable or a whole word where a Latin one is a fraction of one. The budget is
+now spent in units of speech: CJK weighted 3×, Thai and its neighbours 1.6×.
+And the excerpt could not find a sentence break in those scripts at all — it
+searched for `. ` with a trailing space, while Chinese writes `。` with none and
+Thai writes no sentence punctuation and no spaces, so `lastIndexOf(' ')`
+returned −1 for the entire string and the reply was cut mid-word.
+
+What ties these four together is the same thing as the eight before: each piece
+worked, and the seam between two pieces was never checked against reality. A
+label said ISO-639-1, and everything downstream believed it.

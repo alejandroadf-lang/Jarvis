@@ -121,7 +121,7 @@ import {
 } from './dailyPlan.js';
 import { isOpenAIConfigured, transcribeAudio } from './agents/openai.js';
 import { isSpeechConfigured, synthesize, spokenExcerpt, spokenReplyInstruction } from './speech.js';
-import { replyLanguageInstruction, describeLanguageSetting } from './language.js';
+import { replyLanguageInstruction, describeLanguageSetting, spokenLanguage, truncationNotice } from './language.js';
 import { listWeeklyReflections, getWeeklyReflection, getLatestWeeklyReflection } from './weeklyReflections.js';
 import { startWeeklyReflectionScheduler, runWeeklyReflectionNow, isWeeklyReflectionRunning } from './weeklyScheduler.js';
 import { startInboxWatcher } from './inboxWatch.js';
@@ -844,11 +844,17 @@ async function replyToWhatsApp(message, reply, { asVoice = false, language = '' 
   try {
     const { text: spoken, truncated } = spokenExcerpt(reply);
     if (!spoken) return;
-    const body = truncated ? `${spoken} The rest is in the message.` : spoken;
+    // Which language is actually being spoken — which is not always the one
+    // the founder used. With REPLY_LANGUAGE pinned, the text reply is in the
+    // pinned language while Whisper reports what it heard, and the voice was
+    // being told to speak the wrong one of the two.
+    const spokenName = spokenLanguage({ detected: language });
+    const body = truncated ? `${spoken} ${truncationNotice(spokenName)}` : spoken;
     const { buffer, mimeType, filename } = await synthesize(body, {
-      // Whisper reports the language it heard; saying it back lets the voice
-      // keep the accent rather than reading Spanish with an English mouth.
-      instructions: language ? `Speak naturally in ${language}.` : '',
+      // Saying the language back lets the voice keep the accent rather than
+      // reading Spanish with an English mouth. A canonical name, never the raw
+      // detection value — "Speak naturally in es" instructs nothing.
+      instructions: spokenName ? `Speak naturally in ${spokenName}.` : '',
     });
     await sendWhatsAppAudio(message.from, buffer, { mimeType, filename });
   } catch (err) {
