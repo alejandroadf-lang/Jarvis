@@ -3214,6 +3214,12 @@ Opus in an ogg container, because that is what WhatsApp renders as a playable
 voice note. An mp3 arrives as a file you download, and that difference decides
 whether the feature gets used at all.
 
+This was the one part no test could settle. The unit tests prove the two-step
+upload-then-send shape against a mock, and a mock will accept any bytes you
+hand it — only Meta can say whether the container is really what it wants.
+Confirmed in production on 2026-09-20: the first live voice note came back as a
+playable voice note, not an attachment.
+
 **The text always goes out; the voice note is added on top, never instead of.**
 The spoken part carries the top of the answer and the message carries all of
 it, so a TTS outage costs the audio and never the answer — losing a reply to a
