@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import path from 'node:path';
+import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 import Anthropic from '@anthropic-ai/sdk';
 import { runAgent } from './agents/agentRunner.js';
@@ -73,7 +74,7 @@ import { getProfitShare, listContributions, recordContribution } from './finance
 import { verifyStripeSignature, interpretEvent } from './payments.js';
 import { recordPayment, getVenture as getVentureForPayment } from './finance/ventures.js';
 import { addTransaction as addLedgerTransaction } from './finance/ledger.js';
-import { sendPaymentEmail } from './email.js';
+import { sendPaymentEmail, sendCallSummary } from './email.js';
 import {
   isWhatsAppConfigured,
   verifyWebhookChallenge,
@@ -121,6 +122,8 @@ import {
 } from './dailyPlan.js';
 import { isOpenAIConfigured, transcribeAudio } from './agents/openai.js';
 import { isSpeechConfigured, synthesize, spokenExcerpt, spokenReplyInstruction } from './speech.js';
+import { attachCallStream, answerCallTwiml } from './realtime/twilioBridge.js';
+import { refuseCall, describeCalling, callMinutesRemaining } from './realtime/callPolicy.js';
 import { replyLanguageInstruction, describeLanguageSetting, spokenLanguage, truncationNotice } from './language.js';
 import { listWeeklyReflections, getWeeklyReflection, getLatestWeeklyReflection } from './weeklyReflections.js';
 import { startWeeklyReflectionScheduler, runWeeklyReflectionNow, isWeeklyReflectionRunning } from './weeklyScheduler.js';
@@ -1385,13 +1388,66 @@ app.get('/privacy', (_req, res) => {
   res.type('html').send(privacyPolicyHtml());
 });
 
+/**
+ * Twilio asks what to do with an incoming call, and gets back TwiML opening a
+ * media stream to this same server.
+ *
+ * Twilio posts form-encoded, not JSON. A refusal is spoken rather than
+ * dropped — a dead line is indistinguishable from a broken number, and the
+ * founder would reasonably conclude the latter and stop calling.
+ */
+app.post('/api/calls/incoming', express.urlencoded({ extended: false }), (req, res) => {
+  const from = req.body?.From || '';
+  // The public host Twilio reached us on, which is what the media stream must
+  // dial back. Behind Railway's proxy the Host header is the public name.
+  const host = req.get('x-forwarded-host') || req.get('host') || '';
+  const twiml = answerCallTwiml({ from, host });
+  const refusal = refuseCall(from);
+  recordInbound({
+    stage: refusal ? STAGES.NOT_ALLOWLISTED : STAGES.ANSWERED,
+    from,
+    detail: refusal || 'Call connected to the voice line.',
+  });
+  res.type('text/xml').send(twiml);
+});
+
+/** What the founder's calling setup actually does, in one line. */
+app.get('/api/calls/status', (_req, res) => {
+  res.json({ detail: describeCalling(), minutesLeftToday: Math.round(callMinutesRemaining()) });
+});
+
 const clientDist = path.join(__dirname, '..', 'client', 'dist');
 app.use(express.static(clientDist));
 app.get('*', (_req, res) => {
   res.sendFile(path.join(clientDist, 'index.html'));
 });
 
-app.listen(PORT, () => {
+// An explicit http.Server rather than app.listen(), because the call media
+// stream is a WebSocket upgrade on this same port and needs the server object
+// to attach to. Railway gives one port; the phone line and the web app share
+// it.
+const httpServer = http.createServer(app);
+
+attachCallStream(httpServer, {
+  // The slow path, named at the wiring rather than buried inside the bridge.
+  // This is the fifteen-second company turn the call talks over.
+  askTheTeam: async (question) => {
+    const { reply } = await runCompanyTurn('call', question, {
+      deadlineAt: Date.now() + TURN_DEADLINE_MS,
+    });
+    return reply;
+  },
+  onCallEnded({ from, seconds, reason, transcript }) {
+    console.log(`Call from ${from || 'unknown'} ended after ${Math.round(seconds)}s (${reason}).`);
+    // The founder gets what was said in writing. A call leaves no record they
+    // can search, and half of what gets discussed on one is a decision.
+    if (transcript.length) sendCallSummary({ from, seconds, transcript }).catch((err) => {
+      console.error('Could not send the call summary:', err.message);
+    });
+  },
+});
+
+httpServer.listen(PORT, () => {
   console.log(`Jarvis server listening on port ${PORT}`);
   // Leaves a mark and counts the ones already there. A count still at 1 after
   // a redeploy is proof the data directory was emptied — which is otherwise
