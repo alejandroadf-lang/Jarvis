@@ -3542,3 +3542,72 @@ conversation can switch mid-sentence and be followed.
 The phone line stays in the repo, off by default. It is the right answer for a
 number a customer could ring, and the wrong answer for finding out whether any
 of this is worth ringing.
+
+## The customer desk, and the boundary that makes it safe
+
+"Hello, this is the Circadian Health Desk, how can I help you today?" — in
+whatever language the caller answers in.
+
+The machinery is the conversation already built. What is new is that the person
+on the line is **not the founder**, and that changes what may be in the prompt.
+
+The founder's brief opens *"you are speaking with the founder, who owns it"*
+and injects `buildCompanyContext()`: revenue to date, the pipeline, prospect
+names, today's plan, what is waiting on approval. Point that at a customer and
+the first person who asks how business is going gets the revenue figure and a
+list of who else is being sold to. No jailbreak required — just a polite
+question to a model that was handed the answer.
+
+### An allowlist, not a filter
+
+The desk is built by naming what a customer may hear, not by removing what they
+may not:
+
+```
+Product          ← venture.title
+What it does     ← venture.oneLiner
+The problem      ← venture.problem
+Who it is for    ← venture.targetCustomer
+Price            ← describePricing(venture)
+```
+
+That is the whole of it. `marketSize`, `pathToMillions` and `agentNativeEdge`
+sit on the same object and are strategy, not product, so they are absent —
+and, more importantly, **a field added to a venture next month is absent too,
+without anyone remembering to exclude it.**
+
+A filter has to anticipate every field that should not go out and loses the
+moment somebody adds one. An allowlist only emits what is named in it. The
+mistake runs toward silence instead of toward disclosure, and there is a test
+that writes a secret onto the stored venture and asserts it does not appear.
+
+### The desk has no tools
+
+`ask_the_team` is absent from a desk session, for two reasons that are
+separately sufficient. Its answer is a company turn written for the founder and
+would be read aloud to a stranger. And it is a way for anyone who can reach the
+desk to make this company do work by asking it to.
+
+### Four things it is told it cannot do
+
+Each one is a specific, expensive failure rather than general caution:
+
+- **No discounts.** The Project Vend failure on a phone call. A model asked
+  nicely by a persuasive customer will give one unless told plainly it has no
+  such authority — and told that saying so is not a weakness, or it apologises
+  its way into one anyway.
+- **No card numbers.** If a caller starts reading one out it stops them. A
+  model that helpfully repeats a card number back has put it in a transcript.
+- **No invented features or dates.** *A wrong yes on a call becomes a refund
+  and a bad review* — that sentence is in the prompt, because the cost is what
+  makes the rule stick.
+- **No commitments.** It can take a request; it cannot make a promise.
+
+### The language rule is about manners, not capability
+
+The model can already handle the languages. What it needed telling is to
+**never comment on which one is being used, and never ask the caller to repeat
+themselves in another**. That is the actual customer-service failure — not
+being unable to speak Spanish, but making a Spanish speaker feel like a problem
+to be routed. It opens in `DESK_LANGUAGE`, because a greeting must commit
+before the caller has spoken, and follows them from their first word.

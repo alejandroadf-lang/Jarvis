@@ -20,6 +20,8 @@
 import { readSecret } from '../env.js';
 import { realtimeModel, realtimeVoice, ASK_THE_TEAM } from './openaiRealtime.js';
 import { buildCallInstructions, callGreeting } from './callBrief.js';
+import { buildDeskInstructions, deskGreeting } from './deskBrief.js';
+import { getVenture } from '../finance/ventures.js';
 
 const SESSION_URL = 'https://api.openai.com/v1/realtime/sessions';
 
@@ -41,9 +43,20 @@ export function isBrowserCallConfigured() {
  * that was Twilio's constraint, and a browser gets full-band Opus instead,
  * which is the better-sounding half of this whole feature.
  */
-export async function mintBrowserSession() {
+export async function mintBrowserSession({ desk = '' } = {}) {
   const apiKey = readSecret('OPENAI_API_KEY');
   if (!apiKey) throw new Error('OPENAI_API_KEY is not set, so there is nothing to talk to.');
+
+  // Two callers, two briefs, and the difference is not cosmetic. The founder's
+  // brief carries COMPANY STATE — revenue, pipeline, prospect names. A desk
+  // session must never see it, so the branch happens here rather than by
+  // passing a flag down into one shared prompt where a future edit could let
+  // the company state through.
+  const isDesk = Boolean(desk);
+  const venture = isDesk ? getVenture(desk) : null;
+  if (isDesk && !venture) {
+    throw new Error(`There is no venture "${desk}", so a caller would reach a desk with no product to describe.`);
+  }
 
   const response = await fetch(SESSION_URL, {
     method: 'POST',
@@ -51,7 +64,7 @@ export async function mintBrowserSession() {
     body: JSON.stringify({
       model: realtimeModel(),
       voice: realtimeVoice(),
-      instructions: buildCallInstructions({}),
+      instructions: isDesk ? buildDeskInstructions(desk) : buildCallInstructions({}),
       // Same reason as the phone line: the founder should not have to hold a
       // button, and a conversation has no push-to-talk.
       turn_detection: {
@@ -61,8 +74,13 @@ export async function mintBrowserSession() {
         silence_duration_ms: 600,
       },
       input_audio_transcription: { model: 'whisper-1' },
-      tools: [ASK_THE_TEAM],
-      tool_choice: 'auto',
+      // A desk gets no tools at all. ask_the_team runs a real company turn
+      // whose answer is written for the founder and would be read out to a
+      // stranger — and it is also how a caller could make this company do
+      // work by asking. The desk answers from what it was given or takes a
+      // message.
+      tools: isDesk ? [] : [ASK_THE_TEAM],
+      tool_choice: isDesk ? 'none' : 'auto',
     }),
   });
 
@@ -83,6 +101,7 @@ export async function mintBrowserSession() {
     model: realtimeModel(),
     // The page speaks these out loud on connect; sending them back means the
     // greeting is decided here too rather than by whatever the page feels like.
-    greeting: callGreeting(),
+    greeting: isDesk ? deskGreeting(venture) : callGreeting(),
+    desk: isDesk ? venture.title : '',
   };
 }

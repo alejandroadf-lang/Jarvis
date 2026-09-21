@@ -149,3 +149,44 @@ test('the model the page is told to use is the model the session was minted for'
     assert.equal(session.model, 'gpt-realtime-test');
   });
 });
+
+// --- The desk session, which must not be the founder's session ---------------------------
+
+test('a desk session carries no company state and no tools', async () => {
+  // Two failures guarded at once. The founder's brief holds revenue and the
+  // pipeline; ask_the_team runs a real company turn whose answer is written
+  // for the founder — and is also how a stranger could make this company do
+  // work by asking it to.
+  await withEnv({ OPENAI_API_KEY: 'k' }, async () => {
+    const { createVenture, setPricing } = await import('../finance/ventures.js');
+    const v = createVenture({ title: 'DeskTest', oneLiner: 'A thing.', targetCustomer: 'People' });
+    setPricing(v.id, { currency: 'USD', floorMonthly: 29, perUnit: 0, unit: '' });
+
+    const sent = captureSession();
+    const session = await mintBrowserSession({ desk: v.id });
+
+    assert.doesNotMatch(sent.body.instructions, /COMPANY STATE/, 'no company state');
+    assert.deepEqual(sent.body.tools, [], 'no tools');
+    assert.equal(sent.body.tool_choice, 'none');
+    assert.match(sent.body.instructions, /DeskTest/);
+    assert.equal(session.desk, 'DeskTest', 'the page is told which desk it reached');
+  });
+});
+
+test('the founder session still gets both, so the branch did not break it', async () => {
+  await withEnv({ OPENAI_API_KEY: 'k' }, async () => {
+    const sent = captureSession();
+    await mintBrowserSession();
+    assert.match(sent.body.instructions, /COMPANY STATE/);
+    assert.ok(sent.body.tools.some((t) => t.name === 'ask_the_team'));
+  });
+});
+
+test('a desk for a venture that does not exist is refused, not answered emptily', async () => {
+  // Answering as a desk with no product is worse than not answering: the
+  // caller reaches something that sounds official and knows nothing.
+  await withEnv({ OPENAI_API_KEY: 'k' }, async () => {
+    captureSession();
+    await assert.rejects(() => mintBrowserSession({ desk: 'v_nope' }), /no venture "v_nope"/);
+  });
+});
