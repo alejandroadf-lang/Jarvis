@@ -1420,12 +1420,15 @@ app.post('/api/calls/incoming', express.urlencoded({ extended: false }), (req, r
  * with the brief and the tools already fixed server-side so the page cannot
  * choose its own instructions.
  */
-app.post('/api/calls/token', async (_req, res) => {
+app.post('/api/calls/token', async (req, res) => {
   if (!isBrowserCallConfigured()) {
     return res.status(503).json({ error: 'OPENAI_API_KEY is not set, so there is nothing to talk to.' });
   }
   try {
-    res.json(await mintBrowserSession());
+    // A ventureId turns this into the customer desk: a different brief, no
+    // company state, and no tools. The founder's own session is the one with
+    // no desk named.
+    res.json(await mintBrowserSession({ desk: String(req.body?.desk || '').trim() }));
   } catch (err) {
     console.error('Could not mint a browser session:', err.message);
     res.status(502).json({ error: err.message });

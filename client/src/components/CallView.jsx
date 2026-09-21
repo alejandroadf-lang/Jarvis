@@ -1,4 +1,5 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import axios from 'axios';
 import { useRealtimeCall } from '../hooks/useRealtimeCall.js';
 
 // A live conversation with the company, held in the browser.
@@ -18,12 +19,23 @@ const STATUS_LABEL = {
 
 export default function CallView() {
   const [lines, setLines] = useState([]);
+  const [ventures, setVentures] = useState([]);
+  const [desk, setDesk] = useState('');
+
+  // Which desks exist to answer as. Loaded once; a founder who has no
+  // ventures yet simply never sees the switch.
+  useEffect(() => {
+    axios
+      .get('/api/ventures')
+      .then((res) => setVentures((res.data?.ventures || []).filter((v) => v.status === 'active')))
+      .catch(() => setVentures([]));
+  }, []);
 
   const onTranscript = useCallback((line) => {
     setLines((prev) => [...prev.slice(-40), line]);
   }, []);
 
-  const { status, error, speaking, pendingQuestion, start, hangUp, audioRef } = useRealtimeCall({ onTranscript });
+  const { status, error, speaking, pendingQuestion, start, hangUp, audioRef } = useRealtimeCall({ onTranscript, desk });
   const live = status === 'live';
 
   return (
@@ -31,11 +43,35 @@ export default function CallView() {
       <audio ref={audioRef} autoPlay className="hidden" />
 
       <header className="text-center">
-        <h2 className="text-lg font-medium text-cyan-200">Talk to the company</h2>
+        <h2 className="text-lg font-medium text-cyan-200">
+          {desk ? 'The customer desk' : 'Talk to the company'}
+        </h2>
         <p className="text-sm text-white/50 mt-1">
-          Speak any language and it answers in the same one. Switch mid-sentence and it follows.
+          {desk
+            ? 'What a customer hears when they call. It knows the product and the price, and nothing about the business.'
+            : 'Speak any language and it answers in the same one. Switch mid-sentence and it follows.'}
         </p>
       </header>
+
+      {ventures.length > 0 ? (
+        // Switching mid-call would leave the founder talking to a brief that
+        // changed underneath them, so it is disabled while connected.
+        <div className="flex justify-center">
+          <select
+            value={desk}
+            disabled={live || status === 'connecting'}
+            onChange={(e) => setDesk(e.target.value)}
+            className="bg-white/5 border border-cyan-500/30 rounded-lg px-3 py-1.5 text-sm text-cyan-100 disabled:opacity-40"
+          >
+            <option value="">As the founder — full company access</option>
+            {ventures.map((v) => (
+              <option key={v.id} value={v.id}>
+                As the {v.title} desk — what a customer hears
+              </option>
+            ))}
+          </select>
+        </div>
+      ) : null}
 
       <div className="flex flex-col items-center gap-4">
         <button

@@ -31,7 +31,7 @@ const REALTIME_URL = 'https://api.openai.com/v1/realtime';
 // app's access token to it. A credential for one service must not be posted to
 // another.
 
-export function useRealtimeCall({ onTranscript = () => {} } = {}) {
+export function useRealtimeCall({ onTranscript = () => {}, desk = '' } = {}) {
   const [status, setStatus] = useState('idle'); // idle | connecting | live | ending
   const [error, setError] = useState('');
   const [speaking, setSpeaking] = useState(false);
@@ -169,7 +169,7 @@ export function useRealtimeCall({ onTranscript = () => {} } = {}) {
     setError('');
     setStatus('connecting');
     try {
-      const { data: session } = await axios.post('/api/calls/token');
+      const { data: session } = await axios.post('/api/calls/token', desk ? { desk } : {});
 
       const peer = new RTCPeerConnection();
       peerRef.current = peer;
@@ -212,7 +212,7 @@ export function useRealtimeCall({ onTranscript = () => {} } = {}) {
       setError(err.response?.data?.error || err.message);
       hangUp();
     }
-  }, [handleEvent, send, hangUp]);
+  }, [handleEvent, send, hangUp, desk]);
 
   // A conversation left running when the page closes keeps billing.
   useEffect(() => () => hangUp(), [hangUp]);
