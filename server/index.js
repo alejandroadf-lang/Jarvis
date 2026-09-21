@@ -124,6 +124,7 @@ import { isOpenAIConfigured, transcribeAudio } from './agents/openai.js';
 import { isSpeechConfigured, synthesize, spokenExcerpt, spokenReplyInstruction } from './speech.js';
 import { attachCallStream, answerCallTwiml } from './realtime/twilioBridge.js';
 import { refuseCall, describeCalling, callMinutesRemaining } from './realtime/callPolicy.js';
+import { mintBrowserSession, isBrowserCallConfigured } from './realtime/browserSession.js';
 import { replyLanguageInstruction, describeLanguageSetting, spokenLanguage, truncationNotice } from './language.js';
 import { listWeeklyReflections, getWeeklyReflection, getLatestWeeklyReflection } from './weeklyReflections.js';
 import { startWeeklyReflectionScheduler, runWeeklyReflectionNow, isWeeklyReflectionRunning } from './weeklyScheduler.js';
@@ -1409,6 +1410,47 @@ app.post('/api/calls/incoming', express.urlencoded({ extended: false }), (req, r
     detail: refusal || 'Call connected to the voice line.',
   });
   res.type('text/xml').send(twiml);
+});
+
+/**
+ * A short-lived credential for one browser conversation.
+ *
+ * The page never sees OPENAI_API_KEY — anyone who opens devtools would own the
+ * account. It gets a token scoped to one session, expiring in about a minute,
+ * with the brief and the tools already fixed server-side so the page cannot
+ * choose its own instructions.
+ */
+app.post('/api/calls/token', async (_req, res) => {
+  if (!isBrowserCallConfigured()) {
+    return res.status(503).json({ error: 'OPENAI_API_KEY is not set, so there is nothing to talk to.' });
+  }
+  try {
+    res.json(await mintBrowserSession());
+  } catch (err) {
+    console.error('Could not mint a browser session:', err.message);
+    res.status(502).json({ error: err.message });
+  }
+});
+
+/**
+ * The slow path, reachable from the conversation.
+ *
+ * Same fifteen-second company turn the phone line uses. The page calls this
+ * when the voice decides a question needs the real team, and speaks the answer
+ * when it lands — so the conversation keeps going rather than going quiet.
+ */
+app.post('/api/calls/ask', async (req, res) => {
+  const question = String(req.body?.question || '').trim();
+  if (!question) return res.status(400).json({ error: 'No question was sent.' });
+  try {
+    const { reply } = await runCompanyTurn('call', question, {
+      deadlineAt: Date.now() + TURN_DEADLINE_MS,
+    });
+    res.json({ answer: reply });
+  } catch (err) {
+    console.error('A question from a conversation failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 /** What the founder's calling setup actually does, in one line. */
