@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import axios from 'axios';
 
 // A real conversation, held in the browser.
 //
@@ -19,6 +20,16 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 //      thinks, which is the entire point of the design.
 
 const REALTIME_URL = 'https://api.openai.com/v1/realtime';
+
+// Calls to this app go through axios, which carries the access token from
+// api/chat.js — "sent on every request rather than attached per call, so a new
+// endpoint is authenticated by existing". Written with raw fetch, these two
+// endpoints returned 401 and the button did nothing.
+//
+// The SDP exchange below stays on raw fetch, deliberately. That request goes
+// to OpenAI, not to this app, and the axios interceptor would attach this
+// app's access token to it. A credential for one service must not be posted to
+// another.
 
 export function useRealtimeCall({ onTranscript = () => {} } = {}) {
   const [status, setStatus] = useState('idle'); // idle | connecting | live | ending
@@ -67,16 +78,9 @@ export function useRealtimeCall({ onTranscript = () => {} } = {}) {
       });
       send({ type: 'response.create' });
 
-      fetch('/api/calls/ask', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question }),
-      })
-        .then(async (res) => {
-          const body = await res.json().catch(() => ({}));
-          if (!res.ok) throw new Error(body.error || `The team could not be reached (${res.status}).`);
-          return body.answer;
-        })
+      axios
+        .post('/api/calls/ask', { question })
+        .then((res) => res.data.answer)
         .then((answer) => {
           setPendingQuestion('');
           onTranscript({ who: 'team', text: answer });
@@ -98,6 +102,10 @@ export function useRealtimeCall({ onTranscript = () => {} } = {}) {
         })
         .catch((err) => {
           setPendingQuestion('');
+          // axios reports "Request failed with status code 500", which is the
+          // one thing the founder cannot act on. The server's own reason is in
+          // the body, and it is what gets spoken.
+          const reason = err.response?.data?.error || err.message;
           // Spoken, not swallowed. The founder was told it was being asked, so
           // silence afterwards is a promise broken with no way to notice.
           send({
@@ -108,7 +116,7 @@ export function useRealtimeCall({ onTranscript = () => {} } = {}) {
               content: [{
                 type: 'input_text',
                 text:
-                  `The question you put to the team failed: ${err.message}. Tell the founder plainly that it ` +
+                  `The question you put to the team failed: ${reason}. Tell the founder plainly that it ` +
                   'did not go through, and offer to try again.',
               }],
             },
@@ -161,9 +169,7 @@ export function useRealtimeCall({ onTranscript = () => {} } = {}) {
     setError('');
     setStatus('connecting');
     try {
-      const res = await fetch('/api/calls/token', { method: 'POST' });
-      const session = await res.json();
-      if (!res.ok) throw new Error(session.error || 'Could not start a conversation.');
+      const { data: session } = await axios.post('/api/calls/token');
 
       const peer = new RTCPeerConnection();
       peerRef.current = peer;
@@ -203,7 +209,7 @@ export function useRealtimeCall({ onTranscript = () => {} } = {}) {
 
       await peer.setRemoteDescription({ type: 'answer', sdp: await answer.text() });
     } catch (err) {
-      setError(err.message);
+      setError(err.response?.data?.error || err.message);
       hangUp();
     }
   }, [handleEvent, send, hangUp]);
