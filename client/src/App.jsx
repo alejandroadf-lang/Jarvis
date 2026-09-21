@@ -6,6 +6,7 @@ import VenturesPanel from './components/VenturesPanel.jsx';
 import PortfolioView from './components/PortfolioView.jsx';
 import BuildView from './components/BuildView.jsx';
 import DailyReportView from './components/DailyReportView.jsx';
+import CallView from './components/CallView.jsx';
 import { useSpeechRecognition } from './hooks/useSpeechRecognition.js';
 import { useSpeechSynthesis } from './hooks/useSpeechSynthesis.js';
 import { useWakeWord } from './hooks/useWakeWord.js';
@@ -85,7 +86,8 @@ export default function App() {
   const isPortfolio = mode === 'portfolio';
   const isDailyReport = mode === 'dailyReport';
   const isBuild = mode === 'build';
-  const isFullWidthTab = isPortfolio || isDailyReport || isBuild;
+  const isCall = mode === 'call';
+  const isFullWidthTab = isPortfolio || isDailyReport || isBuild || isCall;
   const messages = messagesByMode[mode] || [];
   const modeConfig = MODES[mode] || null;
 
@@ -229,6 +231,14 @@ export default function App() {
               Build
             </button>
             <button
+              onClick={() => setMode('call')}
+              className={`px-3 py-1 transition-colors ${
+                isCall ? 'bg-cyan-600 text-white' : 'text-cyan-400/80 hover:text-cyan-300'
+              }`}
+            >
+              Talk
+            </button>
+            <button
               onClick={() => setMode('dailyReport')}
               className={`px-3 py-1 transition-colors ${
                 isDailyReport ? 'bg-cyan-600 text-white' : 'text-cyan-400/80 hover:text-cyan-300'
@@ -276,6 +286,8 @@ export default function App() {
         <BuildView reloadKey={venturesReloadKey} />
       ) : isDailyReport ? (
         <DailyReportView />
+      ) : isCall ? (
+        <CallView />
       ) : (
       <div className="flex-1 flex min-h-0">
         {mode === 'company' && (

@@ -3483,3 +3483,62 @@ founder which variable to set, where silence tells them the feature is broken.
 Every call ends with a transcript emailed to the founder. A call leaves no
 record anyone can search, half of what gets said on one is a decision, and
 speech is the medium where "I thought we agreed" does the most damage.
+
+### Reaching for a phone company to prototype a conversation
+
+The founder's question was one word long and it was the right one: *why Twilio?
+This is a prototype.*
+
+The reasoning behind the phone line was sound and pointed the wrong way.
+WhatsApp calling is WebRTC over UDP; Railway does not accept inbound UDP; so
+the media has to be terminated by somebody who does. All true — and the
+conclusion drawn from it was an account, a card, a phone number, per-minute
+telephony and a provider migration that would have rewritten the messaging path
+just proven working in Spanish and French. To find out whether a conversation
+feels right.
+
+The Realtime API speaks WebRTC **directly to a browser**. Audio goes founder's
+phone ↔ OpenAI. Railway is not in the media path, so Railway's UDP restriction
+stops being a constraint rather than being worked around:
+
+```
+phone's browser  ⟷  OpenAI Realtime      (audio — the server is not here)
+       │
+       ├── POST /api/calls/token  →  mints a one-minute credential
+       └── POST /api/calls/ask    →  the fifteen-second company turn
+```
+
+No telephony. No number. No migration. The server's only job on the live path
+is the one thing a browser must not do, which is hold the key.
+
+### What the server keeps, and why
+
+The page gets an ephemeral token, never `OPENAI_API_KEY` — anyone who opens
+devtools on their own phone would otherwise own the account. But the token is
+the smaller half. The brief, the tools and the turn detection are all fixed
+server-side too, because **a browser can be edited by whoever holds it**:
+anything the page could choose is something an attacker could choose, so the
+instruction reading *"do not agree to send anything, pay anything, or promise
+anything to anyone outside the company"* has to be decided in `mintBrowserSession()`
+or it is decorative.
+
+One thing is deliberately *not* carried over from the phone line: the audio
+format. `g711_ulaw` was Twilio's constraint — eight kilohertz, because that is
+what a telephone is. A browser gets full-band Opus, which is the better-sounding
+half of this whole feature, and pinning the phone codec here would have thrown
+it away for no reason.
+
+### Why multilingual is easier here than on a voice note
+
+One model hears and answers in a single step. Nothing converts a detected
+language into a string for something else to look up — which is the exact shape
+of the bug that answered Spanish in English: `"spanish"` sliced to `"sp"`,
+absent from the table, instruction empty.
+
+That failure mode **cannot occur on this path**, and the capability is strictly
+larger: a voice note gets one detected language for the whole note, where a
+conversation can switch mid-sentence and be followed.
+
+The phone line stays in the repo, off by default. It is the right answer for a
+number a customer could ring, and the wrong answer for finding out whether any
+of this is worth ringing.
