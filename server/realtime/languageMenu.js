@@ -102,16 +102,26 @@ function escapeXml(value) {
 }
 
 /**
- * The TwiML that plays the menu and sends the digit to /api/calls/language.
+ * The TwiML that plays the welcome and the menu, and sends the digit to
+ * /api/calls/language.
+ *
+ * The welcome — "Welcome to the travel help desk." — is spoken first, in
+ * the voice of the first language on the menu, and inside the <Gather>: a
+ * caller who knows the menu can press during it and skip the rest, which is
+ * what regulars of any call centre do. Once, not once per language; a
+ * welcome repeated three times is a delay.
  *
  * No digit within the timeout falls through to the <Redirect>, which reaches
  * the same endpoint with no Digits and connects in the default language. The
  * URLs are absolute — the same host Twilio reached the webhook on — for the
  * same reason the stream URL is: it is what Twilio dials back.
  */
-export function languageMenuTwiml({ host }) {
+export function languageMenuTwiml({ host, welcome = '' }) {
   const action = `https://${host}/api/calls/language`;
-  const says = menuLanguages()
+  const names = menuLanguages();
+  const first = LINES[names[0]] || { say: 'en-US' };
+  const hello = welcome ? `<Say language="${first.say}">${escapeXml(welcome)}</Say>` : '';
+  const says = names
     .map((name, i) => {
       const spec = LINES[name] || { say: 'en-US', line: (n) => `For ${name}, press ${n}.` };
       return `<Say language="${spec.say}">${escapeXml(spec.line(i + 1))}</Say>`;
@@ -120,7 +130,7 @@ export function languageMenuTwiml({ host }) {
   return (
     '<?xml version="1.0" encoding="UTF-8"?>' +
     '<Response>' +
-    `<Gather input="dtmf" numDigits="1" timeout="6" action="${escapeXml(action)}" method="POST">${says}</Gather>` +
+    `<Gather input="dtmf" numDigits="1" timeout="6" action="${escapeXml(action)}" method="POST">${hello}${says}</Gather>` +
     `<Redirect method="POST">${escapeXml(action)}</Redirect>` +
     '</Response>'
   );

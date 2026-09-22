@@ -126,9 +126,9 @@ import { attachCallStream, answerCallTwiml } from './realtime/twilioBridge.js';
 import { isLanguageMenuEnabled, languageMenuTwiml, chosenLanguage } from './realtime/languageMenu.js';
 import { verifyTwilioRequest } from './realtime/twilioAuth.js';
 import { isDeskApiConfigured, verifyDeskKey, deskLookup, deskTicket, describeDeskApi } from './realtime/deskApi.js';
-import { refuseCall, describeCalling, callMinutesRemaining } from './realtime/callPolicy.js';
+import { refuseCall, describeCalling, callMinutesRemaining, callMode } from './realtime/callPolicy.js';
 import { mintBrowserSession, isBrowserCallConfigured } from './realtime/browserSession.js';
-import { runSupportTool, isWhatsAppDeskEnabled } from './realtime/supportDesk.js';
+import { runSupportTool, isWhatsAppDeskEnabled, supportDeskName } from './realtime/supportDesk.js';
 import { runDeskTurn } from './channels/deskTurn.js';
 import { replyLanguageInstruction, describeLanguageSetting, spokenLanguage, truncationNotice } from './language.js';
 import { listWeeklyReflections, getWeeklyReflection, getLatestWeeklyReflection } from './weeklyReflections.js';
@@ -1492,8 +1492,12 @@ app.post('/api/calls/incoming', express.urlencoded({ extended: false }), (req, r
   // A refused caller hears why before any menu — a menu followed by a
   // refusal is a minute of the caller's time spent for nothing.
   if (!refusal && isLanguageMenuEnabled()) {
+    // "Welcome to the travel help desk" (or whatever SUPPORT_DESK_NAME says)
+    // before the menu. The founder's own line gets no welcome: they know
+    // who they called.
+    const welcome = callMode() === 'support' ? `Welcome to ${supportDeskName()}.` : '';
     recordInbound({ stage: STAGES.ANSWERED, from, detail: 'Language menu offered.' });
-    return res.type('text/xml').send(languageMenuTwiml({ host }));
+    return res.type('text/xml').send(languageMenuTwiml({ host, welcome }));
   }
   const twiml = answerCallTwiml({ from, host, callSid: req.body?.CallSid || '' });
   recordInbound({
