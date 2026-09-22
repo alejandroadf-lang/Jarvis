@@ -390,6 +390,34 @@ quick daily check-in, not a full brainstorming session.`;
  * @param {{anthropic: import('@anthropic-ai/sdk').default}} opts
  * @returns {Promise<object>} the saved report
  */
+/**
+ * Today's pitch, generated and emailed now.
+ *
+ * One function for the 8am cycle and for the founder asking PITCH on
+ * WhatsApp, so "show me what I will get tomorrow" runs exactly the code that
+ * will send it tomorrow — same roster, same prompt, same email. A separate
+ * preview path would be a second implementation of the thing being previewed,
+ * which is the drift dailyCycleParity.test.js exists to catch.
+ *
+ * Returns the email so the caller can also put it in the founder's hand
+ * directly; the email is sent regardless.
+ */
+export async function runPitchNow({ anthropic }) {
+  const { pitch, note } = await generatePitch({
+    anthropic,
+    runAgent,
+    agents: STUDIO_AGENTS,
+    agentId: STUDIO_ROOT,
+  });
+  const email = formatPitchEmail(pitch || {}, { note });
+  let sent = false;
+  if (pitch || note) {
+    await sendPitchEmail(email);
+    sent = true;
+  }
+  return { pitch, note, email, sent };
+}
+
 export async function runDailyMeeting({ anthropic }) {
   const date = todayKey();
   const startedAt = Date.now();
@@ -524,13 +552,7 @@ export async function runDailyMeeting({ anthropic }) {
   // its handler map and it cannot create a venture.
   if (process.env.DAILY_PITCH !== 'false') {
     try {
-      const { pitch, note } = await generatePitch({
-        anthropic,
-        runAgent,
-        agents: soloRoster(STUDIO_AGENTS, STUDIO_ROOT),
-        agentId: STUDIO_ROOT,
-      });
-      if (pitch || note) await sendPitchEmail(formatPitchEmail(pitch || {}, { note }));
+      await runPitchNow({ anthropic });
     } catch (err) {
       // Never takes the morning down. It is the least important thing in this
       // function and the report is what the founder actually needs.

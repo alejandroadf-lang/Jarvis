@@ -518,3 +518,104 @@ test('a bare "why" is a message to the team, not a command', () => {
 test('READY is in the help, since a control nobody knows about is not a control', () => {
   assert.match(commands.__helpForTests, /READY/);
 });
+
+// --- PITCH: show me what I will receive tomorrow ------------------------------------------
+//
+// The founder asked for a test of tomorrow's email. A preview path would be a
+// second implementation of the thing being previewed; PITCH runs the same
+// function the 8am cycle runs and hands back the same email it sends.
+
+test('PITCH is a command, and only as the whole message', () => {
+  assert.equal(commands.parseFounderCommand('PITCH')?.kind, 'pitch');
+  assert.equal(commands.parseFounderCommand('pitch now')?.kind, 'pitch');
+  assert.equal(commands.parseFounderCommand('Pitch of the day')?.kind, 'pitch');
+  assert.equal(commands.parseFounderCommand('the pitch was weak today'), null, 'a sentence about a pitch is not the command');
+});
+
+test('HELP mentions PITCH, since a control nobody knows about is not a control', () => {
+  assert.match(commands.__helpForTests, /PITCH — generate today's pitch now/);
+});
+
+test('PITCH returns the very email the morning cycle sends, and says whether it went out', async () => {
+  let called = 0;
+  const reply = await commands.runFounderCommand(
+    { kind: 'pitch' },
+    {
+      runPitch: async () => {
+        called += 1;
+        return {
+          pitch: { title: 'SleepSync' },
+          sent: true,
+          email: { subject: 'Pitch of the day: SleepSync', text: 'SLEEPSYNC\n...' },
+        };
+      },
+    }
+  );
+  assert.equal(called, 1);
+  assert.match(reply, /Pitched, and emailed/);
+  assert.match(reply, /what the 8am one will look like/);
+  assert.match(reply, /Pitch of the day: SleepSync/);
+});
+
+test('PITCH with nothing generated still shows the exact email, so the founder sees what they would have got', async () => {
+  const reply = await commands.runFounderCommand(
+    { kind: 'pitch' },
+    {
+      runPitch: async () => ({
+        pitch: null,
+        sent: true,
+        email: { subject: 'Pitch of the day: nothing new', text: 'No pitch today.' },
+      }),
+    }
+  );
+  assert.match(reply, /No pitch came back/);
+  assert.match(reply, /nothing new/);
+});
+
+test('PITCH without the generator wired says so rather than pretending', async () => {
+  const reply = await commands.runFounderCommand({ kind: 'pitch' }, {});
+  assert.match(reply, /not available on this build/);
+});
+
+// --- Teaching the support desk from a phone -----------------------------------------------
+//
+// The knowledge base lives in the data directory. A founder on a phone cannot
+// edit a file there, so a knowledge base with no WhatsApp door is one that
+// never grows past its examples.
+
+test('ISSUE with three parts parses into a procedure, and DEL is matched before ADD', () => {
+  const add = commands.parseFounderCommand('ISSUE Seat map blank | seat map blank, cannot pick seats | Check the segment is HK, then reopen the map.');
+  assert.equal(add?.kind, 'issue_add');
+  assert.equal(add.title, 'Seat map blank');
+  assert.equal(add.symptoms, 'seat map blank, cannot pick seats');
+  assert.match(add.steps, /Check the segment is HK/);
+
+  assert.deepEqual(commands.parseFounderCommand('ISSUE DEL 3'), { kind: 'issue_del', id: 3 });
+  assert.equal(commands.parseFounderCommand('ISSUES')?.kind, 'issues');
+  assert.equal(commands.parseFounderCommand('issue with two parts | only'), null, 'two parts is not a procedure');
+});
+
+test('ISSUE steps may run over several lines, since real procedures do', () => {
+  const add = commands.parseFounderCommand('ISSUE Printing | ticket will not print | 1. Check the printer.\n2. Reissue the print command.');
+  assert.equal(add?.kind, 'issue_add');
+  assert.match(add.steps, /2\. Reissue/);
+});
+
+test('ISSUES lists the procedures and flags the examples, and ISSUE DEL removes one', async () => {
+  const listed = await commands.runFounderCommand({ kind: 'issues' });
+  assert.match(listed, /Callers reach the travel help desk/);
+  assert.match(listed, /#1 Booking confirmation never arrived \(example — replace\)/);
+
+  const added = await commands.runFounderCommand({ kind: 'issue_add', title: 'T', symptoms: 'a b c', steps: 'do x' });
+  assert.match(added, /Added #\d+ "T"/);
+
+  const removed = await commands.runFounderCommand({ kind: 'issue_del', id: 1 });
+  assert.match(removed, /Removed #1/);
+  const after = await commands.runFounderCommand({ kind: 'issues' });
+  assert.doesNotMatch(after, /#1 Booking confirmation never arrived/);
+});
+
+test('HELP mentions the desk commands', () => {
+  assert.match(commands.__helpForTests, /ISSUE <title> \| <symptoms/);
+  assert.match(commands.__helpForTests, /ISSUE DEL <n>/);
+});

@@ -19,9 +19,11 @@
 //      latter and stop trying.
 
 import { WebSocketServer } from 'ws';
-import { openRealtimeSession } from './openaiRealtime.js';
+import { openRealtimeSession, ASK_THE_TEAM } from './openaiRealtime.js';
 import { buildCallInstructions, callGreeting } from './callBrief.js';
-import { refuseCall, maxCallSeconds, recordCallSeconds } from './callPolicy.js';
+import { refuseCall, maxCallSeconds, recordCallSeconds, callMode } from './callPolicy.js';
+import { buildSupportInstructions, supportGreeting, SUPPORT_TOOLS, runSupportTool } from './supportDesk.js';
+import { streamToken, verifyStreamToken } from './twilioAuth.js';
 
 /**
  * TwiML for an incoming call.
@@ -30,15 +32,22 @@ import { refuseCall, maxCallSeconds, recordCallSeconds } from './callPolicy.js';
  * not on the call allowlist" knows exactly which variable to set, where a dead
  * line tells them nothing.
  */
-export function answerCallTwiml({ from, host }) {
+export function answerCallTwiml({ from, host, callSid = '' }) {
   const refusal = refuseCall(from);
   if (refusal) {
     return `<?xml version="1.0" encoding="UTF-8"?><Response><Say>${escapeXml(refusal)}</Say><Hangup/></Response>`;
   }
   const url = `wss://${host}/api/calls/stream`;
+  // The per-call token rides along as a stream parameter and is checked when
+  // the stream starts. A stream without it was not opened in answer to this
+  // TwiML — see twilioAuth.js.
+  const params =
+    `<Parameter name="from" value="${escapeXml(from || '')}"/>` +
+    `<Parameter name="callSid" value="${escapeXml(callSid)}"/>` +
+    `<Parameter name="token" value="${escapeXml(streamToken(callSid))}"/>`;
   return (
     '<?xml version="1.0" encoding="UTF-8"?>' +
-    `<Response><Connect><Stream url="${escapeXml(url)}"><Parameter name="from" value="${escapeXml(from || '')}"/></Stream></Connect></Response>`
+    `<Response><Connect><Stream url="${escapeXml(url)}">${params}</Stream></Connect></Response>`
   );
 }
 
@@ -128,9 +137,15 @@ export function attachCallStream(server, { askTheTeam, onCallEnded = () => {} })
     }
 
     function buildSession() {
+      // Decided at the moment the call connects, from CALL_MODE. A support
+      // line gets the support brief and the support tools and never the
+      // founder's — the founder's brief carries company state, and a public
+      // number answered with it is a leak to whoever dials.
+      const support = callMode() === 'support';
       return openRealtimeSession({
-        instructions: buildCallInstructions({}),
-        greeting: callGreeting(),
+        instructions: support ? buildSupportInstructions() : buildCallInstructions({}),
+        greeting: support ? supportGreeting() : callGreeting(),
+        tools: support ? SUPPORT_TOOLS : [ASK_THE_TEAM],
 
         onAudio(base64) {
           if (!streamSid) return;
@@ -146,11 +161,21 @@ export function attachCallStream(server, { askTheTeam, onCallEnded = () => {} })
         },
 
         onTranscript(text) {
-          transcript.push({ who: 'founder', text });
+          transcript.push({ who: support ? 'caller' : 'founder', text });
         },
 
         onToolCall({ id, name, args }) {
-          if (name !== 'ask_the_team') return;
+          // The desk's tools are fast — a lookup is milliseconds, a ticket
+          // is a file write and an email — so they complete in place rather
+          // than through the ask-then-deliver dance below.
+          if (name === 'lookup_issue' || name === 'open_ticket') {
+            transcript.push({ who: 'desk', text: `${name}: ${JSON.stringify(args || {})}` });
+            runSupportTool(name, args || {}, { from })
+              .then((out) => session?.completeToolCall(id, out))
+              .catch((err) => session?.completeToolCall(id, `That failed: ${err.message}. Tell the caller plainly and offer a ticket.`));
+            return;
+          }
+          if (name !== 'ask_the_team' || support) return;
           const question = String(args?.question || '').trim();
           if (!question) {
             session?.completeToolCall(id, 'No question was passed, so nothing was asked.');
@@ -206,15 +231,24 @@ export function attachCallStream(server, { askTheTeam, onCallEnded = () => {} })
       }
 
       switch (event.event) {
-        case 'start':
+        case 'start': {
+          const custom = event.start?.customParameters || {};
           streamSid = event.start?.streamSid || '';
-          from = event.start?.customParameters?.from || '';
+          from = custom.from || '';
+          // A stream that cannot prove it belongs to a call we answered gets
+          // no model session — that session is the thing that costs money.
+          if (!verifyStreamToken(custom.callSid, custom.token)) {
+            console.warn('Call: a media stream arrived without a valid stream token; refusing it.');
+            endCall('bad-stream-token');
+            return;
+          }
           startSession();
           // A hard ceiling the model cannot talk its way past. It has been
           // told the limit and asked to wrap up, but a prompt is a request
           // and a timer is a rule.
           hangupTimer = setTimeout(() => endCall('max-duration'), maxCallSeconds() * 1000);
           break;
+        }
 
         case 'media':
           if (event.media?.payload) session?.sendAudio(event.media.payload);

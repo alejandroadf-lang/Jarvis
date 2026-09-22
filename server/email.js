@@ -298,7 +298,8 @@ export function formatCallSummaryEmail({ from, seconds, transcript = [] }) {
   for (const line of transcript) {
     // The founder's own words are what they will look for, so they are
     // labelled as theirs rather than as "user".
-    const who = line.who === 'founder' ? 'You' : line.who === 'team' ? 'The team' : 'Asked the team';
+    const who =
+      line.who === 'founder' ? 'You' : line.who === 'caller' ? 'Caller' : line.who === 'team' ? 'The team' : 'Asked the team';
     lines.push(`${who}: ${line.text}`, '');
   }
 
@@ -312,5 +313,30 @@ export function formatCallSummaryEmail({ from, seconds, transcript = [] }) {
 
 export async function sendCallSummary({ from, seconds, transcript }) {
   const { subject, text } = formatCallSummaryEmail({ from, seconds, transcript });
+  return sendEmail(subject, text);
+}
+
+// A support ticket, to the founder. The ticket is already saved; this is the
+// part that makes it exist for a person — a ticket nobody is told about is a
+// note to self.
+export function formatTicketEmail(ticket) {
+  const lines = [
+    `Ticket #${ticket.id} — ${ticket.product} support`,
+    '',
+    ticket.summary,
+    '',
+    `Caller: ${ticket.callerName || 'not given'}`,
+    `Reach them: ${ticket.contact || 'not given'}${ticket.from ? ` (called from ${ticket.from})` : ''}`,
+    `Language of the call: ${ticket.language || 'not recorded'}`,
+    `Opened: ${ticket.at}`,
+    '',
+    'Opened by the support desk during a call it could not resolve from the procedures on record.',
+    'If this is a recurring problem, add the procedure with ISSUE so the desk handles it next time.',
+  ];
+  return { subject: `Support ticket #${ticket.id}: ${ticket.summary.slice(0, 60)}`, text: lines.join('\n') };
+}
+
+export async function sendTicketEmail(ticket) {
+  const { subject, text } = formatTicketEmail(ticket);
   return sendEmail(subject, text);
 }

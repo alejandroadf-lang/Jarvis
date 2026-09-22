@@ -84,6 +84,10 @@ export const ASK_THE_TEAM = {
 export function openRealtimeSession({
   instructions,
   greeting,
+  // Which tools the model may call. The founder's line gets ask_the_team; a
+  // public support line gets lookup_issue and open_ticket and never
+  // ask_the_team, which would let any caller make this company do work.
+  tools = [ASK_THE_TEAM],
   onAudio = () => {},
   onSpeechStarted = () => {},
   onToolCall = () => {},
@@ -131,8 +135,8 @@ export function openRealtimeSession({
           prefix_padding_ms: 300,
           silence_duration_ms: 600,
         },
-        tools: [ASK_THE_TEAM],
-        tool_choice: 'auto',
+        tools,
+        tool_choice: tools.length ? 'auto' : 'none',
       },
     });
 

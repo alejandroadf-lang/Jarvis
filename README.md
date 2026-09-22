@@ -157,3 +157,53 @@ only): say "Hey Jarvis" followed by your request — in one breath or as two
 separate turns — and it's submitted automatically, no click required. It
 runs a separate continuous `SpeechRecognition` session from the manual
 push-to-talk button, so the two are mutually exclusive while wake word is on.
+
+## Deploy to an IONOS VPS
+
+Railway cannot accept inbound UDP, and WhatsApp calling carries its audio as
+WebRTC over UDP. That one fact is the whole reason the phone line needed
+Twilio or a SIP leg. A VPS has no such limit, so hosting the app on one is the
+path to answering a WhatsApp call directly. Any Docker-capable box works; the
+steps below are written for an [IONOS Cloud VPS](https://www.ionos.com/servers/cloud-vps).
+
+Be clear about what this does and does not do. **Moving the host removes the
+blocker. It does not make WhatsApp calls work.** The calling client — Meta's
+`connect` webhook, the SDP answer, the WebRTC media session — is still to be
+built, and it will be built against Meta's calling documentation rather than
+from summaries of it. `docker-compose.yml` reserves the UDP range that client
+will use, so the firewall is opened once.
+
+You need someone with a laptop and SSH for about an hour. Nothing below can be
+done from a phone.
+
+1. **Create the VPS.** Ubuntu, the smallest size is enough. In the Cloud
+   Panel's **Firewall Policies**, allow inbound TCP 22, 80 and 443, and
+   **inbound UDP 50000–50100**. IONOS allows only TCP 22/80/443/8443/8447 by
+   default; the UDP range is the point of the exercise and is not open until
+   you open it.
+2. **Point a hostname at it.** An A record — `jarvis.yourdomain.com` — to the
+   VPS's IP. Caddy requests the HTTPS certificate for that name and fails if
+   the record is not there yet. Meta's webhooks and the browser microphone both
+   refuse plain HTTP, so there is no skipping this.
+3. **Install Docker** on the VPS (`curl -fsSL https://get.docker.com | sh`),
+   clone this repo, and copy `server/.env.example` to `server/.env`. Fill in
+   the same variables Railway holds — `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+   `WHATSAPP_*`, `SMTP_*`, `APP_ACCESS_TOKEN` and the rest. Secrets live in
+   that file on the server and nowhere else.
+4. **Start it:** `JARVIS_DOMAIN=jarvis.yourdomain.com docker compose up -d`.
+   Persistence is a named volume mounted at `/data`, and `JARVIS_DATA_DIR`
+   already points there — it survives `docker compose down` and rebuilds.
+5. **Stop the Railway service** before the next step. Two deployments sharing
+   one WhatsApp number and one 8am schedule are two companies with one name.
+6. **Move the webhook.** In Meta's app settings, change the WhatsApp webhook
+   URL to `https://jarvis.yourdomain.com/api/whatsapp/webhook` and re-verify
+   it with the same `WHATSAPP_VERIFY_TOKEN`.
+
+**Check that it worked**, in this order, because each fails silently:
+`https://jarvis.yourdomain.com/api/health` returns OK over HTTPS with a valid
+certificate; a WhatsApp `INTEGRATIONS` is answered from the new host; and
+after a `docker compose restart`, its **storage** line reports a survived
+restart rather than a first boot.
+
+To move back, reverse steps 5 and 6. The Railway volume still holds the old
+state; the two do not sync.

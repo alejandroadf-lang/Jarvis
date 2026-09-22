@@ -30,6 +30,7 @@
 //      make it useful on day thirty are the uncomfortable ones.
 
 import { readJson, writeJson } from './store.js';
+import { listVentures, describePricing, pipelineSummary } from './finance/ventures.js';
 
 const FILE = 'pitches.json';
 const KEPT = 60;
@@ -128,6 +129,38 @@ export function describePreviousPitches(limit = 20) {
 }
 
 /**
+ * What the company is actually building, for the generator to build on.
+ *
+ * The founder's complaint after a week of mornings: the ideas were not linked
+ * to anything. They could not have been — the kickoff carried the previous
+ * pitches and nothing else, so the generator had no idea CircadianAPI existed,
+ * let alone who buys it or through what channel. A pitch that compounds with a
+ * live venture (same buyer, same distribution, same data) is worth ten that
+ * start from nothing, and the generator can only compound with what it is
+ * shown.
+ *
+ * Deliberately lean: title, one line, buyer, price, and whether anyone is
+ * paying. Not the whole company context — a pitch is not a status report, and
+ * the treasury and the plan would only pull it toward caution.
+ */
+export function describeWhatWeAreBuilding() {
+  const active = listVentures().filter((v) => v.status === 'active');
+  if (!active.length) return 'The company has no live venture yet. Nothing to compound with — pitch from a clean sheet.';
+  return [
+    'What the company is building now:',
+    ...active.map((v) => {
+      const pipe = pipelineSummary(v.id);
+      const traction = pipe.payingMonthly > 0
+        ? `${pipe.byStage.paying || 0} paying, ${pipe.contacts} contacts`
+        : pipe.contacts > 0
+          ? `${pipe.contacts} contacts, nobody paying yet`
+          : 'no customers yet';
+      return `  ${v.title} — ${v.oneLiner || '(no one-liner)'}\n    buyer: ${v.targetCustomer || 'unstated'} · price: ${describePricing(v)} · ${traction}`;
+    }),
+  ].join('\n');
+}
+
+/**
  * The slides, as a tool schema.
  *
  * Structured rather than prose so the email renders the same every morning,
@@ -191,7 +224,7 @@ export function formatPitchEmail(pitch, { note = '' } = {}) {
   if (!pitch || !pitch.title) {
     return {
       subject: 'Pitch of the day: nothing new',
-      text: [note || 'No pitch this morning.', '', 'Nothing has been started and no venture exists.'].join('\n'),
+      text: [note || 'No pitch this morning.', '', 'Nothing was started — a pitch never creates a venture.'].join('\n'),
     };
   }
 
@@ -211,7 +244,7 @@ export function formatPitchEmail(pitch, { note = '' } = {}) {
     slide(6, 'What would have to be true', pitch.what_would_have_to_be_true),
     slide(7, 'How to kill it this week', pitch.how_to_kill_it_this_week),
     '───',
-    'This is a provocation, not a proposal. Nothing has been started and no venture exists.',
+    'This is a provocation, not a proposal. Nothing was started — a pitch never creates a venture.',
     'If you want it built, say so and the Studio will work it up properly.',
   ]
     .filter((part) => part !== null)
@@ -224,7 +257,7 @@ export function formatPitchEmail(pitch, { note = '' } = {}) {
 
 const MAX_ATTEMPTS = 2;
 
-function kickoff(previous) {
+function kickoff(previous, building) {
   return `Pitch one idea this morning, as an elevator pitch to an investor who has four minutes.
 
 One idea, not three. Argue it properly and aim high: something that could be a
@@ -239,8 +272,18 @@ false — the riskiest one, not three comfortable ones. "How to kill it this wee
 is a real test someone could run tomorrow, with the result that would count as
 failure. A pitch that cannot fill those honestly has found a hole in itself.
 
-This starts nothing. There is no venture, no commitment and no work — so do not
-hedge toward something safe on the grounds that it might get built.
+This starts nothing. Presenting it creates no venture, no commitment and no
+work — so do not hedge toward something safe on the grounds that it might get
+built.
+
+${building}
+
+Prefer an idea that compounds with what is being built: the same buyer reached
+again, the same distribution used twice, the same data sold a second way. That
+is where an agent-run company's edge is largest, because the first venture has
+already paid for the door. If today's best idea is genuinely unrelated, pitch
+it anyway — but say in the hook why it beats building next to what exists.
+Do not re-pitch a live venture under a new name; that is a repeat, not a link.
 
 ${previous}
 
@@ -264,11 +307,27 @@ export async function generatePitch({ anthropic, runAgent, agents, agentId }) {
       ? `${describePreviousPitches()}\n\nYour last attempt ("${lastRepeat.candidate.title}") was too close to "${lastRepeat.match.pitch.title}" from ${lastRepeat.match.pitch.at.slice(0, 10)}. Pitch something genuinely different — a different buyer, a different problem, not the same idea renamed.`
       : describePreviousPitches();
 
+    // The bug that made every morning empty: present_pitch was passed as a
+    // handler and never as a tool. runAgent offers the model only what is in
+    // agent.actions, so the prompt said "call present_pitch" to a model that
+    // had no such tool, captured stayed null both attempts, and the email said
+    // "nothing usable" — for weeks, behind tests whose fake runAgent called the
+    // handler directly and never went through tool assembly.
+    //
+    // The root agent is cloned for this run with exactly one tool. Not its
+    // own propose_venture: there is no handler for it here, and the promise
+    // that a pitch cannot create a venture should hold at the tool list, not
+    // only at the handler map. No reports either — one voice, four minutes.
+    const roster = {
+      ...agents,
+      [agentId]: { ...(agents[agentId] || {}), actions: [PITCH_TOOL], reports: [] },
+    };
+
     await runAgent({
       anthropic,
-      agents,
+      agents: roster,
       agentId,
-      messages: [{ role: 'user', content: kickoff(previous) }],
+      messages: [{ role: 'user', content: kickoff(previous, describeWhatWeAreBuilding()) }],
       actionHandlers: {
         present_pitch: (input) => {
           captured = input;

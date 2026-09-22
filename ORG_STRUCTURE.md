@@ -3611,3 +3611,136 @@ themselves in another**. That is the actual customer-service failure — not
 being unable to speak Spanish, but making a Spanish speaker feel like a problem
 to be routed. It opens in `DESK_LANGUAGE`, because a greeting must commit
 before the caller has spoken, and follows them from their first word.
+
+### Instance twelve: the pitch that was never once presented
+
+*"Pitch of the day: nothing new"* — every morning, for as long as the feature
+had existed. The founder's question was whether the generator could even see
+CircadianAPI, because the email also said *"no venture exists."*
+
+Two separate things, and the smaller one first: that sentence was a fixed
+disclaimer meaning *a pitch starts nothing*, and with a priced venture in the
+portfolio it read as a claim about the portfolio. It now says what it meant.
+
+The larger one is the pattern again, in its purest form so far. `generatePitch`
+passed `present_pitch` as an **action handler** — the thing that runs when the
+model calls the tool. But `runAgent` offers the model only the tools listed in
+`agent.actions`, and `PITCH_TOOL` was never added to any agent. The prompt said
+*"Call present_pitch once"* to a model that had no such tool. It could not
+comply. `captured` stayed null on both attempts, and the honest fallback said
+"nothing usable" — accurately, every single day.
+
+The test suite passed throughout. Its stand-in for `runAgent` called
+`actionHandlers.present_pitch` directly, never going through tool assembly, so
+the tests exercised the handler and not the door to it. The fake agreed with its
+author; the runner did not. Same shape as `"spanish"` → `"sp"`.
+
+The fix clones the root agent for the run with exactly one tool — and not its
+own `propose_venture`, so the promise that a pitch cannot create a venture now
+holds at the tool list rather than only at the handler map. The new tests
+assert on what `runAgent` is *handed*, which is the contract that was broken.
+
+### And why the ideas were not linked to anything
+
+They could not have been. The kickoff carried the previous pitches and nothing
+else; the generator had no idea CircadianAPI existed, who buys it, or at what
+price. `describeWhatWeAreBuilding()` now puts each live venture — one line,
+buyer, price, whether anyone is paying — into the prompt, with an instruction
+to prefer an idea that *compounds*: the same buyer reached again, the same
+distribution used twice, the same data sold a second way. That is where an
+agent-run company's edge is largest, because the first venture has already paid
+for the door. Re-pitching a live venture under a new name is named as a repeat,
+not a link.
+
+## A support desk for somebody else's software
+
+The founder asked for a call centre that solves problems with the Amadeus
+application, on a live call, in any language. The conversation half existed.
+What a call centre needs on top is the thing no model has: **the procedures**.
+
+A desk that answers from training data will confidently walk a travel agent
+through steps that were true in 2023. On a support call a wrong step is worse
+than no step — it costs the caller an hour and the desk its credibility. So the
+desk knows exactly what is in its knowledge base and nothing else. It looks
+procedures up mid-call with `lookup_issue`, gives them one step at a time, and
+when nothing matches it says so and opens a ticket with `open_ticket`, which
+reaches the founder by email. *"I don't have that one — let me log it and
+someone will come back to you"* is a real answer. An invented one is not.
+
+### Two boundaries, both structural
+
+**It is not the vendor.** Amadeus is a real company. A desk that answers "this
+is Amadeus" on a public number is impersonation, so the brief is written so it
+cannot: *an independent support desk for people who use Amadeus; you are not
+Amadeus, you do not work for Amadeus, and if asked you say so plainly.*
+`SUPPORT_PRODUCT` makes it a Sabre desk or anyone else's; the sentence holds.
+
+**It holds no company state.** Same allowlist discipline as the customer desk:
+the founder's brief never enters the prompt, `ask_the_team` is never among its
+tools, and what a prompt never contained cannot be leaked from it.
+
+### The knowledge base is edited from a phone
+
+It lives in the data directory, seeded with five triage procedures that are
+labelled *example* until replaced — every one is "get the exact error, check
+the environment, restart, then ticket", and none asserts an internal of the
+product this code cannot verify. The founder teaches it from WhatsApp:
+
+```
+ISSUES
+ISSUE Seat map blank | seat map blank, cannot pick seats | Check the segment is HK, then reopen the map.
+ISSUE DEL 3
+```
+
+A file nobody can edit is a knowledge base nobody can grow, and the founder
+has no terminal. Retrieval is token overlap, reusing the pitch de-duplicator —
+the wrong tool for semantic search and the right one for forty entries edited
+from a phone.
+
+### One desk, three ways in
+
+The browser Talk tab has a third option. The phone bridge answers as the desk
+when `CALL_MODE=support` — and in that mode the allowlist does not apply,
+because a help line with an allowlist helps nobody, while the per-call and
+per-day caps still do, because they are what stop a public number becoming a
+public bill. The founder's line stays the default: a misspelt `CALL_MODE`
+cannot open the founder's assistant to whoever dials.
+
+### The desk becomes the agency's own, and answers strangers on WhatsApp
+
+The founder dropped the vendor case in one sentence: *"just make a travel
+agency help desk … for someone that is calling you via WhatsApp."* Two things
+changed, and neither is the conversation.
+
+**Whose desk it is.** `SUPPORT_MODE=agency` (the default now) makes the caller
+the agency's customer — a booking that never arrived, a flight to change, a
+refund. The vendor persona stays behind `SUPPORT_MODE=vendor`. The one line
+that differs between them is what the desk may promise, and for the agency it
+is *nothing*: it can look procedures up and log a request; it cannot change,
+cancel, refund, rebook or pay for anything on the call, and it is told to say
+so plainly rather than imply it is done. A promise made on the phone that nobody
+keeps is the complaint that ends up in a review. The seven starting procedures
+are the calls an agency actually gets, and every one ends in a ticket rather
+than a commitment.
+
+**Who can reach it.** Until now the WhatsApp number talked to exactly one
+person. Every other sender was dropped as *not allowlisted* — correct for a
+founder's private line and useless for a help desk. `WHATSAPP_DESK=true`
+routes strangers to the desk instead: text or voice note, answered the way it
+arrived, in the language it was spoken in, with its own conversation history
+per number.
+
+What that path deliberately lacks is the point. It never parses founder
+commands or plan approvals, never runs the company turn, never sees company
+state. A stranger typing `HALT` is a customer saying halt, not the founder.
+The transcription is shared with the founder's path — `hearMessage()` — so a
+customer's Spanish voice note is heard exactly the way the founder's is, and
+the `"spanish"`-to-`"sp"` class of bug cannot return on one path while fixed
+on the other.
+
+This is turn-based, not a call: a voice note in, a voice note back, about
+fifteen seconds apart. The real-time version is the Talk tab today and a
+WhatsApp call once the app runs on a host that accepts UDP. But it is a
+conversation a customer can have on the number they already have, in their own
+language, that ends with a ticket a person will act on — which is the thing
+the founder asked to demonstrate.

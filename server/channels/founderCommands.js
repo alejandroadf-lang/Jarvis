@@ -55,6 +55,7 @@ import { listTasks } from '../tasks.js';
 import { describeDegradation } from '../degradation.js';
 import { isEvalRunning } from '../eval/run.js';
 import { deployReadiness, outreachReadiness, formatReadinessBrief } from '../readiness.js';
+import { listIssues, addIssue, removeIssue, describeSupportDesk } from '../realtime/supportDesk.js';
 
 const COMMANDS = [
   { kind: 'help', re: /^(help|commands|\?)$/i },
@@ -62,6 +63,10 @@ const COMMANDS = [
   { kind: 'resume', re: /^(resume|unhalt|go\s+live)$/i },
   { kind: 'spend', re: /^(spend|cost|budget)$/i },
   { kind: 'integrations', re: /^(integrations|connections|health)$/i },
+  { kind: 'pitch', re: /^(pitch|pitch now|pitch of the day)$/i },
+  { kind: 'issues', re: /^(issues|procedures|desk)$/i },
+  { kind: 'issue_del', re: /^issue\s+del(?:ete)?\s+(\d+)$/i },
+  { kind: 'issue_add', re: /^issue\s+([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*([\s\S]+)$/i },
   { kind: 'ventures', re: /^(ventures|portfolio|list\s+ventures)$/i },
   // The founder's own version of the team's check_ready.
   //
@@ -217,6 +222,8 @@ export function parseFounderCommand(text) {
       if (kind === 'block') return { kind, ventureId: match[1], email: match[2], reason: (match[3] || 'blocked by founder').trim() };
       if (kind === 'unblock') return { kind, ventureId: match[1], email: match[2] };
       if (kind === 'discount') return { kind, ventureId: match[1], floor: Number(match[2]) };
+      if (kind === 'issue_del') return { kind, id: Number(match[1]) };
+      if (kind === 'issue_add') return { kind, title: match[1].trim(), symptoms: match[2].trim(), steps: match[3].trim() };
       if (kind === 'mcp') return { kind, ventureId: match[1], url: match[2] };
       if (kind === 'draft_bin') return { kind, draftId: match[1].toLowerCase(), reason: (match[2] || '').trim() };
       if (kind === 'dryrun') {
@@ -374,6 +381,11 @@ SPEND — today's model spend against the cap
 INTEGRATIONS — what's actually connected
 MODELS [search] — live OpenRouter models and their prices
 REPORT — the latest daily report
+PITCH — generate today's pitch now and email it, exactly as the 8am one
+
+ISSUES — the support desk's procedures, and what a caller reaches
+ISSUE <title> | <symptoms a caller describes> | <steps> — teach the desk one
+ISSUE DEL <n> — remove a procedure
 GRAPH — the company as a live picture, as a link
 EVAL [scenario] — grade the agents' judgment against the eval scenarios
 PLAN — today's plan (APPROVE / REJECT <reason> to decide it)
@@ -748,6 +760,40 @@ export async function runFounderCommand(command, deps = {}) {
       const degraded = describeDegradation();
       const body = lines.length ? lines.join('\n') : 'Nothing reported a status.';
       return degraded ? `${body}\n\n${degraded}` : body;
+    }
+
+    case 'pitch': {
+      // Runs the same code the 8am cycle runs, so what comes back is what
+      // tomorrow's email will look like — not a preview of it. The email is
+      // sent as well; the text is returned so the founder reads it here
+      // without switching apps.
+      if (!deps.runPitch) return 'The pitch generator is not available on this build.';
+      const { email, pitch, sent } = await deps.runPitch();
+      const head = pitch
+        ? `Pitched, and ${sent ? 'emailed' : 'not emailed'}. This is what the 8am one will look like:`
+        : 'No pitch came back. This is exactly the email the morning cycle would have sent:';
+      return `${head}\n\n${email.subject}\n\n${email.text}`;
+    }
+
+    case 'issues': {
+      const issues = listIssues();
+      const lines = [describeSupportDesk(), ''];
+      for (const issue of issues) {
+        lines.push(`#${issue.id} ${issue.title}${issue.example ? ' (example — replace)' : ''}`);
+        lines.push(`   when: ${issue.symptoms}`);
+      }
+      if (!issues.length) lines.push('No procedures yet. Add one with ISSUE <title> | <symptoms> | <steps>.');
+      return lines.join('\n');
+    }
+
+    case 'issue_add': {
+      const issue = addIssue(command);
+      return `Added #${issue.id} "${issue.title}". The desk will find it when a caller describes: ${issue.symptoms}`;
+    }
+
+    case 'issue_del': {
+      removeIssue(command.id);
+      return `Removed #${command.id}. ${listIssues().length} procedure(s) remain.`;
     }
 
     case 'link_repo': {

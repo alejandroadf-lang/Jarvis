@@ -66,7 +66,7 @@ import {
 } from './actionHandlers.js';
 import { listDailyReports, getDailyReport, getLatestDailyReport } from './dailyReports.js';
 import { startDailyMeetingScheduler, runDailyMeetingNow, isDailyMeetingRunning } from './scheduler.js';
-import { studioActionHandlers } from './dailyMeeting.js';
+import { studioActionHandlers, runPitchNow } from './dailyMeeting.js';
 import { getKillSwitch, haltRealActions, resumeRealActions } from './killSwitch.js';
 import { getSpendSummary } from './spend.js';
 import { getIntegrationStatus } from './integrations.js';
@@ -123,8 +123,11 @@ import {
 import { isOpenAIConfigured, transcribeAudio } from './agents/openai.js';
 import { isSpeechConfigured, synthesize, spokenExcerpt, spokenReplyInstruction } from './speech.js';
 import { attachCallStream, answerCallTwiml } from './realtime/twilioBridge.js';
+import { verifyTwilioRequest } from './realtime/twilioAuth.js';
 import { refuseCall, describeCalling, callMinutesRemaining } from './realtime/callPolicy.js';
 import { mintBrowserSession, isBrowserCallConfigured } from './realtime/browserSession.js';
+import { runSupportTool, isWhatsAppDeskEnabled } from './realtime/supportDesk.js';
+import { runDeskTurn } from './channels/deskTurn.js';
 import { replyLanguageInstruction, describeLanguageSetting, spokenLanguage, truncationNotice } from './language.js';
 import { listWeeklyReflections, getWeeklyReflection, getLatestWeeklyReflection } from './weeklyReflections.js';
 import { startWeeklyReflectionScheduler, runWeeklyReflectionNow, isWeeklyReflectionRunning } from './weeklyScheduler.js';
@@ -155,6 +158,7 @@ preamble. When you don't know something, say so plainly instead of guessing.`;
 // via sessionStore.js, so conversation history survives a server restart.
 const sessions = loadSessions('jarvis'); // sessionId -> [{ role, content }]
 const companySessions = loadSessions('company'); // sessionId -> [{ role, content }], CEO-level only
+const deskSessions = loadSessions('desk'); // sessionId -> [{ role, content }], one per stranger on the WhatsApp number
 const studioSessions = loadSessions('studio'); // sessionId -> [{ role, content }], Venture Partner-level only
 
 const app = express();
@@ -816,6 +820,20 @@ app.post('/api/whatsapp/webhook', (req, res) => {
   // A signature proves Meta sent it, not who typed it. The allowlist is the
   // gate that decides whose messages actually reach the company.
   if (!isAllowedSender(message.from)) {
+    // A stranger. With the help desk switched on they reach it — and only
+    // it: this path never parses founder commands or plan approvals and
+    // never runs the company turn, so "HALT" from an unknown number is a
+    // customer saying halt, not the founder. Off, they are dropped as before.
+    if (isWhatsAppDeskEnabled()) {
+      if (isDuplicate(message.id)) {
+        recordInbound({ stage: STAGES.DUPLICATE, from: message.from, text: message.text });
+        return;
+      }
+      handleDeskMessage(message).catch((err) => {
+        console.error('WhatsApp: the help desk failed to handle a message:', err);
+      });
+      return;
+    }
     console.warn(`WhatsApp: ignoring a message from an un-allowlisted number (${message.from}).`);
     recordInbound({ stage: STAGES.NOT_ALLOWLISTED, from: message.from, text: message.text });
     return;
@@ -868,19 +886,23 @@ async function replyToWhatsApp(message, reply, { asVoice = false, language = '' 
   }
 }
 
-async function handleWhatsAppMessage(message) {
+/**
+ * What was said, whether typed or spoken.
+ *
+ * Shared by the founder's path and the help desk's, so a customer's voice
+ * note is heard exactly the way the founder's is — same transcription, same
+ * language detection, same honest replies when there was nothing to hear.
+ * Transcribed here rather than inside either turn so everything downstream
+ * sees an ordinary text message.
+ *
+ * `handled` is true when a reply has already gone out (no speech, or the
+ * transcription failed) and the caller should stop.
+ */
+async function hearMessage(message) {
   let text = message.text.trim();
-  // Set when the founder spoke rather than typed: the language they spoke, and
-  // the fact that a voice note deserves a voice answer. Somebody sends one
-  // because their hands are full, and a wall of text is the wrong shape for
-  // that moment.
   let spokenIn = '';
   let arrivedAsVoice = false;
 
-  // A voice note is the natural way to brief a team while walking, and it
-  // used to get an apology. Transcribed here rather than inside the company
-  // turn so everything downstream — session history, the profit share, the
-  // inbound log — sees an ordinary text message.
   if (isVoiceNote(message) && message.mediaId && isOpenAIConfigured()) {
     try {
       const { buffer, filename } = await downloadMedia(message.mediaId);
@@ -891,15 +913,68 @@ async function handleWhatsAppMessage(message) {
       if (!text) {
         recordInbound({ stage: STAGES.UNSUPPORTED_TYPE, from: message.from, detail: 'Voice note had no speech in it' });
         await sendWhatsAppMessage(message.from, "I couldn't make out any words in that one — try again?");
-        return;
+        return { handled: true };
       }
     } catch (err) {
-      // The founder is holding their phone waiting. The reason beats silence.
+      // Whoever sent it is holding their phone waiting. The reason beats silence.
       recordInbound({ stage: STAGES.FAILED, from: message.from, detail: err.message });
       await sendWhatsAppMessage(message.from, `I couldn't transcribe that voice note — ${err.message}`);
-      return;
+      return { handled: true };
     }
   }
+  return { handled: false, text, spokenIn, arrivedAsVoice };
+}
+
+/**
+ * A stranger's message, answered by the help desk.
+ *
+ * Everything the founder's path has and this one does not is deliberate:
+ * no founder commands, no plan approval, no company turn, no company
+ * state. The desk gets the words, its own history for this number, and
+ * its two tools. The reply comes back the way it arrived — a voice note is
+ * answered with a voice note, in the language it was spoken in.
+ */
+async function handleDeskMessage(message) {
+  const heard = await hearMessage(message);
+  if (heard.handled) return;
+  const { text, spokenIn, arrivedAsVoice } = heard;
+
+  if (isImage(message) || !text) {
+    await sendWhatsAppMessage(message.from, "Send a message or a voice note describing the problem and I'll help.");
+    return;
+  }
+
+  const sessionId = `desk-${message.from}`;
+  const history = deskSessions.get(sessionId) || [];
+  const startedAt = Date.now();
+  try {
+    const { reply } = await runDeskTurn({
+      anthropic,
+      from: message.from,
+      text,
+      history,
+      spokenIn,
+      arrivedAsVoice,
+      deadlineAt: Date.now() + TURN_DEADLINE_MS,
+    });
+    const next = trimHistory([...history, { role: 'user', content: text }, { role: 'assistant', content: reply }]);
+    deskSessions.set(sessionId, next);
+    saveSession('desk', sessionId, next);
+
+    await replyToWhatsApp(message, reply, { asVoice: arrivedAsVoice, language: spokenIn });
+    recordInbound({ stage: STAGES.ANSWERED, from: message.from, text, detail: 'help desk', durationMs: Date.now() - startedAt });
+  } catch (err) {
+    console.error('Help desk turn failed:', err);
+    recordInbound({ stage: STAGES.FAILED, from: message.from, text, detail: err.message });
+    await sendWhatsAppMessage(message.from, 'Something went wrong on my side. Please try again in a moment.');
+  }
+}
+
+async function handleWhatsAppMessage(message) {
+  const heard = await hearMessage(message);
+  if (heard.handled) return;
+  let { text } = heard;
+  const { spokenIn, arrivedAsVoice } = heard;
 
   // A screenshot is how a founder explains something faster than they can
   // describe it — a settings page, an error, a competitor's pricing. The
@@ -971,6 +1046,9 @@ async function handleWhatsAppMessage(message) {
     try {
       const reply = await runFounderCommand(founderCommand, {
         probeIntegrations: getIntegrationStatus,
+        // The same function the 8am cycle calls, so PITCH shows the founder
+        // tomorrow's email rather than an approximation of it.
+        runPitch: () => runPitchNow({ anthropic }),
         // The rehearsal needs a model client for the CEO review, and it is
         // the same one every agent turn uses — a dry run against a different
         // client would be rehearsing a different company.
@@ -1399,10 +1477,16 @@ app.get('/privacy', (_req, res) => {
  */
 app.post('/api/calls/incoming', express.urlencoded({ extended: false }), (req, res) => {
   const from = req.body?.From || '';
+  // Proof it is Twilio calling, not somebody who found the URL. Passes when
+  // TWILIO_AUTH_TOKEN is unset, and the integration check says so.
+  if (!verifyTwilioRequest(req)) {
+    recordInbound({ stage: STAGES.BAD_SIGNATURE, from, detail: 'Twilio signature did not match TWILIO_AUTH_TOKEN' });
+    return res.status(403).type('text/plain').send('forbidden');
+  }
   // The public host Twilio reached us on, which is what the media stream must
   // dial back. Behind Railway's proxy the Host header is the public name.
   const host = req.get('x-forwarded-host') || req.get('host') || '';
-  const twiml = answerCallTwiml({ from, host });
+  const twiml = answerCallTwiml({ from, host, callSid: req.body?.CallSid || '' });
   const refusal = refuseCall(from);
   recordInbound({
     stage: refusal ? STAGES.NOT_ALLOWLISTED : STAGES.ANSWERED,
@@ -1428,7 +1512,12 @@ app.post('/api/calls/token', async (req, res) => {
     // A ventureId turns this into the customer desk: a different brief, no
     // company state, and no tools. The founder's own session is the one with
     // no desk named.
-    res.json(await mintBrowserSession({ desk: String(req.body?.desk || '').trim() }));
+    res.json(
+      await mintBrowserSession({
+        desk: String(req.body?.desk || '').trim(),
+        support: Boolean(req.body?.support),
+      })
+    );
   } catch (err) {
     console.error('Could not mint a browser session:', err.message);
     res.status(502).json({ error: err.message });
@@ -1452,6 +1541,28 @@ app.post('/api/calls/ask', async (req, res) => {
     res.json({ answer: reply });
   } catch (err) {
     console.error('A question from a conversation failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * The support desk's tools, for a browser session.
+ *
+ * On the phone bridge these run server-side inside the call. In the browser
+ * the model's tool calls arrive on the page's data channel, so the page has
+ * to bring them here. Only the desk's own tools are dispatched — ask_the_team
+ * keeps its own endpoint and its own keep-talking behaviour, and nothing else
+ * is callable by name.
+ */
+app.post('/api/calls/tool', async (req, res) => {
+  const name = String(req.body?.name || '').trim();
+  if (!['lookup_issue', 'open_ticket'].includes(name)) {
+    return res.status(400).json({ error: `"${name}" is not a tool a browser session may run.` });
+  }
+  try {
+    res.json({ output: await runSupportTool(name, req.body?.args || {}, { from: 'browser' }) });
+  } catch (err) {
+    console.error(`Support tool ${name} failed:`, err.message);
     res.status(500).json({ error: err.message });
   }
 });

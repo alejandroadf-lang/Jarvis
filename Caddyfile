@@ -1,0 +1,11 @@
+# HTTPS in front of the app, with certificates Caddy obtains and renews on
+# its own. Both Meta's webhooks and a browser's microphone refuse plain HTTP,
+# so this is not optional on a VPS the way it was invisible on Railway.
+#
+# WebSocket upgrades (the Twilio media stream, if ever used) pass through
+# reverse_proxy unchanged.
+
+{$JARVIS_DOMAIN} {
+    reverse_proxy jarvis:3001
+    encode gzip
+}

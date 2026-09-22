@@ -25,6 +25,7 @@ import { isWhatsAppConfigured, allowedNumbers, GRAPH_API } from './channels/what
 import { isOpenAIConfigured, chatModel, fallbackModel, transcribeModel } from './agents/openai.js';
 import { speechModel } from './speech.js';
 import { isCallingEnabled, describeCalling, callAllowedNumbers } from './realtime/callPolicy.js';
+import { isTwilioAuthConfigured } from './realtime/twilioAuth.js';
 import { isGeminiConfigured, geminiModel, listModelsUrl } from './agents/gemini.js';
 import { MODELS, CHEAP_TIER } from './agents/models.js';
 import { readSecret } from './env.js';
@@ -215,6 +216,18 @@ function probeCalling() {
       configured: true,
       ok: false,
       detail: 'Calls are on, but no number is allowed to call. Set CALL_ALLOWED_NUMBERS or WHATSAPP_ALLOWED_NUMBERS.',
+    };
+  }
+  // Works without it — and says so as a warning rather than a pass, because
+  // a public line that only the caps protect is a decision the founder should
+  // be making on purpose, not by omission.
+  if (!isTwilioAuthConfigured()) {
+    return {
+      configured: true,
+      ok: false,
+      detail:
+        `${describeCalling()} TWILIO_AUTH_TOKEN is not set, so nothing proves a call came from Twilio — ` +
+        'anyone who finds the URL can start one. Copy the auth token from the Twilio console.',
     };
   }
   return { configured: true, ok: true, detail: describeCalling() };
