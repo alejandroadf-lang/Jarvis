@@ -619,3 +619,28 @@ test('HELP mentions the desk commands', () => {
   assert.match(commands.__helpForTests, /ISSUE <title> \| <symptoms/);
   assert.match(commands.__helpForTests, /ISSUE DEL <n>/);
 });
+
+// --- TICKETS: proof a ticket exists, independent of the email ------------------------------
+
+test('TICKETS lists what the desk logged and whether each reached the inbox', async () => {
+  const { openTicket } = await import('../realtime/supportDesk.js');
+  await openTicket({ summary: 'Refund for booking XY12Z', callerName: 'Luc', contact: '+33600000000', language: 'French' });
+
+  const reply = await commands.runFounderCommand({ kind: 'tickets' });
+  assert.match(reply, /1 ticket\(s\) on record/);
+  assert.match(reply, /#1 .* open/);
+  assert.match(reply, /Refund for booking XY12Z/);
+  assert.match(reply, /Luc · \+33600000000 · French/);
+  // No SMTP in tests, so the honest state is "not sent" — and it must be visible.
+  assert.match(reply, /email not sent/);
+});
+
+test('TICKETS with nothing logged says so and says when one appears', async () => {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  fs.rmSync(path.join(tmpDir, 'tickets.json'), { force: true });
+  const reply = await commands.runFounderCommand({ kind: 'tickets' });
+  assert.match(reply, /No tickets yet/);
+  assert.equal(commands.parseFounderCommand('TICKETS')?.kind, 'tickets');
+  assert.match(commands.__helpForTests, /TICKETS — what the desk has logged/);
+});

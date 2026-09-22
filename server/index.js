@@ -124,6 +124,7 @@ import { isOpenAIConfigured, transcribeAudio } from './agents/openai.js';
 import { isSpeechConfigured, synthesize, spokenExcerpt, spokenReplyInstruction } from './speech.js';
 import { attachCallStream, answerCallTwiml } from './realtime/twilioBridge.js';
 import { verifyTwilioRequest } from './realtime/twilioAuth.js';
+import { isDeskApiConfigured, verifyDeskKey, deskLookup, deskTicket, describeDeskApi } from './realtime/deskApi.js';
 import { refuseCall, describeCalling, callMinutesRemaining } from './realtime/callPolicy.js';
 import { mintBrowserSession, isBrowserCallConfigured } from './realtime/browserSession.js';
 import { runSupportTool, isWhatsAppDeskEnabled } from './realtime/supportDesk.js';
@@ -1564,6 +1565,38 @@ app.post('/api/calls/tool', async (req, res) => {
   } catch (err) {
     console.error(`Support tool ${name} failed:`, err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * The help desk for a voice bot that is not ours — the IONOS AI Receptionist
+ * on its own number, or any IVR that can call a URL mid-call. Keyed on
+ * DESK_API_KEY and closed without it; see realtime/deskApi.js for why the
+ * request shape is forgiving and the response carries a `spoken` line.
+ */
+function requireDeskKey(req, res, next) {
+  if (!isDeskApiConfigured()) {
+    return res.status(503).json({ error: 'DESK_API_KEY is not set, so the desk is not reachable from outside.' });
+  }
+  if (!verifyDeskKey(req)) return res.status(401).json({ error: 'Bad or missing desk key.' });
+  return next();
+}
+
+app.get('/api/desk/ping', requireDeskKey, (_req, res) => {
+  res.json({ ok: true, desk: describeDeskApi() });
+});
+
+app.post('/api/desk/lookup', express.urlencoded({ extended: false }), requireDeskKey, (req, res) => {
+  res.json(deskLookup(req.body || {}));
+});
+
+app.post('/api/desk/ticket', express.urlencoded({ extended: false }), requireDeskKey, async (req, res) => {
+  try {
+    res.json(await deskTicket(req.body || {}, { from: String(req.body?.from || '') }));
+  } catch (err) {
+    // A bot mid-call needs a sentence, not a stack. 400 with the reason, and
+    // a spoken line so it can still say something useful.
+    res.status(400).json({ error: err.message, spoken: 'I could not log that — could you describe the problem again?' });
   }
 });
 

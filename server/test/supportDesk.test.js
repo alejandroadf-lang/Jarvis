@@ -104,7 +104,9 @@ test('open_ticket saves the ticket and returns a number to read back', async () 
     { summary: 'ER rejected with an unknown code', callerName: 'Ana', contact: 'ana@agency.example', language: 'Spanish' },
     { from: '+34600000000' }
   );
-  assert.match(out, /Ticket #1 is open/);
+  // No SMTP in tests, so the honest wording is "saved, but the email..."; the
+  // number and the contact must be there either way.
+  assert.match(out, /Ticket #1 is (open|saved)/);
   assert.match(out, /ana@agency\.example/);
   const [ticket] = desk.listTickets();
   assert.equal(ticket.callerName, 'Ana');
@@ -242,4 +244,45 @@ test('describeSupportDesk says whose desk it is', (t) => {
   process.env.SUPPORT_MODE = 'vendor';
   t.after(() => delete process.env.SUPPORT_MODE);
   assert.match(desk.describeSupportDesk(), /an independent desk for Amadeus users/);
+});
+
+// --- The email is the point ----------------------------------------------------------------
+//
+// "When it opens a ticket, literally send an email to my mailbox." It does,
+// through the transport the daily report uses. What must not happen is the
+// failure case being silent: a ticket nobody was told about is a note to
+// self, and a mail that never arrived looks exactly like a call that never
+// happened. So the outcome is on the ticket and in what the desk says.
+
+test('a ticket records whether its email went out, and the desk says so to the caller', async () => {
+  // No SMTP in tests: the honest state is "not emailed", and it must be said.
+  const out = await desk.runSupportTool('open_ticket', { summary: 'Refund for XY12Z', contact: 'ana@x.example' });
+  assert.match(out, /Ticket #1 is saved, but the email to the team could not be sent/);
+  assert.match(out, /may take longer than usual/);
+  const [ticket] = desk.listTickets();
+  assert.equal(ticket.emailed, false, 'persisted on the ticket, so TICKETS can show it');
+  assert.equal(ticket.summary, 'Refund for XY12Z', 'and the ticket itself is not lost');
+});
+
+test('a failed send still keeps the ticket', async (t) => {
+  // A transport that exists but cannot connect: sendMail throws, the catch
+  // runs, the ticket survives with emailed:false.
+  process.env.SMTP_HOST = '127.0.0.1';
+  process.env.SMTP_PORT = '9';
+  process.env.REPORT_EMAIL_TO = 'founder@x.example';
+  t.after(() => { delete process.env.SMTP_HOST; delete process.env.SMTP_PORT; delete process.env.REPORT_EMAIL_TO; });
+  const ticket = await desk.openTicket({ summary: 'Name correction for booking QQ1' });
+  assert.equal(ticket.emailed, false);
+  assert.equal(desk.listTickets().length, 1);
+});
+
+test('the ticket email carries the description the founder asked for', async () => {
+  const { formatTicketEmail } = await import('../email.js');
+  const { subject, text } = formatTicketEmail({
+    id: 3, product: 'Amadeus', summary: 'Caller wants to move flight LH123 from 4 Oct to 6 Oct; fare rules unknown',
+    callerName: 'Luc', contact: '+33600000000', language: 'French', from: '+33600000000', at: '2026-09-22T08:00:00.000Z',
+  });
+  assert.match(subject, /Support ticket #3: Caller wants to move flight LH123/);
+  assert.match(text, /move flight LH123 from 4 Oct to 6 Oct; fare rules unknown/, 'the full description, not a truncated subject');
+  assert.match(text, /Reach them: \+33600000000/);
 });

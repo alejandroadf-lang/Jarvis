@@ -55,7 +55,7 @@ import { listTasks } from '../tasks.js';
 import { describeDegradation } from '../degradation.js';
 import { isEvalRunning } from '../eval/run.js';
 import { deployReadiness, outreachReadiness, formatReadinessBrief } from '../readiness.js';
-import { listIssues, addIssue, removeIssue, describeSupportDesk } from '../realtime/supportDesk.js';
+import { listIssues, addIssue, removeIssue, describeSupportDesk, listTickets } from '../realtime/supportDesk.js';
 
 const COMMANDS = [
   { kind: 'help', re: /^(help|commands|\?)$/i },
@@ -65,6 +65,7 @@ const COMMANDS = [
   { kind: 'integrations', re: /^(integrations|connections|health)$/i },
   { kind: 'pitch', re: /^(pitch|pitch now|pitch of the day)$/i },
   { kind: 'issues', re: /^(issues|procedures|desk)$/i },
+  { kind: 'tickets', re: /^tickets$/i },
   { kind: 'issue_del', re: /^issue\s+del(?:ete)?\s+(\d+)$/i },
   { kind: 'issue_add', re: /^issue\s+([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*([\s\S]+)$/i },
   { kind: 'ventures', re: /^(ventures|portfolio|list\s+ventures)$/i },
@@ -386,6 +387,7 @@ PITCH — generate today's pitch now and email it, exactly as the 8am one
 ISSUES — the support desk's procedures, and what a caller reaches
 ISSUE <title> | <symptoms a caller describes> | <steps> — teach the desk one
 ISSUE DEL <n> — remove a procedure
+TICKETS — what the desk has logged, and whether each reached your inbox
 GRAPH — the company as a live picture, as a link
 EVAL [scenario] — grade the agents' judgment against the eval scenarios
 PLAN — today's plan (APPROVE / REJECT <reason> to decide it)
@@ -783,6 +785,22 @@ export async function runFounderCommand(command, deps = {}) {
         lines.push(`   when: ${issue.symptoms}`);
       }
       if (!issues.length) lines.push('No procedures yet. Add one with ISSUE <title> | <symptoms> | <steps>.');
+      return lines.join('\n');
+    }
+
+    case 'tickets': {
+      // The founder's own proof that a ticket exists, independent of the
+      // email: a ticket nobody is told about is a note to self, and a mail
+      // that never arrived looks exactly like a call that never happened.
+      const tickets = listTickets().slice(-15).reverse();
+      if (!tickets.length) return 'No tickets yet. The desk opens one when a caller\'s problem is not on record, or when they ask for a person.';
+      const lines = [`${listTickets().length} ticket(s) on record, newest first:`, ''];
+      for (const t of tickets) {
+        const mail = t.emailed === false ? '⚠️ email not sent' : t.emailed === true ? '✉️ emailed' : '';
+        lines.push(`#${t.id} · ${t.at.slice(0, 16).replace('T', ' ')} · ${t.status}${mail ? ` · ${mail}` : ''}`);
+        lines.push(`   ${t.summary}`);
+        if (t.callerName || t.contact) lines.push(`   ${[t.callerName, t.contact].filter(Boolean).join(' · ')}${t.language ? ` · ${t.language}` : ''}`);
+      }
       return lines.join('\n');
     }
 

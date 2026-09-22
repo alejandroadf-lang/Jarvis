@@ -119,7 +119,7 @@ test('open_ticket carries the caller\'s number and the language of the call even
   const run = recorder();
   await desk.runDeskTurn({ anthropic: {}, from: '+34600000000', text: 'x', spokenIn: 'spanish', runAgentImpl: run });
   const out = await run.seen.actionHandlers.open_ticket({ summary: 'Refund for booking ABC123', callerName: 'Ana' });
-  assert.match(out, /Ticket #1 is open/);
+  assert.match(out, /Ticket #1 is (open|saved)/);
 
   const { listTickets } = await import('../realtime/supportDesk.js');
   const [ticket] = listTickets();

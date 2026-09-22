@@ -36,7 +36,19 @@ const PUBLIC_PATHS = new Set(['/api/health', '/api/whatsapp/webhook', '/privacy'
 // Kept as a separate set from PUBLIC_PATHS rather than folded into it: a reader
 // scanning for what is unauthenticated must not find a path here that is in
 // fact authenticated by other means, and vice versa.
-const SELF_AUTHENTICATED_PATHS = new Set(['/api/graph', '/api/payments/webhook']);
+//
+// /api/desk/* is called by an outside voice bot — the IONOS AI Receptionist on
+// its own number, or any IVR — with DESK_API_KEY, a credential that can look
+// up a procedure and open a ticket and do nothing else (see realtime/deskApi.js).
+// Same reasoning as the usage-ingest key below: handing a third party the app
+// token would mean their bot could disable the kill switch.
+const SELF_AUTHENTICATED_PATHS = new Set([
+  '/api/graph',
+  '/api/payments/webhook',
+  '/api/desk/ping',
+  '/api/desk/lookup',
+  '/api/desk/ticket',
+]);
 
 // Usage ingest is the first endpoint a machine outside this company calls.
 // It carries a per-venture key rather than the app token, and the distinction
