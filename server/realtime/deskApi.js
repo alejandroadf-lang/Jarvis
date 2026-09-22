@@ -92,9 +92,13 @@ export async function deskTicket(body = {}, { from = '' } = {}) {
     language: pick(body, 'language', 'lang', 'locale'),
     from: from || pick(body, 'from', 'caller_number', 'callerNumber'),
   });
+  const reach = ticket.contact ? ` at ${ticket.contact}` : '';
   return {
     ticketId: ticket.id,
-    spoken: `I've logged this as ticket number ${ticket.id}. Someone will come back to you${ticket.contact ? ` at ${ticket.contact}` : ''}.`,
+    emailed: ticket.emailed === true,
+    spoken: ticket.emailed
+      ? `I've logged this as ticket number ${ticket.id} and sent it to the team. Someone will come back to you${reach}.`
+      : `I've logged this as ticket number ${ticket.id}. The team hasn't been notified yet, so it may take a little longer — someone will come back to you${reach}.`,
   };
 }
 

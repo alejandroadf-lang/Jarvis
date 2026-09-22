@@ -293,13 +293,21 @@ export async function openTicket({ summary, callerName = '', contact = '', langu
   };
   data.tickets.push(ticket);
   writeJson(TICKETS, data);
+
   // The email is the point — a ticket nobody is told about is a note to
-  // self. Failure to send is logged and does not lose the ticket.
+  // self. Failure to send does not lose the ticket, but it is not silent
+  // either: the outcome is written onto the ticket, so the desk can tell the
+  // caller, the API can tell the bot, and TICKETS can show the founder which
+  // ones never reached them. sendEmail returns false with no transport and
+  // throws on a failed send; both are "not emailed".
+  let emailed = false;
   try {
-    await sendTicketEmail(ticket);
+    emailed = Boolean(await sendTicketEmail(ticket));
   } catch (err) {
     console.error(`Ticket #${ticket.id} saved but the email failed:`, err.message);
   }
+  ticket.emailed = emailed;
+  writeJson(TICKETS, data);
   return ticket;
 }
 
@@ -366,7 +374,13 @@ export async function runSupportTool(name, args = {}, { from = '' } = {}) {
   }
   if (name === 'open_ticket') {
     const ticket = await openTicket({ ...args, from });
-    return `Ticket #${ticket.id} is open. Read the number back to the caller and tell them someone will follow up${ticket.contact ? ` at ${ticket.contact}` : ''}.`;
+    const followUp = `Read the number back to the caller and tell them someone will follow up${ticket.contact ? ` at ${ticket.contact}` : ''}.`;
+    if (!ticket.emailed) {
+      // Honest to the caller, not just to the log. The ticket exists; the
+      // person who acts on it has not been told yet.
+      return `Ticket #${ticket.id} is saved, but the email to the team could not be sent right now. ${followUp} Tell them plainly it may take longer than usual to be picked up.`;
+    }
+    return `Ticket #${ticket.id} is open and has been emailed to the team. ${followUp}`;
   }
   return `There is no tool called "${name}" on this desk.`;
 }

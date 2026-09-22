@@ -3764,3 +3764,19 @@ form, fields under several likely names, a `spoken` sentence in every reply —
 because IONOS's documentation could not be read from where this was built, and
 a bot that can only speak a string should still be able to help. And nothing
 here can probe the wiring: the receptionist's first real call is the test.
+
+### A ticket is an email, and a missing email is not silent
+
+*"When it opens a ticket, literally send an email to my mailbox with the
+description."* It does — every ticket, from every way into the desk, through
+the same transport that delivers the daily report, with the full description,
+the caller, how to reach them and the language of the call.
+
+The change here is the failure case. A ticket whose email did not go out used
+to be saved quietly and logged where nobody looks. A ticket nobody was told
+about is a note to self, and a mail that never arrived looks exactly like a
+call that never happened. So the outcome is now written onto the ticket, and
+said out loud: the desk tells the caller it may take longer, the API tells the
+bot the team has not been notified, and `TICKETS` on WhatsApp shows the
+founder every ticket with ✉️ or ⚠️ beside it — proof a ticket exists that does
+not depend on the email having arrived.

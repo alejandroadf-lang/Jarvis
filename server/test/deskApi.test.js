@@ -148,3 +148,12 @@ test('describeDeskApi names the missing variable, then the endpoints once it is 
   assert.match(api.describeDeskApi(), /\/api\/desk\/lookup and \/api\/desk\/ticket/);
   assert.match(api.describeDeskApi(), /the travel help desk/);
 });
+
+test('the ticket response tells the bot whether the team was actually notified', async () => {
+  // No SMTP here, so the truthful answer is no — and the spoken line says so,
+  // rather than promising a follow-up nobody has been told about.
+  const out = await api.deskTicket({ summary: 'Lost e-ticket for booking AB1', name: 'Ana' });
+  assert.equal(out.emailed, false);
+  assert.match(out.spoken, /hasn't been notified yet/);
+  assert.match(out.spoken, /ticket number 1/);
+});
