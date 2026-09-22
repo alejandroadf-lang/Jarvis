@@ -42,9 +42,18 @@ const PUBLIC_PATHS = new Set(['/api/health', '/api/whatsapp/webhook', '/privacy'
 // up a procedure and open a ticket and do nothing else (see realtime/deskApi.js).
 // Same reasoning as the usage-ingest key below: handing a third party the app
 // token would mean their bot could disable the kill switch.
+//
+// /api/calls/incoming is Twilio asking what to do with a call. Twilio cannot
+// send the app token either; it signs the request with TWILIO_AUTH_TOKEN and
+// the handler checks that (see realtime/twilioAuth.js). This line was missing
+// for the whole time the bridge existed: every test exercised the handler
+// directly, so nothing ever showed that on a deployment with an app token the
+// middleware answered 401 before the TwiML was built. Same door as the desk
+// paths above, one row down.
 const SELF_AUTHENTICATED_PATHS = new Set([
   '/api/graph',
   '/api/payments/webhook',
+  '/api/calls/incoming',
   '/api/desk/ping',
   '/api/desk/lookup',
   '/api/desk/ticket',

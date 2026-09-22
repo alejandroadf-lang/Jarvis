@@ -3652,6 +3652,24 @@ agent-run company's edge is largest, because the first venture has already paid
 for the door. Re-pitching a live venture under a new name is named as a repeat,
 not a link.
 
+### Instance thirteen: the phone line nobody could ring
+
+Found by reading, not by a call — the founder chose the Twilio line for the
+pilot and the wiring was re-read before handing over the steps. The webhook
+Twilio posts to, `/api/calls/incoming`, verifies Twilio's signature inside the
+handler; but the app-token middleware runs first and Twilio cannot send the
+app token. On any deployment with `APP_ACCESS_TOKEN` set — which is every real
+one — Twilio would have received 401 and the caller silence, and the first
+live call would have been diagnosed as a Twilio misconfiguration.
+
+The desk endpoints had been given their row in `SELF_AUTHENTICATED_PATHS` a
+week earlier with the reasoning spelled out; the Twilio webhook, built on the
+same pattern the same week, had not. The tests all exercised the handler
+directly, which is exactly how a door in front of a working room stays
+invisible. The row and a middleware-level test are the fix. The general lesson
+from the desk paths applies unchanged: a path that authenticates itself has to
+be *listed* as doing so, or the default guard closes it.
+
 ## A support desk for somebody else's software
 
 The founder asked for a call centre that solves problems with the Amadeus

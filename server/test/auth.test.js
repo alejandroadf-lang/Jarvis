@@ -70,6 +70,15 @@ test('the WhatsApp webhook stays open, because it authenticates better', () => {
   assert.equal(run(request({ path: '/api/whatsapp/webhook' })).passed, true);
 });
 
+test('the Twilio call webhook reaches its handler, which checks Twilio\'s own signature', () => {
+  // Twilio cannot send the app token. It signs the request with the auth
+  // token instead, and that check lives in the handler — so the middleware
+  // must step aside or a live call is answered 401 before any TwiML exists.
+  // The media stream itself upgrades on the raw HTTP server and never passes
+  // through here, so only the webhook needs the row.
+  assert.equal(run(request({ path: '/api/calls/incoming' })).passed, true);
+});
+
 test('the privacy policy stays open — Meta fetches it, and a policy behind a password is not one', () => {
   assert.equal(run(request({ path: '/privacy' })).passed, true);
 });

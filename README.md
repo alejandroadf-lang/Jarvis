@@ -158,6 +158,27 @@ separate turns — and it's submitted automatically, no click required. It
 runs a separate continuous `SpeechRecognition` session from the manual
 push-to-talk button, so the two are mutually exclusive while wake word is on.
 
+### A phone number for the help desk
+
+The travel help desk answers a real phone line through Twilio, on Railway as
+deployed — the call audio travels over a WebSocket, which Railway carries. All
+of it is done from a browser.
+
+1. **Buy a number.** In the Twilio console, buy a voice-capable number.
+2. **Point it here.** Open the number → Voice configuration → *A call comes
+   in* → Webhook, set the URL to
+   `https://<your Railway domain>/api/calls/incoming`, method **HTTP POST**.
+3. **Set three Railway variables**: `VOICE_CALLS=true`, `CALL_MODE=support`,
+   and `TWILIO_AUTH_TOKEN` (Console → Account → Auth Token). Railway redeploys.
+4. **Check the line.** Send `INTEGRATIONS` on WhatsApp; the *calling* line
+   should read as on, in support mode, and signed.
+5. **Call the number.** Describe a problem in any language, ask for a ticket,
+   check your inbox. `TICKETS` on WhatsApp lists what was opened.
+
+`CALL_MODE=support` skips the caller allowlist — a help desk has to take
+strangers — and keeps the per-call and per-day caps. Without `CALL_MODE` the
+line is the founder's own, allowlisted to the WhatsApp numbers.
+
 ## Deploy to an IONOS VPS
 
 Railway cannot accept inbound UDP, and WhatsApp calling carries its audio as
