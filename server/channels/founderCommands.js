@@ -62,6 +62,7 @@ const COMMANDS = [
   { kind: 'resume', re: /^(resume|unhalt|go\s+live)$/i },
   { kind: 'spend', re: /^(spend|cost|budget)$/i },
   { kind: 'integrations', re: /^(integrations|connections|health)$/i },
+  { kind: 'pitch', re: /^(pitch|pitch now|pitch of the day)$/i },
   { kind: 'ventures', re: /^(ventures|portfolio|list\s+ventures)$/i },
   // The founder's own version of the team's check_ready.
   //
@@ -374,6 +375,7 @@ SPEND — today's model spend against the cap
 INTEGRATIONS — what's actually connected
 MODELS [search] — live OpenRouter models and their prices
 REPORT — the latest daily report
+PITCH — generate today's pitch now and email it, exactly as the 8am one
 GRAPH — the company as a live picture, as a link
 EVAL [scenario] — grade the agents' judgment against the eval scenarios
 PLAN — today's plan (APPROVE / REJECT <reason> to decide it)
@@ -748,6 +750,19 @@ export async function runFounderCommand(command, deps = {}) {
       const degraded = describeDegradation();
       const body = lines.length ? lines.join('\n') : 'Nothing reported a status.';
       return degraded ? `${body}\n\n${degraded}` : body;
+    }
+
+    case 'pitch': {
+      // Runs the same code the 8am cycle runs, so what comes back is what
+      // tomorrow's email will look like — not a preview of it. The email is
+      // sent as well; the text is returned so the founder reads it here
+      // without switching apps.
+      if (!deps.runPitch) return 'The pitch generator is not available on this build.';
+      const { email, pitch, sent } = await deps.runPitch();
+      const head = pitch
+        ? `Pitched, and ${sent ? 'emailed' : 'not emailed'}. This is what the 8am one will look like:`
+        : 'No pitch came back. This is exactly the email the morning cycle would have sent:';
+      return `${head}\n\n${email.subject}\n\n${email.text}`;
     }
 
     case 'link_repo': {

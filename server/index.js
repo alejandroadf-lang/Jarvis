@@ -66,7 +66,7 @@ import {
 } from './actionHandlers.js';
 import { listDailyReports, getDailyReport, getLatestDailyReport } from './dailyReports.js';
 import { startDailyMeetingScheduler, runDailyMeetingNow, isDailyMeetingRunning } from './scheduler.js';
-import { studioActionHandlers } from './dailyMeeting.js';
+import { studioActionHandlers, runPitchNow } from './dailyMeeting.js';
 import { getKillSwitch, haltRealActions, resumeRealActions } from './killSwitch.js';
 import { getSpendSummary } from './spend.js';
 import { getIntegrationStatus } from './integrations.js';
@@ -971,6 +971,9 @@ async function handleWhatsAppMessage(message) {
     try {
       const reply = await runFounderCommand(founderCommand, {
         probeIntegrations: getIntegrationStatus,
+        // The same function the 8am cycle calls, so PITCH shows the founder
+        // tomorrow's email rather than an approximation of it.
+        runPitch: () => runPitchNow({ anthropic }),
         // The rehearsal needs a model client for the CEO review, and it is
         // the same one every agent turn uses — a dry run against a different
         // client would be rehearsing a different company.

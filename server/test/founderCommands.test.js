@@ -518,3 +518,61 @@ test('a bare "why" is a message to the team, not a command', () => {
 test('READY is in the help, since a control nobody knows about is not a control', () => {
   assert.match(commands.__helpForTests, /READY/);
 });
+
+// --- PITCH: show me what I will receive tomorrow ------------------------------------------
+//
+// The founder asked for a test of tomorrow's email. A preview path would be a
+// second implementation of the thing being previewed; PITCH runs the same
+// function the 8am cycle runs and hands back the same email it sends.
+
+test('PITCH is a command, and only as the whole message', () => {
+  assert.equal(commands.parseFounderCommand('PITCH')?.kind, 'pitch');
+  assert.equal(commands.parseFounderCommand('pitch now')?.kind, 'pitch');
+  assert.equal(commands.parseFounderCommand('Pitch of the day')?.kind, 'pitch');
+  assert.equal(commands.parseFounderCommand('the pitch was weak today'), null, 'a sentence about a pitch is not the command');
+});
+
+test('HELP mentions PITCH, since a control nobody knows about is not a control', () => {
+  assert.match(commands.__helpForTests, /PITCH — generate today's pitch now/);
+});
+
+test('PITCH returns the very email the morning cycle sends, and says whether it went out', async () => {
+  let called = 0;
+  const reply = await commands.runFounderCommand(
+    { kind: 'pitch' },
+    {
+      runPitch: async () => {
+        called += 1;
+        return {
+          pitch: { title: 'SleepSync' },
+          sent: true,
+          email: { subject: 'Pitch of the day: SleepSync', text: 'SLEEPSYNC\n...' },
+        };
+      },
+    }
+  );
+  assert.equal(called, 1);
+  assert.match(reply, /Pitched, and emailed/);
+  assert.match(reply, /what the 8am one will look like/);
+  assert.match(reply, /Pitch of the day: SleepSync/);
+});
+
+test('PITCH with nothing generated still shows the exact email, so the founder sees what they would have got', async () => {
+  const reply = await commands.runFounderCommand(
+    { kind: 'pitch' },
+    {
+      runPitch: async () => ({
+        pitch: null,
+        sent: true,
+        email: { subject: 'Pitch of the day: nothing new', text: 'No pitch today.' },
+      }),
+    }
+  );
+  assert.match(reply, /No pitch came back/);
+  assert.match(reply, /nothing new/);
+});
+
+test('PITCH without the generator wired says so rather than pretending', async () => {
+  const reply = await commands.runFounderCommand({ kind: 'pitch' }, {});
+  assert.match(reply, /not available on this build/);
+});
