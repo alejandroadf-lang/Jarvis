@@ -31,7 +31,7 @@ const REALTIME_URL = 'https://api.openai.com/v1/realtime';
 // app's access token to it. A credential for one service must not be posted to
 // another.
 
-export function useRealtimeCall({ onTranscript = () => {}, desk = '' } = {}) {
+export function useRealtimeCall({ onTranscript = () => {}, desk = '', support = false } = {}) {
   const [status, setStatus] = useState('idle'); // idle | connecting | live | ending
   const [error, setError] = useState('');
   const [speaking, setSpeaking] = useState(false);
@@ -127,6 +127,28 @@ export function useRealtimeCall({ onTranscript = () => {}, desk = '' } = {}) {
     [send, onTranscript]
   );
 
+  // The desk's own tools. Fast — a lookup is milliseconds — so unlike
+  // ask_the_team they complete in place: run, hand the output back, let the
+  // model continue. A failure is handed back as text too, so it gets spoken
+  // rather than leaving the model waiting on a tool that never answers.
+  const runTool = useCallback(
+    (callId, name, args) => {
+      onTranscript({ who: 'desk', text: `${name}` });
+      axios
+        .post('/api/calls/tool', { name, args })
+        .then((res) => res.data.output)
+        .catch((err) => `That failed: ${err.response?.data?.error || err.message}. Tell the caller plainly and offer a ticket.`)
+        .then((output) => {
+          send({
+            type: 'conversation.item.create',
+            item: { type: 'function_call_output', call_id: callId, output: String(output) },
+          });
+          send({ type: 'response.create' });
+        });
+    },
+    [send, onTranscript]
+  );
+
   const handleEvent = useCallback(
     (event) => {
       switch (event.type) {
@@ -136,11 +158,15 @@ export function useRealtimeCall({ onTranscript = () => {}, desk = '' } = {}) {
         case 'response.done': {
           setSpeaking(false);
           for (const item of event.response?.output || []) {
-            if (item.type !== 'function_call' || item.name !== 'ask_the_team') continue;
+            if (item.type !== 'function_call') continue;
             let args = {};
             try { args = JSON.parse(item.arguments || '{}'); } catch { args = {}; }
-            const question = String(args.question || '').trim();
-            if (question) askTheTeam(item.call_id, question);
+            if (item.name === 'ask_the_team') {
+              const question = String(args.question || '').trim();
+              if (question) askTheTeam(item.call_id, question);
+            } else {
+              runTool(item.call_id, item.name, args);
+            }
           }
           break;
         }
@@ -162,14 +188,14 @@ export function useRealtimeCall({ onTranscript = () => {}, desk = '' } = {}) {
           break;
       }
     },
-    [askTheTeam, onTranscript]
+    [askTheTeam, runTool, onTranscript]
   );
 
   const start = useCallback(async () => {
     setError('');
     setStatus('connecting');
     try {
-      const { data: session } = await axios.post('/api/calls/token', desk ? { desk } : {});
+      const { data: session } = await axios.post('/api/calls/token', support ? { support: true } : desk ? { desk } : {});
 
       const peer = new RTCPeerConnection();
       peerRef.current = peer;
@@ -212,7 +238,7 @@ export function useRealtimeCall({ onTranscript = () => {}, desk = '' } = {}) {
       setError(err.response?.data?.error || err.message);
       hangUp();
     }
-  }, [handleEvent, send, hangUp, desk]);
+  }, [handleEvent, send, hangUp, desk, support]);
 
   // A conversation left running when the page closes keeps billing.
   useEffect(() => () => hangUp(), [hangUp]);

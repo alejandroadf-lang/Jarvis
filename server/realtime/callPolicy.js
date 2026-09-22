@@ -51,6 +51,20 @@ export function isCallingEnabled() {
 }
 
 /**
+ * Who the line is for.
+ *
+ *   founder — the founder's own assistant, full company state, allowlisted
+ *             callers only. The default, because it is the one that leaks
+ *             if it is ever answered to the wrong person.
+ *   support — a public support desk. Anyone may ring it, so the allowlist
+ *             does not apply; the caps still do, because the caps are what
+ *             stop a public number becoming a public bill.
+ */
+export function callMode() {
+  return (process.env.CALL_MODE || '').trim().toLowerCase() === 'support' ? 'support' : 'founder';
+}
+
+/**
  * Whether this caller gets through.
  *
  * Fails closed on every uncertainty: calling disabled, no allowlist, a
@@ -111,7 +125,9 @@ export function recordCallSeconds(seconds) {
  */
 export function refuseCall(from) {
   if (!isCallingEnabled()) return 'Voice calls are switched off. Set VOICE_CALLS to true to take them.';
-  if (!isAllowedCaller(from)) return 'This number is not on the call allowlist.';
+  // A support line is public by definition. The allowlist is the founder's
+  // line's protection, not this one's; the budget below is.
+  if (callMode() !== 'support' && !isAllowedCaller(from)) return 'This number is not on the call allowlist.';
   if (callMinutesRemaining() <= 0) {
     return `The daily call budget of ${maxCallMinutesPerDay()} minutes is spent. It resets tomorrow.`;
   }
@@ -121,6 +137,13 @@ export function refuseCall(from) {
 /** For the integration check and the founder: the calling setup in one line. */
 export function describeCalling() {
   if (!isCallingEnabled()) return 'Voice calls are off. VOICE_CALLS=true turns them on.';
+  if (callMode() === 'support') {
+    const left = Math.round(callMinutesRemaining());
+    return (
+      `Voice calls are on as a public support desk — any caller gets through. ` +
+      `Up to ${Math.round(maxCallSeconds() / 60)} minutes a call, ${left} of ${maxCallMinutesPerDay()} minutes left today.`
+    );
+  }
   const allowed = callAllowedNumbers().length;
   if (!allowed) return 'Voice calls are on but no number is allowed to call — nobody gets through.';
   const left = Math.round(callMinutesRemaining());

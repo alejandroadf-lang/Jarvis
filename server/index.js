@@ -125,6 +125,7 @@ import { isSpeechConfigured, synthesize, spokenExcerpt, spokenReplyInstruction }
 import { attachCallStream, answerCallTwiml } from './realtime/twilioBridge.js';
 import { refuseCall, describeCalling, callMinutesRemaining } from './realtime/callPolicy.js';
 import { mintBrowserSession, isBrowserCallConfigured } from './realtime/browserSession.js';
+import { runSupportTool } from './realtime/supportDesk.js';
 import { replyLanguageInstruction, describeLanguageSetting, spokenLanguage, truncationNotice } from './language.js';
 import { listWeeklyReflections, getWeeklyReflection, getLatestWeeklyReflection } from './weeklyReflections.js';
 import { startWeeklyReflectionScheduler, runWeeklyReflectionNow, isWeeklyReflectionRunning } from './weeklyScheduler.js';
@@ -1431,7 +1432,12 @@ app.post('/api/calls/token', async (req, res) => {
     // A ventureId turns this into the customer desk: a different brief, no
     // company state, and no tools. The founder's own session is the one with
     // no desk named.
-    res.json(await mintBrowserSession({ desk: String(req.body?.desk || '').trim() }));
+    res.json(
+      await mintBrowserSession({
+        desk: String(req.body?.desk || '').trim(),
+        support: Boolean(req.body?.support),
+      })
+    );
   } catch (err) {
     console.error('Could not mint a browser session:', err.message);
     res.status(502).json({ error: err.message });
@@ -1455,6 +1461,28 @@ app.post('/api/calls/ask', async (req, res) => {
     res.json({ answer: reply });
   } catch (err) {
     console.error('A question from a conversation failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * The support desk's tools, for a browser session.
+ *
+ * On the phone bridge these run server-side inside the call. In the browser
+ * the model's tool calls arrive on the page's data channel, so the page has
+ * to bring them here. Only the desk's own tools are dispatched — ask_the_team
+ * keeps its own endpoint and its own keep-talking behaviour, and nothing else
+ * is callable by name.
+ */
+app.post('/api/calls/tool', async (req, res) => {
+  const name = String(req.body?.name || '').trim();
+  if (!['lookup_issue', 'open_ticket'].includes(name)) {
+    return res.status(400).json({ error: `"${name}" is not a tool a browser session may run.` });
+  }
+  try {
+    res.json({ output: await runSupportTool(name, req.body?.args || {}, { from: 'browser' }) });
+  } catch (err) {
+    console.error(`Support tool ${name} failed:`, err.message);
     res.status(500).json({ error: err.message });
   }
 });

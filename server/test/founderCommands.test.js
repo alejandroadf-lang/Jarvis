@@ -576,3 +576,46 @@ test('PITCH without the generator wired says so rather than pretending', async (
   const reply = await commands.runFounderCommand({ kind: 'pitch' }, {});
   assert.match(reply, /not available on this build/);
 });
+
+// --- Teaching the support desk from a phone -----------------------------------------------
+//
+// The knowledge base lives in the data directory. A founder on a phone cannot
+// edit a file there, so a knowledge base with no WhatsApp door is one that
+// never grows past its examples.
+
+test('ISSUE with three parts parses into a procedure, and DEL is matched before ADD', () => {
+  const add = commands.parseFounderCommand('ISSUE Seat map blank | seat map blank, cannot pick seats | Check the segment is HK, then reopen the map.');
+  assert.equal(add?.kind, 'issue_add');
+  assert.equal(add.title, 'Seat map blank');
+  assert.equal(add.symptoms, 'seat map blank, cannot pick seats');
+  assert.match(add.steps, /Check the segment is HK/);
+
+  assert.deepEqual(commands.parseFounderCommand('ISSUE DEL 3'), { kind: 'issue_del', id: 3 });
+  assert.equal(commands.parseFounderCommand('ISSUES')?.kind, 'issues');
+  assert.equal(commands.parseFounderCommand('issue with two parts | only'), null, 'two parts is not a procedure');
+});
+
+test('ISSUE steps may run over several lines, since real procedures do', () => {
+  const add = commands.parseFounderCommand('ISSUE Printing | ticket will not print | 1. Check the printer.\n2. Reissue the print command.');
+  assert.equal(add?.kind, 'issue_add');
+  assert.match(add.steps, /2\. Reissue/);
+});
+
+test('ISSUES lists the procedures and flags the examples, and ISSUE DEL removes one', async () => {
+  const listed = await commands.runFounderCommand({ kind: 'issues' });
+  assert.match(listed, /Callers reach the Amadeus support desk/);
+  assert.match(listed, /#1 Cannot sign in \(example — replace\)/);
+
+  const added = await commands.runFounderCommand({ kind: 'issue_add', title: 'T', symptoms: 'a b c', steps: 'do x' });
+  assert.match(added, /Added #\d+ "T"/);
+
+  const removed = await commands.runFounderCommand({ kind: 'issue_del', id: 1 });
+  assert.match(removed, /Removed #1/);
+  const after = await commands.runFounderCommand({ kind: 'issues' });
+  assert.doesNotMatch(after, /#1 Cannot sign in/);
+});
+
+test('HELP mentions the desk commands', () => {
+  assert.match(commands.__helpForTests, /ISSUE <title> \| <symptoms/);
+  assert.match(commands.__helpForTests, /ISSUE DEL <n>/);
+});

@@ -35,7 +35,14 @@ export default function CallView() {
     setLines((prev) => [...prev.slice(-40), line]);
   }, []);
 
-  const { status, error, speaking, pendingQuestion, start, hangUp, audioRef } = useRealtimeCall({ onTranscript, desk });
+  // 'support' is the one desk that is not a venture: an independent help
+  // desk for users of somebody else's product, with its own knowledge base.
+  const support = desk === 'support';
+  const { status, error, speaking, pendingQuestion, start, hangUp, audioRef } = useRealtimeCall({
+    onTranscript,
+    desk: support ? '' : desk,
+    support,
+  });
   const live = status === 'live';
 
   return (
@@ -44,16 +51,19 @@ export default function CallView() {
 
       <header className="text-center">
         <h2 className="text-lg font-medium text-cyan-200">
-          {desk ? 'The customer desk' : 'Talk to the company'}
+          {support ? 'The support desk' : desk ? 'The customer desk' : 'Talk to the company'}
         </h2>
         <p className="text-sm text-white/50 mt-1">
-          {desk
-            ? 'What a customer hears when they call. It knows the product and the price, and nothing about the business.'
-            : 'Speak any language and it answers in the same one. Switch mid-sentence and it follows.'}
+          {support
+            ? 'A support call, in any language. It walks the caller through the procedures on record and opens a ticket for anything else.'
+            : desk
+              ? 'What a customer hears when they call. It knows the product and the price, and nothing about the business.'
+              : 'Speak any language and it answers in the same one. Switch mid-sentence and it follows.'}
         </p>
       </header>
 
-      {ventures.length > 0 ? (
+      {/* The support desk needs no venture, so the switch is always shown. */}
+      {(
         // Switching mid-call would leave the founder talking to a brief that
         // changed underneath them, so it is disabled while connected.
         <div className="flex justify-center">
@@ -64,6 +74,7 @@ export default function CallView() {
             className="bg-white/5 border border-cyan-500/30 rounded-lg px-3 py-1.5 text-sm text-cyan-100 disabled:opacity-40"
           >
             <option value="">As the founder — full company access</option>
+            <option value="support">As the support desk — a caller with a problem</option>
             {ventures.map((v) => (
               <option key={v.id} value={v.id}>
                 As the {v.title} desk — what a customer hears
@@ -71,7 +82,7 @@ export default function CallView() {
             ))}
           </select>
         </div>
-      ) : null}
+      )}
 
       <div className="flex flex-col items-center gap-4">
         <button
@@ -129,7 +140,7 @@ export default function CallView() {
         {lines.map((line, i) => (
           <div key={i} className={line.who === 'you' ? 'text-right' : ''}>
             <span className="text-[11px] uppercase tracking-wide text-white/30">
-              {line.who === 'you' ? 'You' : line.who === 'team' ? 'The team' : 'Jarvis'}
+              {line.who === 'you' ? 'You' : line.who === 'team' ? 'The team' : line.who === 'desk' ? 'Desk looked up' : 'Jarvis'}
             </span>
             <p className={line.who === 'team' ? 'text-amber-100/80' : 'text-white/80'}>{line.text}</p>
           </div>

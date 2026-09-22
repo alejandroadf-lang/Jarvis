@@ -190,3 +190,27 @@ test('a desk for a venture that does not exist is refused, not answered emptily'
     await assert.rejects(() => mintBrowserSession({ desk: 'v_nope' }), /no venture "v_nope"/);
   });
 });
+
+// --- The support desk session --------------------------------------------------------------
+
+test('a support session gets the desk tools, the support brief, and no company state', async () => {
+  await withEnv({ OPENAI_API_KEY: 'k' }, async () => {
+    const sent = captureSession();
+    const session = await mintBrowserSession({ support: true });
+    assert.deepEqual(sent.body.tools.map((t) => t.name).sort(), ['lookup_issue', 'open_ticket']);
+    assert.equal(sent.body.tool_choice, 'auto', 'it must be able to look things up');
+    assert.match(sent.body.instructions, /independent support desk/);
+    assert.doesNotMatch(sent.body.instructions, /COMPANY STATE/);
+    assert.ok(!sent.body.tools.some((t) => t.name === 'ask_the_team'), 'a caller cannot make the company do work');
+    assert.equal(session.support, true);
+    assert.match(session.desk, /support desk/);
+  });
+});
+
+test('support wins over a venture desk if both are sent, since the support brief is the safer one', async () => {
+  await withEnv({ OPENAI_API_KEY: 'k' }, async () => {
+    const sent = captureSession();
+    await mintBrowserSession({ support: true, desk: 'v_does_not_exist' });
+    assert.match(sent.body.instructions, /independent support desk/, 'and the unknown venture is never looked up');
+  });
+});

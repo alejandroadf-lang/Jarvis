@@ -147,3 +147,43 @@ test('a call where nothing was asked of the team says so by omission, not by a l
   assert.doesNotMatch(text, /questions? was put to the team/);
   assert.match(text, /1-minute call/, 'a short call is not rounded to zero minutes');
 });
+
+// --- A public support line -----------------------------------------------------------------
+
+test('in support mode anyone gets through, because a help line with an allowlist helps nobody', (t) => {
+  process.env.VOICE_CALLS = 'true';
+  process.env.CALL_MODE = 'support';
+  t.after(() => delete process.env.CALL_MODE);
+  assert.equal(refuseCall('+15551234567'), null, 'an unknown caller is answered');
+  assert.equal(refuseCall(''), null, 'even a withheld number');
+});
+
+test('support mode keeps the daily budget, which is what stops a public number being a public bill', (t) => {
+  process.env.VOICE_CALLS = 'true';
+  process.env.CALL_MODE = 'support';
+  process.env.CALL_MAX_MINUTES_PER_DAY = '5';
+  t.after(() => delete process.env.CALL_MODE);
+  recordCallSeconds(6 * 60);
+  assert.match(refuseCall('+15551234567'), /daily call budget of 5 minutes is spent/);
+});
+
+test('support mode still needs calls switched on', (t) => {
+  process.env.CALL_MODE = 'support';
+  t.after(() => delete process.env.CALL_MODE);
+  assert.match(refuseCall('+1'), /switched off/);
+});
+
+test('the founder line is the default, so a misspelt CALL_MODE cannot open the founder to the public', (t) => {
+  process.env.VOICE_CALLS = 'true';
+  process.env.CALL_MODE = 'suport';
+  process.env.CALL_ALLOWED_NUMBERS = '66812345678';
+  t.after(() => delete process.env.CALL_MODE);
+  assert.match(refuseCall('+15551234567'), /not on the call allowlist/);
+});
+
+test('describeCalling says which line the number is', (t) => {
+  process.env.VOICE_CALLS = 'true';
+  process.env.CALL_MODE = 'support';
+  t.after(() => delete process.env.CALL_MODE);
+  assert.match(describeCalling(), /public support desk — any caller gets through/);
+});

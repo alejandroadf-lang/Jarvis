@@ -3651,3 +3651,57 @@ distribution used twice, the same data sold a second way. That is where an
 agent-run company's edge is largest, because the first venture has already paid
 for the door. Re-pitching a live venture under a new name is named as a repeat,
 not a link.
+
+## A support desk for somebody else's software
+
+The founder asked for a call centre that solves problems with the Amadeus
+application, on a live call, in any language. The conversation half existed.
+What a call centre needs on top is the thing no model has: **the procedures**.
+
+A desk that answers from training data will confidently walk a travel agent
+through steps that were true in 2023. On a support call a wrong step is worse
+than no step — it costs the caller an hour and the desk its credibility. So the
+desk knows exactly what is in its knowledge base and nothing else. It looks
+procedures up mid-call with `lookup_issue`, gives them one step at a time, and
+when nothing matches it says so and opens a ticket with `open_ticket`, which
+reaches the founder by email. *"I don't have that one — let me log it and
+someone will come back to you"* is a real answer. An invented one is not.
+
+### Two boundaries, both structural
+
+**It is not the vendor.** Amadeus is a real company. A desk that answers "this
+is Amadeus" on a public number is impersonation, so the brief is written so it
+cannot: *an independent support desk for people who use Amadeus; you are not
+Amadeus, you do not work for Amadeus, and if asked you say so plainly.*
+`SUPPORT_PRODUCT` makes it a Sabre desk or anyone else's; the sentence holds.
+
+**It holds no company state.** Same allowlist discipline as the customer desk:
+the founder's brief never enters the prompt, `ask_the_team` is never among its
+tools, and what a prompt never contained cannot be leaked from it.
+
+### The knowledge base is edited from a phone
+
+It lives in the data directory, seeded with five triage procedures that are
+labelled *example* until replaced — every one is "get the exact error, check
+the environment, restart, then ticket", and none asserts an internal of the
+product this code cannot verify. The founder teaches it from WhatsApp:
+
+```
+ISSUES
+ISSUE Seat map blank | seat map blank, cannot pick seats | Check the segment is HK, then reopen the map.
+ISSUE DEL 3
+```
+
+A file nobody can edit is a knowledge base nobody can grow, and the founder
+has no terminal. Retrieval is token overlap, reusing the pitch de-duplicator —
+the wrong tool for semantic search and the right one for forty entries edited
+from a phone.
+
+### One desk, three ways in
+
+The browser Talk tab has a third option. The phone bridge answers as the desk
+when `CALL_MODE=support` — and in that mode the allowlist does not apply,
+because a help line with an allowlist helps nobody, while the per-call and
+per-day caps still do, because they are what stop a public number becoming a
+public bill. The founder's line stays the default: a misspelt `CALL_MODE`
+cannot open the founder's assistant to whoever dials.

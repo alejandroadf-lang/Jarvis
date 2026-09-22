@@ -19,9 +19,10 @@
 //      latter and stop trying.
 
 import { WebSocketServer } from 'ws';
-import { openRealtimeSession } from './openaiRealtime.js';
+import { openRealtimeSession, ASK_THE_TEAM } from './openaiRealtime.js';
 import { buildCallInstructions, callGreeting } from './callBrief.js';
-import { refuseCall, maxCallSeconds, recordCallSeconds } from './callPolicy.js';
+import { refuseCall, maxCallSeconds, recordCallSeconds, callMode } from './callPolicy.js';
+import { buildSupportInstructions, supportGreeting, SUPPORT_TOOLS, runSupportTool } from './supportDesk.js';
 
 /**
  * TwiML for an incoming call.
@@ -128,9 +129,15 @@ export function attachCallStream(server, { askTheTeam, onCallEnded = () => {} })
     }
 
     function buildSession() {
+      // Decided at the moment the call connects, from CALL_MODE. A support
+      // line gets the support brief and the support tools and never the
+      // founder's — the founder's brief carries company state, and a public
+      // number answered with it is a leak to whoever dials.
+      const support = callMode() === 'support';
       return openRealtimeSession({
-        instructions: buildCallInstructions({}),
-        greeting: callGreeting(),
+        instructions: support ? buildSupportInstructions() : buildCallInstructions({}),
+        greeting: support ? supportGreeting() : callGreeting(),
+        tools: support ? SUPPORT_TOOLS : [ASK_THE_TEAM],
 
         onAudio(base64) {
           if (!streamSid) return;
@@ -146,11 +153,21 @@ export function attachCallStream(server, { askTheTeam, onCallEnded = () => {} })
         },
 
         onTranscript(text) {
-          transcript.push({ who: 'founder', text });
+          transcript.push({ who: support ? 'caller' : 'founder', text });
         },
 
         onToolCall({ id, name, args }) {
-          if (name !== 'ask_the_team') return;
+          // The desk's tools are fast — a lookup is milliseconds, a ticket
+          // is a file write and an email — so they complete in place rather
+          // than through the ask-then-deliver dance below.
+          if (name === 'lookup_issue' || name === 'open_ticket') {
+            transcript.push({ who: 'desk', text: `${name}: ${JSON.stringify(args || {})}` });
+            runSupportTool(name, args || {}, { from })
+              .then((out) => session?.completeToolCall(id, out))
+              .catch((err) => session?.completeToolCall(id, `That failed: ${err.message}. Tell the caller plainly and offer a ticket.`));
+            return;
+          }
+          if (name !== 'ask_the_team' || support) return;
           const question = String(args?.question || '').trim();
           if (!question) {
             session?.completeToolCall(id, 'No question was passed, so nothing was asked.');
