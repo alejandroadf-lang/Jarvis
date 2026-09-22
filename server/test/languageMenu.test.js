@@ -79,8 +79,8 @@ test('the TwiML gathers one digit, speaks each line in its own language, and fal
 test('a welcome is spoken first, once, inside the gather, in the first language\'s voice', () => {
   // Inside the <Gather> so a regular can press during it and skip the rest.
   process.env.CALL_LANGUAGES = 'fr,en';
-  const xml = languageMenuTwiml({ host: 'h', welcome: 'Welcome to the travel help desk.' });
-  assert.match(xml, /<Gather[^>]*><Say language="fr-FR">Welcome to the travel help desk\.<\/Say><Say language="fr-FR">Pour le français/);
+  const xml = languageMenuTwiml({ host: 'h', welcome: 'Welcome to the Amadeus help desk.' });
+  assert.match(xml, /<Gather[^>]*><Say language="fr-FR">Welcome to the Amadeus help desk\.<\/Say><Say language="fr-FR">Pour le français/);
   assert.equal((xml.match(/Welcome to/g) || []).length, 1, 'once, not once per language');
   assert.doesNotMatch(languageMenuTwiml({ host: 'h' }), /Welcome/, 'no welcome given, none spoken');
 });

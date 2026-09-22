@@ -1492,7 +1492,7 @@ app.post('/api/calls/incoming', express.urlencoded({ extended: false }), (req, r
   // A refused caller hears why before any menu — a menu followed by a
   // refusal is a minute of the caller's time spent for nothing.
   if (!refusal && isLanguageMenuEnabled()) {
-    // "Welcome to the travel help desk" (or whatever SUPPORT_DESK_NAME says)
+    // "Welcome to the Amadeus help desk" (DESK_NAME in supportDesk.js)
     // before the menu. The founder's own line gets no welcome: they know
     // who they called.
     const welcome = callMode() === 'support' ? `Welcome to ${supportDeskName()}.` : '';

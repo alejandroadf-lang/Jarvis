@@ -105,7 +105,7 @@ function escapeXml(value) {
  * The TwiML that plays the welcome and the menu, and sends the digit to
  * /api/calls/language.
  *
- * The welcome — "Welcome to the travel help desk." — is spoken first, in
+ * The welcome — "Welcome to the Amadeus help desk." — is spoken first, in
  * the voice of the first language on the menu, and inside the <Gather>: a
  * caller who knows the menu can press during it and skip the rest, which is
  * what regulars of any call centre do. Once, not once per language; a

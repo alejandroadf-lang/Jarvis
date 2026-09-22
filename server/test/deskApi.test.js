@@ -146,7 +146,7 @@ test('describeDeskApi names the missing variable, then the endpoints once it is 
   process.env.DESK_API_KEY = 'k';
   t.after(() => delete process.env.DESK_API_KEY);
   assert.match(api.describeDeskApi(), /\/api\/desk\/lookup and \/api\/desk\/ticket/);
-  assert.match(api.describeDeskApi(), /the travel help desk/);
+  assert.match(api.describeDeskApi(), /the Amadeus help desk/);
 });
 
 test('the ticket response tells the bot whether the team was actually notified', async () => {
