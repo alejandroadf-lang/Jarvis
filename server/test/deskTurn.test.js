@@ -67,7 +67,7 @@ test('the desk\'s brief holds no company state, on this transport as on the othe
   const run = recorder();
   await desk.runDeskTurn({ anthropic: {}, from: '+1', text: 'hi', runAgentImpl: run });
   const prompt = run.seen.agents.travel_desk.systemPrompt;
-  assert.match(prompt, /travel help desk/);
+  assert.match(prompt, /the Amadeus help desk/);
   assert.match(prompt, /cannot change, cancel, refund, rebook or pay/);
   for (const leak of ['COMPANY STATE', 'Revenue', 'pipeline', 'Treasury']) {
     assert.doesNotMatch(prompt, new RegExp(leak, 'i'));

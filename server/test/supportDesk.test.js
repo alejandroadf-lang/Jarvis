@@ -155,14 +155,14 @@ test('the desk refuses passwords and card numbers, and never promises the vendor
   assert.match(brief, /Never promise a fix, a time, or that Amadeus will do anything/);
 });
 
-test('the product and the name are configurable, so this is not only an Amadeus desk', (t) => {
+test('the product is configurable; the name is fixed and the desk is never the vendor', (t) => {
   process.env.SUPPORT_MODE = 'vendor';
   t.after(() => delete process.env.SUPPORT_MODE);
   process.env.SUPPORT_PRODUCT = 'Sabre';
-  process.env.SUPPORT_DESK_NAME = 'the GDS help line';
-  t.after(() => { delete process.env.SUPPORT_PRODUCT; delete process.env.SUPPORT_DESK_NAME; });
+  t.after(() => delete process.env.SUPPORT_PRODUCT);
   assert.match(desk.buildSupportInstructions(), /You are not Sabre/);
-  assert.match(desk.supportGreeting(), /the GDS help line/);
+  assert.equal(desk.supportDeskName(), 'the Amadeus help desk', 'fixed at the founder\'s request');
+  assert.match(desk.supportGreeting(), /the Amadeus help desk/);
 });
 
 test('it opens in DESK_LANGUAGE and is told to follow the caller without comment', (t) => {
@@ -241,11 +241,16 @@ test('the ticket email carries what a person needs to follow up, and how to make
 // the brief is what the desk may promise — nothing. It can look up and log; a
 // person changes, cancels, refunds and pays.
 
-test('the default desk is the agency\'s own, not a vendor\'s', () => {
+test('the default desk is the agency\'s own, named for Amadeus, and says it is independent if asked', () => {
+  // The founder asked for "welcome to amadeus helpdesk". The name carries
+  // the vendor's; the brief still refuses to be the vendor, on both
+  // personas, because the name is shared by both.
   assert.equal(desk.supportMode(), 'agency');
-  assert.equal(desk.supportDeskName(), 'the travel help desk');
-  assert.doesNotMatch(desk.buildSupportInstructions(), /You are not /, 'the "not the vendor" line belongs to the other persona');
-  assert.doesNotMatch(desk.buildSupportInstructions(), /Amadeus/);
+  assert.equal(desk.supportDeskName(), 'the Amadeus help desk');
+  const brief = desk.buildSupportInstructions();
+  assert.match(brief, /You answer as the Amadeus help desk\. You are not Amadeus/);
+  assert.match(brief, /say plainly that this is an independent help desk/);
+  assert.match(brief, /customer of this travel agency/, 'still the agency persona underneath');
 });
 
 test('the agency desk cannot change, cancel, refund or pay, and is told to say so', () => {

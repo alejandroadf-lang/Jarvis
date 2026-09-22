@@ -59,10 +59,17 @@ export function supportProduct() {
   return (process.env.SUPPORT_PRODUCT || '').trim() || 'Amadeus';
 }
 
+// What the desk answers as, on the welcome, in the greeting and in the
+// briefs. Fixed at the founder's request — "welcome to amadeus helpdesk" —
+// rather than read from SUPPORT_DESK_NAME, so a call can be tested with
+// nothing to configure. The name carries a vendor's; the desk still never
+// claims to BE the vendor (see the LANGUAGE-adjacent line in
+// commonInstructions), because that is the difference between emulating a
+// call centre and impersonating a company.
+export const DESK_NAME = 'the Amadeus help desk';
+
 export function supportDeskName() {
-  const configured = (process.env.SUPPORT_DESK_NAME || '').trim();
-  if (configured) return configured;
-  return supportMode() === 'vendor' ? `the ${supportProduct()} support desk` : 'the travel help desk';
+  return DESK_NAME;
 }
 
 /** Whether strangers on the WhatsApp number reach the desk. Off unless set. */
@@ -420,10 +427,19 @@ export function buildSupportInstructions({ language = '' } = {}) {
 // must never happen. The opening paragraph is what differs — who the desk is
 // and what it is allowed to promise.
 function commonInstructions({ cannotDo, language = '' }) {
+  // The desk's name has Amadeus in it. It is not Amadeus, and a caller who
+  // asks gets a straight answer — on both personas, because the name is
+  // shared by both.
+  const independent =
+    `You answer as ${supportDeskName()}. You are not ${supportProduct()} and do not work for ${supportProduct()}; ` +
+    `if a caller asks whether they have reached ${supportProduct()} itself, say plainly that this is an independent help desk.`;
   const opening = language
     ? `Open in ${supportLanguage(language)} — the caller chose it on the keypad, so stay in it unless they clearly switch. If they do switch, follow them.`
     : `Open in ${supportLanguage()}. From the moment they speak, use their language and keep using it — switch again if they do.`;
-  return `LANGUAGE
+  return `WHO YOU ARE
+${independent}
+
+LANGUAGE
 ${opening} Never comment on which language is in use and never ask them to repeat in another one. Keep names, booking references, error codes and product names exactly as they are, in every language.
 
 HOW A SUPPORT CALL GOES
