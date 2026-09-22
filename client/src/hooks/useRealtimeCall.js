@@ -19,7 +19,11 @@ import axios from 'axios';
 //      wait must not block it. The conversation continues while the company
 //      thinks, which is the entire point of the design.
 
-const REALTIME_URL = 'https://api.openai.com/v1/realtime';
+// The GA WebRTC endpoint. The beta one was /v1/realtime?model=…; on GA the
+// model is fixed by the client secret the server minted, and the offer goes
+// to /v1/realtime/calls. Found on the first live phone call, not here — the
+// phone bridge and this page share the interface, so both changed together.
+const REALTIME_URL = 'https://api.openai.com/v1/realtime/calls';
 
 // Calls to this app go through axios, which carries the access token from
 // api/chat.js — "sent on every request rather than attached per call, so a new
@@ -152,7 +156,7 @@ export function useRealtimeCall({ onTranscript = () => {}, desk = '', support = 
   const handleEvent = useCallback(
     (event) => {
       switch (event.type) {
-        case 'response.audio.delta':
+        case 'response.output_audio.delta':
           setSpeaking(true);
           break;
         case 'response.done': {
@@ -178,7 +182,7 @@ export function useRealtimeCall({ onTranscript = () => {}, desk = '', support = 
         case 'conversation.item.input_audio_transcription.completed':
           if (event.transcript) onTranscript({ who: 'you', text: event.transcript.trim() });
           break;
-        case 'response.audio_transcript.done':
+        case 'response.output_audio_transcript.done':
           if (event.transcript) onTranscript({ who: 'jarvis', text: event.transcript.trim() });
           break;
         case 'error':
@@ -226,7 +230,7 @@ export function useRealtimeCall({ onTranscript = () => {}, desk = '', support = 
       const offer = await peer.createOffer();
       await peer.setLocalDescription(offer);
 
-      const answer = await fetch(`${REALTIME_URL}?model=${encodeURIComponent(session.model)}`, {
+      const answer = await fetch(REALTIME_URL, {
         method: 'POST',
         body: offer.sdp,
         headers: { Authorization: `Bearer ${session.token}`, 'Content-Type': 'application/sdp' },

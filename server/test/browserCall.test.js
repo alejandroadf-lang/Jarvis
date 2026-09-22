@@ -32,17 +32,24 @@ async function withEnv(values, run) {
   }
 }
 
+// Stands in for POST /v1/realtime/client_secrets and answers in the GA
+// shape: the secret at the top level as `value`. `sent.body` is the session
+// config the server put under `session`, which is where every assertion
+// below looks — a fake that still answered in the beta shape would keep this
+// file green while the real endpoint refused every conversation.
 function captureSession(response = {}) {
   const sent = {};
   global.fetch = async (url, options) => {
     sent.url = String(url);
     sent.auth = options?.headers?.Authorization;
-    sent.body = JSON.parse(options.body);
+    sent.request = JSON.parse(options.body);
+    sent.body = sent.request.session;
     return {
       ok: true,
       status: 200,
       json: async () => ({
-        client_secret: { value: 'ek_abc123', expires_at: 1790000000 },
+        value: 'ek_abc123',
+        expires_at: 1790000000,
         ...response,
       }),
     };
@@ -65,6 +72,9 @@ test('the page gets a short-lived token, never the API key', async () => {
     const session = await mintBrowserSession();
 
     assert.equal(session.token, 'ek_abc123');
+    assert.equal(session.expiresAt, 1790000000);
+    assert.equal(sent.url, 'https://api.openai.com/v1/realtime/client_secrets', 'the GA endpoint, not the retired beta one');
+    assert.equal(sent.body.type, 'realtime', 'and the session is typed, as GA requires');
     assert.equal(sent.auth, 'Bearer sk-real-key-do-not-leak', 'the real key is used server-side');
     assert.doesNotMatch(JSON.stringify(session), /sk-real-key/, 'and never reaches the page');
   });
@@ -82,7 +92,7 @@ test('the brief, the tools and the turn detection are fixed by the server', asyn
     assert.match(sent.body.instructions, /COMPANY STATE/, 'the company brief');
     assert.match(sent.body.instructions, /never tell them|Do not say you cannot hear/i);
     assert.match(sent.body.instructions, /Do not agree to send anything, pay anything, or promise anything/);
-    assert.equal(sent.body.turn_detection.type, 'server_vad', 'a conversation has no push-to-talk');
+    assert.equal(sent.body.audio.input.turn_detection.type, 'server_vad', 'a conversation has no push-to-talk');
     assert.ok(sent.body.tools.some((t) => t.name === 'ask_the_team'), 'and it can reach the real company');
   });
 });
@@ -94,8 +104,8 @@ test('audio format is left to the API rather than forced to the phone codec', as
   await withEnv({ OPENAI_API_KEY: 'k' }, async () => {
     const sent = captureSession();
     await mintBrowserSession();
-    assert.equal(sent.body.input_audio_format, undefined);
-    assert.equal(sent.body.output_audio_format, undefined);
+    assert.equal(sent.body.audio.input.format, undefined);
+    assert.equal(sent.body.audio.output.format, undefined);
   });
 });
 

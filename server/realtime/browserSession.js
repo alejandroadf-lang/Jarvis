@@ -24,7 +24,11 @@ import { buildDeskInstructions, deskGreeting } from './deskBrief.js';
 import { buildSupportInstructions, supportGreeting, supportDeskName, SUPPORT_TOOLS } from './supportDesk.js';
 import { getVenture } from '../finance/ventures.js';
 
-const SESSION_URL = 'https://api.openai.com/v1/realtime/sessions';
+// The GA endpoint. Its predecessor, /v1/realtime/sessions, was the beta
+// interface and went away with it — see openaiRealtime.js for how that was
+// found. The session config is nested under `session` with a `type`, and the
+// secret comes back at the top level as `value`, not under `client_secret`.
+const SESSION_URL = 'https://api.openai.com/v1/realtime/client_secrets';
 
 /** Whether a browser conversation can be started at all. */
 export function isBrowserCallConfigured() {
@@ -68,25 +72,34 @@ export async function mintBrowserSession({ desk = '', support = false } = {}) {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: realtimeModel(),
-      voice: realtimeVoice(),
-      instructions: isSupport ? buildSupportInstructions() : isDesk ? buildDeskInstructions(desk) : buildCallInstructions({}),
-      // Same reason as the phone line: the founder should not have to hold a
-      // button, and a conversation has no push-to-talk.
-      turn_detection: {
-        type: 'server_vad',
-        threshold: 0.5,
-        prefix_padding_ms: 300,
-        silence_duration_ms: 600,
+      session: {
+        type: 'realtime',
+        model: realtimeModel(),
+        output_modalities: ['audio'],
+        instructions: isSupport ? buildSupportInstructions() : isDesk ? buildDeskInstructions(desk) : buildCallInstructions({}),
+        audio: {
+          input: {
+            // No format here, deliberately: see the note above the function.
+            transcription: { model: 'whisper-1' },
+            // Same reason as the phone line: the founder should not have to
+            // hold a button, and a conversation has no push-to-talk.
+            turn_detection: {
+              type: 'server_vad',
+              threshold: 0.5,
+              prefix_padding_ms: 300,
+              silence_duration_ms: 600,
+            },
+          },
+          output: { voice: realtimeVoice() },
+        },
+        // A desk gets no tools at all. ask_the_team runs a real company turn
+        // whose answer is written for the founder and would be read out to a
+        // stranger — and it is also how a caller could make this company do
+        // work by asking. The desk answers from what it was given or takes a
+        // message.
+        tools: isSupport ? SUPPORT_TOOLS : isDesk ? [] : [ASK_THE_TEAM],
+        tool_choice: isDesk ? 'none' : 'auto',
       },
-      input_audio_transcription: { model: 'whisper-1' },
-      // A desk gets no tools at all. ask_the_team runs a real company turn
-      // whose answer is written for the founder and would be read out to a
-      // stranger — and it is also how a caller could make this company do
-      // work by asking. The desk answers from what it was given or takes a
-      // message.
-      tools: isSupport ? SUPPORT_TOOLS : isDesk ? [] : [ASK_THE_TEAM],
-      tool_choice: isDesk ? 'none' : 'auto',
     }),
   });
 
@@ -98,12 +111,12 @@ export async function mintBrowserSession({ desk = '', support = false } = {}) {
   }
 
   const body = await response.json();
-  const token = body?.client_secret?.value;
+  const token = body?.value;
   if (!token) throw new Error('OpenAI returned a session with no client secret, so the browser has nothing to connect with.');
 
   return {
     token,
-    expiresAt: body?.client_secret?.expires_at || null,
+    expiresAt: body?.expires_at || null,
     model: realtimeModel(),
     // The page speaks these out loud on connect; sending them back means the
     // greeting is decided here too rather than by whatever the page feels like.
