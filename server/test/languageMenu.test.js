@@ -22,8 +22,17 @@ afterEach(() => {
   else process.env.CALL_LANGUAGES = saved;
 });
 
-test('unset, or one language, is no menu at all', () => {
+test('unset means English, French and Spanish, in that order', () => {
+  // The three the founder asked for by name. The order is the digits callers
+  // learn, so it is fixed here rather than sorted.
   delete process.env.CALL_LANGUAGES;
+  assert.deepEqual(menuLanguages(), ['English', 'French', 'Spanish']);
+  assert.equal(isLanguageMenuEnabled(), true);
+  assert.equal(chosenLanguage('2'), 'French');
+});
+
+test('off, or one language, is no menu at all', () => {
+  process.env.CALL_LANGUAGES = 'off';
   assert.deepEqual(menuLanguages(), []);
   assert.equal(isLanguageMenuEnabled(), false);
   assert.equal(describeLanguageMenu(), '');
