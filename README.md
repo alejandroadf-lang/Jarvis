@@ -179,8 +179,9 @@ of it is done from a browser.
 strangers — and keeps the per-call and per-day caps. Without `CALL_MODE` the
 line is the founder's own, allowlisted to the WhatsApp numbers.
 
-**Languages.** A keypad menu plays first — "For English, press 1. Pour le
-français, appuyez sur le 2. Para español, pulse 3." — and the desk opens in
+**Languages.** A welcome and a keypad menu play first — "Welcome to the travel
+help desk. For English, press 1. Pour le français, appuyez sur le 2. Para
+español, pulse 3." (the name comes from `SUPPORT_DESK_NAME`) — and the desk opens in
 the chosen language, then follows the caller from their first word, switching
 when they switch. `CALL_LANGUAGES=en,es,fr,th` (codes or names, up to nine)
 replaces the default three; `CALL_LANGUAGES=off` skips the menu and opens in
