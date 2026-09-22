@@ -3670,6 +3670,32 @@ invisible. The row and a middleware-level test are the fix. The general lesson
 from the desk paths applies unchanged: a path that authenticates itself has to
 be *listed* as doing so, or the default guard closes it.
 
+### Instance fourteen: the first live call, and the interface that had retired
+
+The call was placed. Twilio's log showed the webhook answered in 118ms with
+the right TwiML; Railway's log showed the rest: *"The Realtime Beta API is no
+longer supported. Please use /v1/realtime for the GA API"*, and the call
+ended after one second. Every test had passed, because the fake realtime
+endpoint in the harness accepted whatever it was sent and emitted the beta
+event names the bridge was listening for. The browser Talk tab shared the
+same interface and the same fate; it was never tested against the live
+endpoint after the retirement.
+
+Not a door this time — a dialect. The bridge spoke the beta interface (the
+`OpenAI-Beta` header, flat session fields, `response.audio.delta`); OpenAI
+now only speaks GA (typed sessions, audio nested under `session.audio`,
+`audio/pcmu` for μ-law, `response.output_audio.delta`, `/v1/realtime/client_secrets`
+and `/v1/realtime/calls` for the browser). The documentation was unreachable
+from the build environment, so the shapes were taken from OpenAI's own SDK
+type definitions rather than from memory.
+
+Two things changed beyond the wire format. The fake model in the harness now
+emits GA names and the session assertion rejects every beta field by name, so
+a regression to the old dialect fails a test instead of a caller. And the
+lesson joins the ledger: a test fixture that mirrors what the code sends is a
+test of consistency, not of correctness. The cure for that is not more
+fixtures but one real call, early — the one that was finally made today.
+
 ## A support desk for somebody else's software
 
 The founder asked for a call centre that solves problems with the Amadeus

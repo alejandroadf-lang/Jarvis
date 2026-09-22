@@ -218,7 +218,10 @@ test('audio from the model reaches Twilio tagged with the stream SID', async () 
     h.send({ event: 'start', start: { streamSid: 'MZ7', customParameters: { from: '+1' } } });
     await h.waitFor(() => h.fromModel.some((e) => e.type === 'session.update'), 'the session to open');
 
-    h.modelSays({ type: 'response.audio.delta', delta: 'BASE64AUDIO' });
+    // The GA event name. The beta one, response.audio.delta, is what the
+    // model used to send; a fake still sending it would pass this test
+    // while a real call played silence.
+    h.modelSays({ type: 'response.output_audio.delta', delta: 'BASE64AUDIO' });
     await h.waitFor(() => h.toTwilio.some((e) => e.event === 'media'), 'audio to reach Twilio');
 
     const media = h.toTwilio.find((e) => e.event === 'media');
@@ -238,10 +241,16 @@ test('the session is opened with Twilio\'s own audio format, both directions', a
     await h.waitFor(() => h.fromModel.some((e) => e.type === 'session.update'), 'the session to open');
 
     const update = h.fromModel.find((e) => e.type === 'session.update').session;
-    assert.equal(update.input_audio_format, 'g711_ulaw');
-    assert.equal(update.output_audio_format, 'g711_ulaw');
-    assert.equal(update.turn_detection.type, 'server_vad', 'a call has no push-to-talk button');
+    assert.equal(update.type, 'realtime', 'GA sessions are typed; an untyped one is refused');
+    assert.equal(update.audio.input.format.type, 'audio/pcmu');
+    assert.equal(update.audio.output.format.type, 'audio/pcmu');
+    assert.equal(update.audio.input.turn_detection.type, 'server_vad', 'a call has no push-to-talk button');
     assert.ok(update.tools.some((t) => t.name === 'ask_the_team'), 'and it can reach the company');
+    // Nothing from the beta shape survives — any of these would be rejected
+    // as an unknown parameter by the GA endpoint.
+    for (const beta of ['modalities', 'voice', 'input_audio_format', 'output_audio_format', 'turn_detection', 'input_audio_transcription']) {
+      assert.equal(update[beta], undefined, `beta field "${beta}" must not be sent`);
+    }
   } finally {
     await h.close();
   }

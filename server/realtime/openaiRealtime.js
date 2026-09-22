@@ -15,6 +15,16 @@
 // app (see agents/openai.js for why: OpenAI renames and retires models faster
 // than this file gets edited, and a stale default should be a Railway
 // variable, not a redeploy).
+//
+// This speaks the GA Realtime interface, not the beta one, and the difference
+// was found on the first live phone call: OpenAI answered "The Realtime Beta
+// API is no longer supported" and the call ended after one second. The beta
+// header, the flat session fields (`input_audio_format`, `voice`,
+// `turn_detection` at the top level) and the `response.audio.*` event names
+// are all gone. GA nests audio under `session.audio.input` / `.output`, names
+// the μ-law format `audio/pcmu`, and emits `response.output_audio.delta`.
+// The test harness sends the GA names too, on purpose: a fake that still
+// emits beta events would keep every test green while every real call died.
 
 import { WebSocket } from 'ws';
 import { readSecret } from '../env.js';
@@ -98,8 +108,10 @@ export function openRealtimeSession({
   const apiKey = readSecret('OPENAI_API_KEY');
   if (!apiKey) throw new Error('OPENAI_API_KEY is not set, so the company cannot take calls.');
 
+  // No `OpenAI-Beta: realtime=v1` header: sending it selects the retired beta
+  // interface, and OpenAI closes the socket with an error instead of talking.
   const socket = new WebSocket(`${realtimeUrl()}?model=${encodeURIComponent(realtimeModel())}`, {
-    headers: { Authorization: `Bearer ${apiKey}`, 'OpenAI-Beta': 'realtime=v1' },
+    headers: { Authorization: `Bearer ${apiKey}` },
   });
 
   let open = false;
@@ -116,24 +128,31 @@ export function openRealtimeSession({
     send({
       type: 'session.update',
       session: {
-        modalities: ['audio', 'text'],
+        type: 'realtime',
+        output_modalities: ['audio'],
         instructions,
-        voice: realtimeVoice(),
-        // Twilio's native format, both directions. No transcoding.
-        input_audio_format: 'g711_ulaw',
-        output_audio_format: 'g711_ulaw',
-        // Whisper on the inbound leg as well, purely so the call can be logged
-        // and so a question handed to the team is the founder's own words
-        // rather than the voice model's paraphrase of them.
-        input_audio_transcription: { model: 'whisper-1' },
-        // The model decides when the caller has stopped talking. Server-side
-        // detection rather than push-to-talk, because this is meant to feel
-        // like a call and a call has no button.
-        turn_detection: {
-          type: 'server_vad',
-          threshold: 0.5,
-          prefix_padding_ms: 300,
-          silence_duration_ms: 600,
+        audio: {
+          input: {
+            // Twilio's native format, both directions. No transcoding.
+            format: { type: 'audio/pcmu' },
+            // Whisper on the inbound leg as well, purely so the call can be
+            // logged and so a question handed to the team is the founder's
+            // own words rather than the voice model's paraphrase of them.
+            transcription: { model: 'whisper-1' },
+            // The model decides when the caller has stopped talking.
+            // Server-side detection rather than push-to-talk, because this
+            // is meant to feel like a call and a call has no button.
+            turn_detection: {
+              type: 'server_vad',
+              threshold: 0.5,
+              prefix_padding_ms: 300,
+              silence_duration_ms: 600,
+            },
+          },
+          output: {
+            format: { type: 'audio/pcmu' },
+            voice: realtimeVoice(),
+          },
         },
         tools,
         tool_choice: tools.length ? 'auto' : 'none',
@@ -158,7 +177,7 @@ export function openRealtimeSession({
     }
 
     switch (event.type) {
-      case 'response.audio.delta':
+      case 'response.output_audio.delta':
         if (event.delta) onAudio(event.delta);
         break;
 
