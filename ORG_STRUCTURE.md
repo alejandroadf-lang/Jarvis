@@ -3716,8 +3716,11 @@ the caller if they switch. No press, or a digit off the menu, means the
 configured default — and the caller is never told they pressed wrongly,
 because on a phone that is a sentence of scolding with no undo.
 
-Off unless `CALL_LANGUAGES` lists two or more. One language is not a choice,
-and a menu with one option is a delay with a prompt. The second Twilio webhook
+English, French and Spanish by default, in that order, because the founder
+named them in that order and the digit a caller learns should not move.
+`CALL_LANGUAGES` replaces the list; `off` removes the menu; a list of one is
+off too, since one language is not a choice and a menu with one option is a
+delay with a prompt. The second Twilio webhook
 this adds, `/api/calls/language`, went into `SELF_AUTHENTICATED_PATHS` in the
 same commit as the route — the row instance thirteen was missing.
 

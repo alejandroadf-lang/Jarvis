@@ -4,9 +4,11 @@
 // and answers in whatever they spoke, and switches when they switch. The
 // founder asked for a menu anyway — a call centre convention, and one that
 // gives the caller a choice they can see rather than a behaviour they have to
-// trust. So it exists, and it is off unless CALL_LANGUAGES lists at least two
-// languages. One language is not a choice, and a menu with one option is a
-// delay with a prompt.
+// trust. So it exists, and it plays by default: English, French and Spanish,
+// the three the founder asked for by name. CALL_LANGUAGES replaces that list;
+// CALL_LANGUAGES=off removes the menu. One language is not a choice, so a
+// list of one is treated as off too — a menu with one option is a delay with
+// a prompt.
 //
 // The menu is Twilio's <Gather>, spoken by Twilio's own text-to-speech in
 // each language, before the media stream opens. The realtime session costs
@@ -47,18 +49,25 @@ const LINES = {
 // left alone because callers expect 0 to reach a person.
 const MAX_CHOICES = 9;
 
+// What plays when nothing is configured. In this order because the founder
+// listed them in this order; the digit a caller learns should not move.
+const DEFAULT_LANGUAGES = 'en,fr,es';
+
 /**
  * The languages on the menu, in keypad order, as English names.
  *
- * From CALL_LANGUAGES: codes or names, comma-separated. Unrecognised entries
+ * From CALL_LANGUAGES, or the default list when it is unset: codes or names,
+ * comma-separated. "off" (or "none") is an empty menu. Unrecognised entries
  * are dropped rather than offered, because a line reading "For undefined,
  * press 3" is the one thing worse than no menu. Duplicates collapse to the
  * first digit.
  */
 export function menuLanguages() {
+  const raw = String(process.env.CALL_LANGUAGES || '').trim();
+  if (/^(off|none|false|0)$/i.test(raw)) return [];
   const seen = new Set();
   const out = [];
-  for (const entry of String(process.env.CALL_LANGUAGES || '').split(',')) {
+  for (const entry of (raw || DEFAULT_LANGUAGES).split(',')) {
     const name = languageName(entry.trim());
     if (!name || seen.has(name)) continue;
     seen.add(name);
