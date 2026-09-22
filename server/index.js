@@ -1658,8 +1658,18 @@ attachCallStream(httpServer, {
     });
     return reply;
   },
-  onCallEnded({ from, seconds, reason, transcript }) {
-    console.log(`Call from ${from || 'unknown'} ended after ${Math.round(seconds)}s (${reason}).`);
+  onCallEnded({ from, seconds, reason, transcript, turns = [] }) {
+    // The wait per turn, on the same line as the call itself. Latency on a
+    // call has four legs — phone network, Twilio to here, here to the
+    // model, the model's own thinking — and this number is the last two
+    // plus the silence window; anything the founder feels beyond it is the
+    // phone network and the distance to Twilio's region.
+    const replies = turns.filter((t) => t.what !== 'greeting').map((t) => t.ms);
+    const avg = replies.length ? Math.round(replies.reduce((a, b) => a + b, 0) / replies.length) : 0;
+    const timing = turns.length
+      ? ` Model turns: ${turns.length}, first sound after ${avg}ms on average, slowest ${Math.max(...turns.map((t) => t.ms))}ms.`
+      : '';
+    console.log(`Call from ${from || 'unknown'} ended after ${Math.round(seconds)}s (${reason}).${timing}`);
     // The founder gets what was said in writing. A call leaves no record they
     // can search, and half of what gets discussed on one is a decision.
     if (transcript.length) sendCallSummary({ from, seconds, transcript }).catch((err) => {

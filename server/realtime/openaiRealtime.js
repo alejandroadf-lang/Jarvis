@@ -88,6 +88,12 @@ export const ASK_THE_TEAM = {
  * @param {() => void} opts.onSpeechStarted - the caller began talking
  * @param {(call: {id: string, name: string, args: object}) => void} opts.onToolCall
  * @param {(text: string) => void} opts.onTranscript - what was said, for the log
+ * @param {(turn: {ms: number, what: string}) => void} [opts.onLatency] - how long
+ *   the caller waited for the model's first sound, per turn. "greeting" is
+ *   measured from the socket opening; every other turn from the moment the
+ *   model decided the caller had stopped speaking. The founder's "there is a
+ *   lot of latency" is unanswerable without this: the log showed the call
+ *   connecting and ending and nothing in between.
  * @param {(err: Error) => void} opts.onError
  * @param {() => void} opts.onClose
  */
@@ -102,6 +108,7 @@ export function openRealtimeSession({
   onSpeechStarted = () => {},
   onToolCall = () => {},
   onTranscript = () => {},
+  onLatency = () => {},
   onError = () => {},
   onClose = () => {},
 }) {
@@ -116,6 +123,12 @@ export function openRealtimeSession({
 
   let open = false;
   const queued = [];
+  const openedAt = Date.now();
+  // The turn the caller is waiting on, if any: when it began and what it is.
+  // Cleared by the first audio of the reply, so a reply streaming in many
+  // deltas is measured once, to its first sound — which is what a caller
+  // experiences as the wait.
+  let waiting = { since: openedAt, what: 'greeting' };
 
   function send(event) {
     const payload = JSON.stringify(event);
@@ -142,11 +155,17 @@ export function openRealtimeSession({
             // The model decides when the caller has stopped talking.
             // Server-side detection rather than push-to-talk, because this
             // is meant to feel like a call and a call has no button.
+            // 500ms of silence before the model takes its turn. This is
+            // the one latency knob that is ours: every reply waits at
+            // least this long after the caller's last word. 600 was the
+            // first guess; 500 is the API's own default and the founder
+            // found the calls slow. Lower and the model starts answering
+            // mid-sentence on a phone line, where pauses are longer.
             turn_detection: {
               type: 'server_vad',
               threshold: 0.5,
               prefix_padding_ms: 300,
-              silence_duration_ms: 600,
+              silence_duration_ms: 500,
             },
           },
           output: {
@@ -178,6 +197,10 @@ export function openRealtimeSession({
 
     switch (event.type) {
       case 'response.output_audio.delta':
+        if (waiting) {
+          onLatency({ ms: Date.now() - waiting.since, what: waiting.what });
+          waiting = null;
+        }
         if (event.delta) onAudio(event.delta);
         break;
 
@@ -187,6 +210,13 @@ export function openRealtimeSession({
       // unnatural thing a voice agent does.
       case 'input_audio_buffer.speech_started':
         onSpeechStarted();
+        break;
+
+      // The model decided the caller has finished. From here to the first
+      // sound of the reply is the wait the caller feels; the silence window
+      // above has already been spent by the time this arrives.
+      case 'input_audio_buffer.speech_stopped':
+        waiting = { since: Date.now(), what: 'reply' };
         break;
 
       case 'conversation.item.input_audio_transcription.completed':
@@ -241,6 +271,7 @@ export function openRealtimeSession({
         item: { type: 'function_call_output', call_id: callId, output: String(output) },
       });
       send({ type: 'response.create' });
+      waiting = { since: Date.now(), what: 'tool result' };
     },
 
     /**
