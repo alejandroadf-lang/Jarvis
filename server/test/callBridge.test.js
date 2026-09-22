@@ -41,6 +41,15 @@ test('an allowed caller is connected to the media stream', async () => {
   });
 });
 
+test('a language chosen on the keypad rides into the stream; none chosen, no parameter', async () => {
+  await withEnv({ VOICE_CALLS: 'true', CALL_ALLOWED_NUMBERS: '66812345678' }, () => {
+    const chosen = answerCallTwiml({ from: '+66812345678', host: 'h', language: 'Spanish' });
+    assert.match(chosen, /<Parameter name="language" value="Spanish"\/>/);
+    const plain = answerCallTwiml({ from: '+66812345678', host: 'h' });
+    assert.doesNotMatch(plain, /name="language"/, 'absent means the desk opens in its default');
+  });
+});
+
 test('a refused caller hears the reason and is hung up on', async () => {
   await withEnv({ VOICE_CALLS: 'true', CALL_ALLOWED_NUMBERS: '66812345678' }, () => {
     const xml = answerCallTwiml({ from: '+15551234567', host: 'jarvis.example.com' });
@@ -251,6 +260,23 @@ test('the session is opened with Twilio\'s own audio format, both directions', a
     for (const beta of ['modalities', 'voice', 'input_audio_format', 'output_audio_format', 'turn_detection', 'input_audio_transcription']) {
       assert.equal(update[beta], undefined, `beta field "${beta}" must not be sent`);
     }
+  } finally {
+    await h.close();
+  }
+});
+
+test('the keypad choice becomes the language the call opens in', async () => {
+  // The parameter the TwiML carried comes back on Twilio's start event; the
+  // brief and the greeting are built from it, so the first words are in the
+  // language the caller pressed for — not the configured default.
+  const h = await callHarness();
+  try {
+    h.send({ event: 'start', start: { streamSid: 'MZ9', customParameters: { from: '+1', language: 'Spanish' } } });
+    await h.waitFor(() => h.fromModel.some((e) => e.type === 'session.update'), 'the session to open');
+    const update = h.fromModel.find((e) => e.type === 'session.update').session;
+    assert.match(update.instructions, /Speak Spanish, whatever language/);
+    const greeting = h.fromModel.find((e) => e.type === 'response.create');
+    assert.match(greeting.response.instructions, /in Spanish/);
   } finally {
     await h.close();
   }

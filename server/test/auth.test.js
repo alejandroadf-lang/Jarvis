@@ -77,6 +77,8 @@ test('the Twilio call webhook reaches its handler, which checks Twilio\'s own si
   // The media stream itself upgrades on the raw HTTP server and never passes
   // through here, so only the webhook needs the row.
   assert.equal(run(request({ path: '/api/calls/incoming' })).passed, true);
+  // And the keypad choice from the language menu, posted the same way.
+  assert.equal(run(request({ path: '/api/calls/language' })).passed, true);
 });
 
 test('the privacy policy stays open — Meta fetches it, and a policy behind a password is not one', () => {

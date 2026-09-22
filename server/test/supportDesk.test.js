@@ -174,6 +174,24 @@ test('it opens in DESK_LANGUAGE and is told to follow the caller without comment
   assert.match(desk.supportGreeting(), /in Spanish/);
 });
 
+test('a language chosen on the keypad outranks DESK_LANGUAGE, and the ticket records it', async (t) => {
+  // The menu exists so the caller can choose; a choice the desk then ignores
+  // in favour of a setting would make the menu a lie.
+  process.env.DESK_LANGUAGE = 'es';
+  t.after(() => delete process.env.DESK_LANGUAGE);
+  const brief = desk.buildSupportInstructions({ language: 'Thai' });
+  assert.match(brief, /Open in Thai — the caller chose it on the keypad/);
+  assert.doesNotMatch(brief, /Open in Spanish/);
+  assert.match(desk.supportGreeting({ language: 'Thai' }), /in Thai/);
+  assert.match(desk.buildSupportInstructions(), /Open in Spanish/, 'no choice, the setting stands');
+
+  // The model is asked to pass the language when it opens a ticket; when it
+  // forgets, the keypad choice is a better default than a blank.
+  await desk.runSupportTool('open_ticket', { summary: 'Refund for booking TH1' }, { from: '+66', language: 'Thai' });
+  const [ticket] = desk.listTickets();
+  assert.equal(ticket.language, 'Thai');
+});
+
 test('describeSupportDesk counts the examples still to be replaced', () => {
   assert.match(desk.describeSupportDesk(), /still the starting examples — replace them with ISSUE/);
   for (const issue of desk.listIssues()) desk.removeIssue(issue.id);

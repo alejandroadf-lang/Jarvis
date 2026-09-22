@@ -123,6 +123,7 @@ import {
 import { isOpenAIConfigured, transcribeAudio } from './agents/openai.js';
 import { isSpeechConfigured, synthesize, spokenExcerpt, spokenReplyInstruction } from './speech.js';
 import { attachCallStream, answerCallTwiml } from './realtime/twilioBridge.js';
+import { isLanguageMenuEnabled, languageMenuTwiml, chosenLanguage } from './realtime/languageMenu.js';
 import { verifyTwilioRequest } from './realtime/twilioAuth.js';
 import { isDeskApiConfigured, verifyDeskKey, deskLookup, deskTicket, describeDeskApi } from './realtime/deskApi.js';
 import { refuseCall, describeCalling, callMinutesRemaining } from './realtime/callPolicy.js';
@@ -1487,12 +1488,43 @@ app.post('/api/calls/incoming', express.urlencoded({ extended: false }), (req, r
   // The public host Twilio reached us on, which is what the media stream must
   // dial back. Behind Railway's proxy the Host header is the public name.
   const host = req.get('x-forwarded-host') || req.get('host') || '';
-  const twiml = answerCallTwiml({ from, host, callSid: req.body?.CallSid || '' });
   const refusal = refuseCall(from);
+  // A refused caller hears why before any menu — a menu followed by a
+  // refusal is a minute of the caller's time spent for nothing.
+  if (!refusal && isLanguageMenuEnabled()) {
+    recordInbound({ stage: STAGES.ANSWERED, from, detail: 'Language menu offered.' });
+    return res.type('text/xml').send(languageMenuTwiml({ host }));
+  }
+  const twiml = answerCallTwiml({ from, host, callSid: req.body?.CallSid || '' });
   recordInbound({
     stage: refusal ? STAGES.NOT_ALLOWLISTED : STAGES.ANSWERED,
     from,
     detail: refusal || 'Call connected to the voice line.',
+  });
+  res.type('text/xml').send(twiml);
+});
+
+/**
+ * The keypad choice from the language menu, then the same connection as
+ * above with the language riding into the stream. Reached with no Digits when
+ * the caller pressed nothing, in which case the desk opens in its default.
+ * Signed by Twilio like the webhook above, and listed with it in
+ * SELF_AUTHENTICATED_PATHS — the row that was missing for instance thirteen.
+ */
+app.post('/api/calls/language', express.urlencoded({ extended: false }), (req, res) => {
+  const from = req.body?.From || '';
+  if (!verifyTwilioRequest(req)) {
+    recordInbound({ stage: STAGES.BAD_SIGNATURE, from, detail: 'Twilio signature did not match TWILIO_AUTH_TOKEN' });
+    return res.status(403).type('text/plain').send('forbidden');
+  }
+  const host = req.get('x-forwarded-host') || req.get('host') || '';
+  const language = chosenLanguage(req.body?.Digits);
+  const twiml = answerCallTwiml({ from, host, callSid: req.body?.CallSid || '', language });
+  const refusal = refuseCall(from);
+  recordInbound({
+    stage: refusal ? STAGES.NOT_ALLOWLISTED : STAGES.ANSWERED,
+    from,
+    detail: refusal || (language ? `Call connected to the voice line in ${language}.` : 'Call connected to the voice line (no language chosen).'),
   });
   res.type('text/xml').send(twiml);
 });
