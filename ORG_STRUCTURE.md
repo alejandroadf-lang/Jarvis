@@ -3724,6 +3724,23 @@ delay with a prompt. The second Twilio webhook
 this adds, `/api/calls/language`, went into `SELF_AUTHENTICATED_PATHS` in the
 same commit as the route — the row instance thirteen was missing.
 
+### What the end-to-end run found
+
+Before the founder's next live call, the whole flow was driven through the
+real server with a fake Twilio on one side and a fake model on the other:
+signed webhook past the app-token wall, menu, digit, stream, GA session,
+lookup, ticket, hang-up, forged stream refused. Twenty-nine checks. One
+failed, and it was not a wiring fault but a language one: the procedures are
+matched on words and written in English, so *"quiero cancelar mi viaje y que
+me devuelvan el dinero"* matched nothing, and a Spanish caller would have
+been told there is no procedure for a refund. The brief had said *"call
+lookup_issue with the problem in their words"* while the tool's own schema
+said *"in English"* — two contracts, and the model had been reading the one
+in the brief. Now both say English, translate, keep codes and names as said.
+The same run showed the agency desk's tickets labelled *"Amadeus support"*,
+the vendor default leaking through a field nobody had looked at. Both are
+pinned by tests.
+
 ## A support desk for somebody else's software
 
 The founder asked for a call centre that solves problems with the Amadeus
