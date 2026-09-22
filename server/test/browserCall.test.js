@@ -93,6 +93,7 @@ test('the brief, the tools and the turn detection are fixed by the server', asyn
     assert.match(sent.body.instructions, /never tell them|Do not say you cannot hear/i);
     assert.match(sent.body.instructions, /Do not agree to send anything, pay anything, or promise anything/);
     assert.equal(sent.body.audio.input.turn_detection.type, 'server_vad', 'a conversation has no push-to-talk');
+    assert.deepEqual(sent.body.audio.input.noise_reduction, { type: 'near_field' }, 'the microphone is cleaned before detection');
     assert.ok(sent.body.tools.some((t) => t.name === 'ask_the_team'), 'and it can reach the real company');
   });
 });
