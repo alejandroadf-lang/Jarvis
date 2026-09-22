@@ -603,8 +603,8 @@ test('ISSUE steps may run over several lines, since real procedures do', () => {
 
 test('ISSUES lists the procedures and flags the examples, and ISSUE DEL removes one', async () => {
   const listed = await commands.runFounderCommand({ kind: 'issues' });
-  assert.match(listed, /Callers reach the Amadeus support desk/);
-  assert.match(listed, /#1 Cannot sign in \(example — replace\)/);
+  assert.match(listed, /Callers reach the travel help desk/);
+  assert.match(listed, /#1 Booking confirmation never arrived \(example — replace\)/);
 
   const added = await commands.runFounderCommand({ kind: 'issue_add', title: 'T', symptoms: 'a b c', steps: 'do x' });
   assert.match(added, /Added #\d+ "T"/);
@@ -612,7 +612,7 @@ test('ISSUES lists the procedures and flags the examples, and ISSUE DEL removes 
   const removed = await commands.runFounderCommand({ kind: 'issue_del', id: 1 });
   assert.match(removed, /Removed #1/);
   const after = await commands.runFounderCommand({ kind: 'issues' });
-  assert.doesNotMatch(after, /#1 Cannot sign in/);
+  assert.doesNotMatch(after, /#1 Booking confirmation never arrived/);
 });
 
 test('HELP mentions the desk commands', () => {

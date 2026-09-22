@@ -40,13 +40,34 @@ const TICKETS = 'tickets.json';
 const MATCH_FLOOR = 0.12;
 const MAX_MATCHES = 3;
 
+/**
+ * Whose desk this is.
+ *
+ *   agency — a travel agency's own help desk. The caller is the agency's
+ *            customer: a booking that never arrived, a flight to change, a
+ *            refund. The default, because it is what the founder asked to
+ *            demonstrate.
+ *   vendor — an independent support desk for users of somebody else's
+ *            software (SUPPORT_PRODUCT), which must never claim to be that
+ *            vendor. Kept for the Amadeus-style case.
+ */
+export function supportMode() {
+  return (process.env.SUPPORT_MODE || '').trim().toLowerCase() === 'vendor' ? 'vendor' : 'agency';
+}
+
 export function supportProduct() {
   return (process.env.SUPPORT_PRODUCT || '').trim() || 'Amadeus';
 }
 
 export function supportDeskName() {
   const configured = (process.env.SUPPORT_DESK_NAME || '').trim();
-  return configured || `the ${supportProduct()} support desk`;
+  if (configured) return configured;
+  return supportMode() === 'vendor' ? `the ${supportProduct()} support desk` : 'the travel help desk';
+}
+
+/** Whether strangers on the WhatsApp number reach the desk. Off unless set. */
+export function isWhatsAppDeskEnabled() {
+  return process.env.WHATSAPP_DESK === 'true';
 }
 
 /** Opens in this language; follows the caller from their first word. */
@@ -62,7 +83,7 @@ export function supportLanguage() {
 // product that this code cannot verify. They are labelled as examples in
 // ISSUES so the founder replaces them with real procedures rather than
 // mistaking them for ones.
-const SEED_ISSUES = [
+const VENDOR_SEED = [
   {
     title: 'Cannot sign in',
     symptoms: 'login fails, password rejected, account locked, sign-in page loops, office id not accepted',
@@ -114,13 +135,86 @@ const SEED_ISSUES = [
   },
 ];
 
+// The agency's own desk starts with the calls a travel agency actually gets.
+// Every step is process — verify who they are and what they hold, find out
+// exactly what they need, say what can and cannot happen on this call — and
+// none promises an airline or a refund. Labelled as examples until replaced.
+const AGENCY_SEED = [
+  {
+    title: 'Booking confirmation never arrived',
+    symptoms: 'no confirmation email, did not receive the booking, no e-ticket, cannot find my booking, no reference number',
+    steps:
+      'Ask for the surname on the booking and the email address they booked with, and check their spam folder while you talk. ' +
+      'If they have a booking reference, read it back to them letter by letter to confirm it. ' +
+      'If they have no reference at all, take the traveller names, the route and the travel date, and open a ticket so a person can locate it and resend — do not guess whether the booking exists.',
+    example: true,
+  },
+  {
+    title: 'Change a flight date or time',
+    symptoms: 'change my flight, move the date, different time, reschedule, rebook, earlier flight, later flight',
+    steps:
+      'Get the booking reference and surname, the flight they want to change, and the new date or time they want. ' +
+      'Explain that changes depend on the fare rules and may carry a fee or fare difference, and that you cannot confirm the new price on this call. ' +
+      'Open a ticket with the reference, the current flight and the requested change, and tell them a person will come back with the options and the cost before anything is changed.',
+    example: true,
+  },
+  {
+    title: 'Cancel a booking or ask for a refund',
+    symptoms: 'cancel my trip, refund, money back, cancel the flight, cancel the hotel, cancellation',
+    steps:
+      'Get the booking reference and surname and what exactly they want to cancel — the whole trip or one part. ' +
+      'Explain that whether a refund is due depends on the fare or rate rules, and that you cannot process a cancellation or promise a refund on this call. ' +
+      'Open a ticket with the reference and what they want cancelled, and tell them a person will confirm what is refundable before cancelling anything, since cancelling can forfeit the fare.',
+    example: true,
+  },
+  {
+    title: 'Add baggage, a seat or a meal',
+    symptoms: 'add a bag, extra luggage, checked baggage, choose a seat, seat selection, special meal, add-on',
+    steps:
+      'Get the booking reference and surname, the flight, and what they want to add. ' +
+      'Explain that add-ons are priced by the airline and you cannot take payment on this call. ' +
+      'Open a ticket with the details so a person can quote it and send a secure payment link.',
+    example: true,
+  },
+  {
+    title: 'Name spelled wrong on the ticket',
+    symptoms: 'name is wrong, misspelled name, wrong name on booking, name does not match passport, name correction',
+    steps:
+      'Ask them to spell the name exactly as it appears in the passport, letter by letter, and read it back. ' +
+      'Explain that name corrections are handled by the airline, that some allow minor corrections and some do not, and that you cannot confirm on this call. ' +
+      'Open a ticket with the reference, the name as booked and the name as in the passport. Treat this as urgent if travel is within 72 hours, and say so.',
+    example: true,
+  },
+  {
+    title: 'Missed a flight or a flight was cancelled',
+    symptoms: 'missed my flight, flight cancelled, flight was cancelled, stuck at the airport, connection missed, delayed and missed',
+    steps:
+      'Find out where they are right now and whether they are still at the airport. If they are, tell them to go to the airline desk first — the airline can rebook on the spot and you cannot. ' +
+      'Get the booking reference and what happened. Open a ticket marked urgent with their location and a phone number, and tell them a person will call them back.',
+    example: true,
+  },
+  {
+    title: 'Passport, visa or travel document question',
+    symptoms: 'do I need a visa, passport validity, travel documents, entry requirements, transit visa',
+    steps:
+      'Get the nationality on the passport, the destination and any transit points, and the travel dates. ' +
+      'Explain that entry requirements are set by each country and change, and that you will not guess at them on the call. ' +
+      'Open a ticket with those details so a person checks the current requirements and confirms in writing.',
+    example: true,
+  },
+];
+
+function seedFor(mode) {
+  return mode === 'vendor' ? VENDOR_SEED : AGENCY_SEED;
+}
+
 function load() {
   const data = readJson(FILE, { issues: null });
   // First run: seed. Later runs: whatever the founder has made of it, even if
   // that is an empty list — deleting every example is a valid state and must
   // not resurrect them.
   if (data.issues === null) {
-    const seeded = { issues: SEED_ISSUES.map((issue, i) => ({ ...issue, id: i + 1, at: new Date().toISOString() })) };
+    const seeded = { issues: seedFor(supportMode()).map((issue, i) => ({ ...issue, id: i + 1, at: new Date().toISOString() })) };
     writeJson(FILE, seeded);
     return seeded;
   }
@@ -288,39 +382,69 @@ export function supportGreeting() {
 }
 
 export function buildSupportInstructions() {
-  const product = supportProduct();
-  return `You are answering the phone at ${supportDeskName()}, an independent support desk for people who use ${product}. You are not ${product}, you do not work for ${product}, and you never say or imply that you do. If a caller asks whether they have reached ${product}, say plainly that this is an independent desk for ${product} users.
+  return supportMode() === 'vendor' ? vendorInstructions() : agencyInstructions();
+}
 
-LANGUAGE
-Open in ${supportLanguage()}. From the moment they speak, use their language and keep using it — switch again if they do. Never comment on which language is in use and never ask them to repeat in another one. Keep product names, error codes and command entries exactly as they are, in every language.
+// Shared by both personas: how a support call goes, how to talk, and what
+// must never happen. The opening paragraph is what differs — who the desk is
+// and what it is allowed to promise.
+function commonInstructions({ cannotDo }) {
+  return `LANGUAGE
+Open in ${supportLanguage()}. From the moment they speak, use their language and keep using it — switch again if they do. Never comment on which language is in use and never ask them to repeat in another one. Keep names, booking references, error codes and product names exactly as they are, in every language.
 
 HOW A SUPPORT CALL GOES
-1. Find out what is wrong. Ask for the exact message on their screen, word for word, and what they did just before it appeared.
+1. Find out what is wrong. Ask for the exact message on their screen, or exactly what happened, and what they did just before.
 2. Call lookup_issue with the problem in their words. Do this before giving any steps.
-3. Give the steps that came back, one at a time. Say one step, wait for them to do it, ask what happened, then the next. Never read a whole procedure in one breath.
-4. If it is fixed, say so and ask if there is anything else.
-5. If nothing matched, or the steps did not fix it, or they ask for a person: get their name and a way to reach them, call open_ticket, and read the ticket number back.
+3. Give the steps that came back, one at a time. Say one step, wait for them, ask what happened, then the next. Never read a whole procedure in one breath.
+4. If it is resolved, say so and ask if there is anything else.
+5. If nothing matched, or the steps did not resolve it, or they ask for a person: get their name and a way to reach them, call open_ticket, and read the ticket number back.
 
 HOW TO TALK
 - One or two sentences, then stop. They are on a call, often mid-problem, and cannot re-read you.
 - Calm. They are frustrated and it is not with you.
-- If you did not catch something — an error code, a name — ask them to repeat it. Never guess at an error code.
+- If you did not catch something — a booking reference, a name, an error code — ask them to repeat it, letter by letter if needed. Never guess at a reference.
 
 WHAT YOU MUST NOT DO
-- Never give a step that did not come back from lookup_issue. You do not know ${product}'s internals, and a wrong step costs them an hour. "I don't have a procedure for that one" is a real answer; an invented one is not.
-- Never ask for a password, a full card number or a security code. If they start reading one out, stop them.
-- Never promise a fix, a time, or that ${product} will do anything. You can log a ticket; you cannot commit anyone.
+- Never give a step that did not come back from lookup_issue. "I don't have a procedure for that one" is a real answer; an invented one is not.
+- Never ask for a password, a full card number, a security code or a full passport number. If they start reading one out, stop them.
+${cannotDo}
 - Never discuss this company's business, other callers, or anything not about their problem.
 
 The call is transcribed and every ticket reaches a person. Say so if they ask whether anyone will actually follow up.`;
 }
 
+function agencyInstructions() {
+  return `You are answering the phone at ${supportDeskName()}. The caller is a customer of this travel agency — someone with a booking, or trying to make one — and they have a problem.
+
+You can look procedures up and log requests. You cannot change, cancel, refund, rebook or pay for anything on this call: a person does that from the ticket you open, and you say so plainly rather than implying it is done. A promise made on the phone that nobody keeps is the complaint that ends up in a review.
+
+${commonInstructions({
+  cannotDo:
+    '- Never say a change, cancellation or refund is done, approved or guaranteed. You log it; a person confirms it.\n' +
+    '- Never quote a price, a fee or a refund amount you were not given by lookup_issue.',
+})}`;
+}
+
+function vendorInstructions() {
+  const product = supportProduct();
+  return `You are answering the phone at ${supportDeskName()}, an independent support desk for people who use ${product}. You are not ${product}, you do not work for ${product}, and you never say or imply that you do. If a caller asks whether they have reached ${product}, say plainly that this is an independent desk for ${product} users.
+
+${commonInstructions({
+  cannotDo: `- Never promise a fix, a time, or that ${product} will do anything. You can log a ticket; you cannot commit anyone.`,
+})}`;
+}
+
+// The vendor brief once continued below; the shared body now lives in
+// commonInstructions. This unreachable tail is removed by the patch that
+// follows.
+
 /** For the founder, checking what a caller would reach. */
 export function describeSupportDesk() {
   const issues = listIssues();
   const examples = issues.filter((i) => i.example).length;
+  const who = supportMode() === 'vendor' ? `an independent desk for ${supportProduct()} users` : "the agency's own help desk";
   return (
-    `Callers reach ${supportDeskName()}, opening in ${supportLanguage()} and then following the caller. ` +
+    `Callers reach ${supportDeskName()} — ${who} — opening in ${supportLanguage()} and then following the caller. ` +
     `${issues.length} procedure${issues.length === 1 ? '' : 's'} on record` +
     (examples ? ` (${examples} still the starting examples — replace them with ISSUE)` : '') +
     `. Anything it cannot solve becomes a ticket emailed to you.`

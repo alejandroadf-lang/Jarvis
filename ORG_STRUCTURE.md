@@ -3705,3 +3705,42 @@ because a help line with an allowlist helps nobody, while the per-call and
 per-day caps still do, because they are what stop a public number becoming a
 public bill. The founder's line stays the default: a misspelt `CALL_MODE`
 cannot open the founder's assistant to whoever dials.
+
+### The desk becomes the agency's own, and answers strangers on WhatsApp
+
+The founder dropped the vendor case in one sentence: *"just make a travel
+agency help desk … for someone that is calling you via WhatsApp."* Two things
+changed, and neither is the conversation.
+
+**Whose desk it is.** `SUPPORT_MODE=agency` (the default now) makes the caller
+the agency's customer — a booking that never arrived, a flight to change, a
+refund. The vendor persona stays behind `SUPPORT_MODE=vendor`. The one line
+that differs between them is what the desk may promise, and for the agency it
+is *nothing*: it can look procedures up and log a request; it cannot change,
+cancel, refund, rebook or pay for anything on the call, and it is told to say
+so plainly rather than imply it is done. A promise made on the phone that nobody
+keeps is the complaint that ends up in a review. The seven starting procedures
+are the calls an agency actually gets, and every one ends in a ticket rather
+than a commitment.
+
+**Who can reach it.** Until now the WhatsApp number talked to exactly one
+person. Every other sender was dropped as *not allowlisted* — correct for a
+founder's private line and useless for a help desk. `WHATSAPP_DESK=true`
+routes strangers to the desk instead: text or voice note, answered the way it
+arrived, in the language it was spoken in, with its own conversation history
+per number.
+
+What that path deliberately lacks is the point. It never parses founder
+commands or plan approvals, never runs the company turn, never sees company
+state. A stranger typing `HALT` is a customer saying halt, not the founder.
+The transcription is shared with the founder's path — `hearMessage()` — so a
+customer's Spanish voice note is heard exactly the way the founder's is, and
+the `"spanish"`-to-`"sp"` class of bug cannot return on one path while fixed
+on the other.
+
+This is turn-based, not a call: a voice note in, a voice note back, about
+fifteen seconds apart. The real-time version is the Talk tab today and a
+WhatsApp call once the app runs on a host that accepts UDP. But it is a
+conversation a customer can have on the number they already have, in their own
+language, that ends with a ticket a person will act on — which is the thing
+the founder asked to demonstrate.

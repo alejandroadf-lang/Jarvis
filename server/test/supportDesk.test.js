@@ -15,7 +15,7 @@ import path from 'node:path';
 
 let tmpDir;
 let desk;
-const KEYS = ['SUPPORT_PRODUCT', 'SUPPORT_DESK_NAME', 'DESK_LANGUAGE', 'REPLY_LANGUAGE', 'SMTP_HOST'];
+const KEYS = ['SUPPORT_PRODUCT', 'SUPPORT_DESK_NAME', 'SUPPORT_MODE', 'WHATSAPP_DESK', 'DESK_LANGUAGE', 'REPLY_LANGUAGE', 'SMTP_HOST'];
 const saved = {};
 
 before(async () => {
@@ -54,7 +54,9 @@ test('deleting every example is a valid state and does not resurrect them', () =
   assert.deepEqual(desk.listIssues(), [], 'a second load does not re-seed');
 });
 
-test('a caller describing symptoms finds the procedure, without knowing its title', () => {
+test('a caller describing symptoms finds the procedure, without knowing its title', (t) => {
+  process.env.SUPPORT_MODE = 'vendor';
+  t.after(() => delete process.env.SUPPORT_MODE);
   const [best] = desk.findIssues('my password keeps getting rejected and now it says the account is locked');
   assert.ok(best, 'something matched');
   assert.equal(best.issue.title, 'Cannot sign in');
@@ -88,7 +90,9 @@ test('lookup_issue with no match tells the model not to improvise', async () => 
   assert.match(out, /open a ticket/);
 });
 
-test('lookup_issue returns the steps, closest first', async () => {
+test('lookup_issue returns the steps, closest first', async (t) => {
+  process.env.SUPPORT_MODE = 'vendor';
+  t.after(() => delete process.env.SUPPORT_MODE);
   const out = await desk.runSupportTool('lookup_issue', { problem: 'the application is frozen and my colleagues have the same thing' });
   assert.match(out, /1\. Application slow, frozen or disconnecting/);
   assert.match(out, /Steps:/);
@@ -118,7 +122,9 @@ test('a tool the desk does not have is refused by name', async () => {
 
 // --- The boundaries -----------------------------------------------------------------------
 
-test('the desk never introduces itself as the vendor', () => {
+test('the desk never introduces itself as the vendor', (t) => {
+  process.env.SUPPORT_MODE = 'vendor';
+  t.after(() => delete process.env.SUPPORT_MODE);
   const brief = desk.buildSupportInstructions();
   assert.match(brief, /independent support desk for people who use Amadeus/);
   assert.match(brief, /You are not Amadeus, you do not work for Amadeus/);
@@ -139,13 +145,17 @@ test('the desk is told to give only steps that came back from the lookup', () =>
   assert.match(brief, /one at a time/i, 'and to pace them');
 });
 
-test('the desk refuses passwords and card numbers, and never promises the vendor will act', () => {
+test('the desk refuses passwords and card numbers, and never promises the vendor will act', (t) => {
+  process.env.SUPPORT_MODE = 'vendor';
+  t.after(() => delete process.env.SUPPORT_MODE);
   const brief = desk.buildSupportInstructions();
   assert.match(brief, /Never ask for a password, a full card number/);
   assert.match(brief, /Never promise a fix, a time, or that Amadeus will do anything/);
 });
 
 test('the product and the name are configurable, so this is not only an Amadeus desk', (t) => {
+  process.env.SUPPORT_MODE = 'vendor';
+  t.after(() => delete process.env.SUPPORT_MODE);
   process.env.SUPPORT_PRODUCT = 'Sabre';
   process.env.SUPPORT_DESK_NAME = 'the GDS help line';
   t.after(() => { delete process.env.SUPPORT_PRODUCT; delete process.env.SUPPORT_DESK_NAME; });
@@ -181,4 +191,55 @@ test('the ticket email carries what a person needs to follow up, and how to make
   assert.match(text, /Caller: Luc/);
   assert.match(text, /Language of the call: French/);
   assert.match(text, /add the procedure with ISSUE/, 'the fix for the next caller is named');
+});
+
+
+// --- The agency's own desk, which is the default --------------------------------------------
+//
+// The founder dropped the vendor case: "just make a travel agency help desk".
+// The caller is now the agency's customer, and the one thing that changes in
+// the brief is what the desk may promise — nothing. It can look up and log; a
+// person changes, cancels, refunds and pays.
+
+test('the default desk is the agency\'s own, not a vendor\'s', () => {
+  assert.equal(desk.supportMode(), 'agency');
+  assert.equal(desk.supportDeskName(), 'the travel help desk');
+  assert.doesNotMatch(desk.buildSupportInstructions(), /You are not /, 'the "not the vendor" line belongs to the other persona');
+  assert.doesNotMatch(desk.buildSupportInstructions(), /Amadeus/);
+});
+
+test('the agency desk cannot change, cancel, refund or pay, and is told to say so', () => {
+  const brief = desk.buildSupportInstructions();
+  assert.match(brief, /cannot change, cancel, refund, rebook or pay for anything on this call/);
+  assert.match(brief, /Never say a change, cancellation or refund is done, approved or guaranteed/);
+  assert.match(brief, /Never quote a price, a fee or a refund amount you were not given/);
+  assert.match(brief, /full passport number/, 'a passport number is as sensitive as a card number here');
+});
+
+test('the agency desk starts with the calls a travel agency actually gets', () => {
+  const titles = desk.listIssues().map((i) => i.title);
+  assert.ok(titles.includes('Booking confirmation never arrived'));
+  assert.ok(titles.includes('Cancel a booking or ask for a refund'));
+  assert.ok(titles.includes('Missed a flight or a flight was cancelled'));
+  assert.ok(desk.listIssues().every((i) => i.example), 'all still examples');
+});
+
+test('a customer describing a refund in their own words finds the refund procedure', () => {
+  const [best] = desk.findIssues('I want to cancel my trip and get my money back');
+  assert.equal(best.issue.title, 'Cancel a booking or ask for a refund');
+  assert.match(best.issue.steps, /cannot process a cancellation or promise a refund on this call/);
+});
+
+test('the WhatsApp desk is off unless switched on', (t) => {
+  assert.equal(desk.isWhatsAppDeskEnabled(), false);
+  process.env.WHATSAPP_DESK = 'true';
+  t.after(() => delete process.env.WHATSAPP_DESK);
+  assert.equal(desk.isWhatsAppDeskEnabled(), true);
+});
+
+test('describeSupportDesk says whose desk it is', (t) => {
+  assert.match(desk.describeSupportDesk(), /the agency's own help desk/);
+  process.env.SUPPORT_MODE = 'vendor';
+  t.after(() => delete process.env.SUPPORT_MODE);
+  assert.match(desk.describeSupportDesk(), /an independent desk for Amadeus users/);
 });

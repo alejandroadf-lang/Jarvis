@@ -125,7 +125,8 @@ import { isSpeechConfigured, synthesize, spokenExcerpt, spokenReplyInstruction }
 import { attachCallStream, answerCallTwiml } from './realtime/twilioBridge.js';
 import { refuseCall, describeCalling, callMinutesRemaining } from './realtime/callPolicy.js';
 import { mintBrowserSession, isBrowserCallConfigured } from './realtime/browserSession.js';
-import { runSupportTool } from './realtime/supportDesk.js';
+import { runSupportTool, isWhatsAppDeskEnabled } from './realtime/supportDesk.js';
+import { runDeskTurn } from './channels/deskTurn.js';
 import { replyLanguageInstruction, describeLanguageSetting, spokenLanguage, truncationNotice } from './language.js';
 import { listWeeklyReflections, getWeeklyReflection, getLatestWeeklyReflection } from './weeklyReflections.js';
 import { startWeeklyReflectionScheduler, runWeeklyReflectionNow, isWeeklyReflectionRunning } from './weeklyScheduler.js';
@@ -156,6 +157,7 @@ preamble. When you don't know something, say so plainly instead of guessing.`;
 // via sessionStore.js, so conversation history survives a server restart.
 const sessions = loadSessions('jarvis'); // sessionId -> [{ role, content }]
 const companySessions = loadSessions('company'); // sessionId -> [{ role, content }], CEO-level only
+const deskSessions = loadSessions('desk'); // sessionId -> [{ role, content }], one per stranger on the WhatsApp number
 const studioSessions = loadSessions('studio'); // sessionId -> [{ role, content }], Venture Partner-level only
 
 const app = express();
@@ -817,6 +819,20 @@ app.post('/api/whatsapp/webhook', (req, res) => {
   // A signature proves Meta sent it, not who typed it. The allowlist is the
   // gate that decides whose messages actually reach the company.
   if (!isAllowedSender(message.from)) {
+    // A stranger. With the help desk switched on they reach it — and only
+    // it: this path never parses founder commands or plan approvals and
+    // never runs the company turn, so "HALT" from an unknown number is a
+    // customer saying halt, not the founder. Off, they are dropped as before.
+    if (isWhatsAppDeskEnabled()) {
+      if (isDuplicate(message.id)) {
+        recordInbound({ stage: STAGES.DUPLICATE, from: message.from, text: message.text });
+        return;
+      }
+      handleDeskMessage(message).catch((err) => {
+        console.error('WhatsApp: the help desk failed to handle a message:', err);
+      });
+      return;
+    }
     console.warn(`WhatsApp: ignoring a message from an un-allowlisted number (${message.from}).`);
     recordInbound({ stage: STAGES.NOT_ALLOWLISTED, from: message.from, text: message.text });
     return;
@@ -869,19 +885,23 @@ async function replyToWhatsApp(message, reply, { asVoice = false, language = '' 
   }
 }
 
-async function handleWhatsAppMessage(message) {
+/**
+ * What was said, whether typed or spoken.
+ *
+ * Shared by the founder's path and the help desk's, so a customer's voice
+ * note is heard exactly the way the founder's is — same transcription, same
+ * language detection, same honest replies when there was nothing to hear.
+ * Transcribed here rather than inside either turn so everything downstream
+ * sees an ordinary text message.
+ *
+ * `handled` is true when a reply has already gone out (no speech, or the
+ * transcription failed) and the caller should stop.
+ */
+async function hearMessage(message) {
   let text = message.text.trim();
-  // Set when the founder spoke rather than typed: the language they spoke, and
-  // the fact that a voice note deserves a voice answer. Somebody sends one
-  // because their hands are full, and a wall of text is the wrong shape for
-  // that moment.
   let spokenIn = '';
   let arrivedAsVoice = false;
 
-  // A voice note is the natural way to brief a team while walking, and it
-  // used to get an apology. Transcribed here rather than inside the company
-  // turn so everything downstream — session history, the profit share, the
-  // inbound log — sees an ordinary text message.
   if (isVoiceNote(message) && message.mediaId && isOpenAIConfigured()) {
     try {
       const { buffer, filename } = await downloadMedia(message.mediaId);
@@ -892,15 +912,68 @@ async function handleWhatsAppMessage(message) {
       if (!text) {
         recordInbound({ stage: STAGES.UNSUPPORTED_TYPE, from: message.from, detail: 'Voice note had no speech in it' });
         await sendWhatsAppMessage(message.from, "I couldn't make out any words in that one — try again?");
-        return;
+        return { handled: true };
       }
     } catch (err) {
-      // The founder is holding their phone waiting. The reason beats silence.
+      // Whoever sent it is holding their phone waiting. The reason beats silence.
       recordInbound({ stage: STAGES.FAILED, from: message.from, detail: err.message });
       await sendWhatsAppMessage(message.from, `I couldn't transcribe that voice note — ${err.message}`);
-      return;
+      return { handled: true };
     }
   }
+  return { handled: false, text, spokenIn, arrivedAsVoice };
+}
+
+/**
+ * A stranger's message, answered by the help desk.
+ *
+ * Everything the founder's path has and this one does not is deliberate:
+ * no founder commands, no plan approval, no company turn, no company
+ * state. The desk gets the words, its own history for this number, and
+ * its two tools. The reply comes back the way it arrived — a voice note is
+ * answered with a voice note, in the language it was spoken in.
+ */
+async function handleDeskMessage(message) {
+  const heard = await hearMessage(message);
+  if (heard.handled) return;
+  const { text, spokenIn, arrivedAsVoice } = heard;
+
+  if (isImage(message) || !text) {
+    await sendWhatsAppMessage(message.from, "Send a message or a voice note describing the problem and I'll help.");
+    return;
+  }
+
+  const sessionId = `desk-${message.from}`;
+  const history = deskSessions.get(sessionId) || [];
+  const startedAt = Date.now();
+  try {
+    const { reply } = await runDeskTurn({
+      anthropic,
+      from: message.from,
+      text,
+      history,
+      spokenIn,
+      arrivedAsVoice,
+      deadlineAt: Date.now() + TURN_DEADLINE_MS,
+    });
+    const next = trimHistory([...history, { role: 'user', content: text }, { role: 'assistant', content: reply }]);
+    deskSessions.set(sessionId, next);
+    saveSession('desk', sessionId, next);
+
+    await replyToWhatsApp(message, reply, { asVoice: arrivedAsVoice, language: spokenIn });
+    recordInbound({ stage: STAGES.ANSWERED, from: message.from, text, detail: 'help desk', durationMs: Date.now() - startedAt });
+  } catch (err) {
+    console.error('Help desk turn failed:', err);
+    recordInbound({ stage: STAGES.FAILED, from: message.from, text, detail: err.message });
+    await sendWhatsAppMessage(message.from, 'Something went wrong on my side. Please try again in a moment.');
+  }
+}
+
+async function handleWhatsAppMessage(message) {
+  const heard = await hearMessage(message);
+  if (heard.handled) return;
+  let { text } = heard;
+  const { spokenIn, arrivedAsVoice } = heard;
 
   // A screenshot is how a founder explains something faster than they can
   // describe it — a settings page, an error, a competitor's pricing. The

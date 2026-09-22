@@ -199,11 +199,14 @@ test('a support session gets the desk tools, the support brief, and no company s
     const session = await mintBrowserSession({ support: true });
     assert.deepEqual(sent.body.tools.map((t) => t.name).sort(), ['lookup_issue', 'open_ticket']);
     assert.equal(sent.body.tool_choice, 'auto', 'it must be able to look things up');
-    assert.match(sent.body.instructions, /independent support desk/);
+    // The default persona is the agency's own desk; the shared body marks any
+    // support brief regardless of persona.
+    assert.match(sent.body.instructions, /travel help desk/);
+    assert.match(sent.body.instructions, /HOW A SUPPORT CALL GOES/);
     assert.doesNotMatch(sent.body.instructions, /COMPANY STATE/);
     assert.ok(!sent.body.tools.some((t) => t.name === 'ask_the_team'), 'a caller cannot make the company do work');
     assert.equal(session.support, true);
-    assert.match(session.desk, /support desk/);
+    assert.match(session.desk, /help desk|support desk/, 'named for whichever persona is the default');
   });
 });
 
@@ -211,6 +214,6 @@ test('support wins over a venture desk if both are sent, since the support brief
   await withEnv({ OPENAI_API_KEY: 'k' }, async () => {
     const sent = captureSession();
     await mintBrowserSession({ support: true, desk: 'v_does_not_exist' });
-    assert.match(sent.body.instructions, /independent support desk/, 'and the unknown venture is never looked up');
+    assert.match(sent.body.instructions, /HOW A SUPPORT CALL GOES/, 'and the unknown venture is never looked up');
   });
 });
