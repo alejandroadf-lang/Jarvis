@@ -54,31 +54,22 @@ export function realtimeVoice() {
 // noise then counts as a turn, so the desk answers nothing (turn detection);
 // and what the model does hear is muddier (noise reduction).
 
-/**
- * How sure the detector must be that it is hearing speech, 0–1.
- *
- * 0.5 is the API default and was tuned for a microphone near a mouth in a
- * quiet room. A phone line is eight-kilohertz μ-law with the street, the
- * café and the handset's own hiss on it, so the bar is higher here: 0.6.
- * Overridable because the right value depends on where the founder is
- * calling from, which nobody can know from this file.
- */
-export function vadThreshold() {
-  const n = Number.parseFloat(process.env.CALL_VAD_THRESHOLD || '');
-  return Number.isFinite(n) && n > 0 && n < 1 ? n : 0.6;
-}
+// How sure the detector must be that it is hearing speech, 0–1.
+//
+// 0.5 is the API default and was tuned for a microphone near a mouth in a
+// quiet room. A phone line is eight-kilohertz μ-law with the street, the
+// café and the handset's own hiss on it, so the bar is higher here. Fixed
+// rather than a Railway variable at the founder's request, so a call can be
+// tested with nothing to set; raise it here if background noise is still
+// taken for the caller, lower it if quiet callers are not heard.
+export const VAD_THRESHOLD = 0.6;
 
-/**
- * The API's own noise reduction on the caller's audio, before detection and
- * before the model. near_field is for a microphone close to the mouth — a
- * handset is one; far_field is for a laptop across a table. "off" disables
- * it, which is the thing to try if a caller sounds clipped.
- */
-export function noiseReduction() {
-  const raw = (process.env.CALL_NOISE_REDUCTION || '').trim().toLowerCase();
-  if (raw === 'off' || raw === 'none') return null;
-  return raw === 'far_field' ? 'far_field' : 'near_field';
-}
+// The API's own noise reduction on the caller's audio, before detection and
+// before the model. near_field is for a microphone close to the mouth — a
+// handset is one; far_field is for a laptop across a table. Fixed for the
+// same reason as the threshold. If a caller sounds clipped, this is the line
+// to change.
+export const NOISE_REDUCTION = 'near_field';
 
 /**
  * How long the caller has to keep talking before the desk is cut off.
@@ -207,7 +198,7 @@ export function openRealtimeSession({
             // Server-side detection rather than push-to-talk, because this
             // is meant to feel like a call and a call has no button.
             // See the Noise section at the top of this file.
-            ...(noiseReduction() ? { noise_reduction: { type: noiseReduction() } } : {}),
+            noise_reduction: { type: NOISE_REDUCTION },
             // 500ms of silence before the model takes its turn. This is
             // the one latency knob that is ours: every reply waits at
             // least this long after the caller's last word. 600 was the
@@ -216,7 +207,7 @@ export function openRealtimeSession({
             // mid-sentence on a phone line, where pauses are longer.
             turn_detection: {
               type: 'server_vad',
-              threshold: vadThreshold(),
+              threshold: VAD_THRESHOLD,
               prefix_padding_ms: 300,
               silence_duration_ms: 500,
               // Interruption is decided here, not by the API, so that a
