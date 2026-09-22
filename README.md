@@ -207,3 +207,26 @@ restart rather than a first boot.
 
 To move back, reverse steps 5 and 6. The Railway volume still holds the old
 state; the two do not sync.
+
+### A second number on somebody else's bot
+
+The IONOS AI Voice Receptionist comes with its own phone number and, on its
+higher plans, can call an external API during a call. It cannot run this app's
+realtime session, but it can use this app's desk: the same procedures and the
+same tickets, on a separate line, so the two can be tried side by side.
+
+1. Set `DESK_API_KEY` in Railway to any long random string.
+2. In the receptionist's API integration screen, add two actions:
+   - **Look up a procedure** — `POST https://<your-domain>/api/desk/lookup`,
+     header `Authorization: Bearer <key>`, body `{ "problem": "<what the
+     caller said>" }`. Read out the `spoken` field.
+   - **Open a ticket** — `POST https://<your-domain>/api/desk/ticket`, same
+     header, body `{ "summary": "...", "callerName": "...", "contact": "..." }`.
+     Read out the `spoken` field, which contains the ticket number.
+3. `GET https://<your-domain>/api/desk/ping?key=<key>` from a browser confirms
+   the wiring before any call.
+
+Written without having read IONOS's side — their documentation is not
+reachable from the environment this was built in — so the endpoints accept
+JSON or form fields under several likely names. If their screen only lets you
+set a URL, put the key on it as `?key=<key>`.

@@ -80,8 +80,9 @@ export function verifyStreamToken(callSid, presented) {
 }
 
 // Constant-time, and length-safe: timingSafeEqual throws on different
-// lengths, which would turn a wrong signature into a 500.
-function safeEqual(a, b) {
+// lengths, which would turn a wrong signature into a 500. Exported because
+// the desk API compares its own key the same way.
+export function safeEqual(a, b) {
   const x = Buffer.from(a);
   const y = Buffer.from(b);
   if (x.length !== y.length) return false;

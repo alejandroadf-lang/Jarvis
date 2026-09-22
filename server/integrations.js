@@ -26,6 +26,7 @@ import { isOpenAIConfigured, chatModel, fallbackModel, transcribeModel } from '.
 import { speechModel } from './speech.js';
 import { isCallingEnabled, describeCalling, callAllowedNumbers } from './realtime/callPolicy.js';
 import { isTwilioAuthConfigured } from './realtime/twilioAuth.js';
+import { isDeskApiConfigured, describeDeskApi } from './realtime/deskApi.js';
 import { isGeminiConfigured, geminiModel, listModelsUrl } from './agents/gemini.js';
 import { MODELS, CHEAP_TIER } from './agents/models.js';
 import { readSecret } from './env.js';
@@ -441,6 +442,10 @@ export async function getIntegrationStatus() {
     // Synchronous: there is nothing to probe without placing a call, and a
     // check that costs a phone call is a check nobody runs.
     calling: probeCalling(),
+    // The desk as an outside bot sees it. Presence is the signal: with the
+    // key set the endpoints answer, and the bot's first real call is the
+    // probe nothing here can run.
+    deskApi: { configured: isDeskApiConfigured(), ok: isDeskApiConfigured() ? true : null, detail: describeDeskApi() },
     // These two predate the probes and fail loudly at the point of use (an
     // action tool returns the reason), so presence is the useful signal.
     email: {
