@@ -191,7 +191,10 @@ test('the path to a million must be arithmetic, not a TAM', () => {
 test('the email says plainly that nothing has been started', () => {
   const { subject, text } = pitch.formatPitchEmail(fullPitch());
   assert.match(subject, /Pitch of the day: SleepSync/);
-  assert.match(text, /no venture exists/);
+  // The wording changed once: "no venture exists" read as a claim about the
+  // portfolio when a priced venture was in it. The property this pins is that
+  // the email disclaims starting anything, not the sentence it uses to do so.
+  assert.match(text, /a pitch never creates a venture/);
   assert.match(text, /provocation, not a proposal/);
 });
 
@@ -227,4 +230,106 @@ test('past pitches are described for the prompt, newest last', () => {
 test('the history is bounded so the prompt cannot grow forever', () => {
   for (let i = 0; i < 80; i += 1) pitch.savePitch(fullPitch({ title: `Idea${i}`, oneLiner: `thing number ${i}` }));
   assert.ok(pitch.listPitches().length <= 60);
+});
+
+// --- The morning that was empty for weeks -----------------------------------------------
+//
+// present_pitch was passed as a handler and never as a tool. runAgent offers
+// the model only what is in agent.actions, so the prompt said "call
+// present_pitch" to a model with no such tool. captured stayed null, both
+// attempts, every morning. The tests above never saw it: generatorOf calls the
+// handler directly and never goes through tool assembly — the fake agreed with
+// the author and the runner did not. These check what runAgent is actually
+// handed.
+
+test('the model is offered present_pitch, and only present_pitch', async () => {
+  let handed = null;
+  const runAgent = async ({ agents, agentId, actionHandlers }) => {
+    handed = agents[agentId];
+    // Behave like the real runner: only a tool in actions is callable.
+    if ((handed?.actions || []).some((a) => a.name === 'present_pitch')) actionHandlers.present_pitch(fullPitch());
+    return { text: '', trace: [] };
+  };
+
+  const result = await pitch.generatePitch({
+    anthropic: {},
+    runAgent,
+    agents: { venture_partner: { id: 'venture_partner', actions: [{ name: 'propose_venture' }], reports: ['x'] } },
+    agentId: 'venture_partner',
+  });
+
+  assert.ok(handed, 'the runner was given the root agent');
+  assert.deepEqual(handed.actions.map((a) => a.name), ['present_pitch'], 'exactly one tool');
+  assert.deepEqual(handed.reports, [], 'and nobody to delegate to');
+  assert.equal(result.pitch?.title, 'SleepSync', 'so a pitch actually lands');
+});
+
+test('propose_venture is not offered, so the promise that a pitch starts nothing holds at the tool list', async () => {
+  let handed = null;
+  const runAgent = async ({ agents, agentId }) => {
+    handed = agents[agentId];
+    return { text: '', trace: [] };
+  };
+  await pitch.generatePitch({
+    anthropic: {},
+    runAgent,
+    agents: { venture_partner: { actions: [{ name: 'propose_venture' }] } },
+    agentId: 'venture_partner',
+  });
+  assert.ok(!handed.actions.some((a) => a.name === 'propose_venture'));
+});
+
+// --- Linked to what is being built --------------------------------------------------------
+
+test('the kickoff tells the generator what the company is building, with buyer and price', async () => {
+  const ventures = await import('../finance/ventures.js');
+  fs.rmSync(path.join(tmpDir, 'ventures.json'), { force: true });
+  const v = ventures.createVenture({
+    title: 'CircadianAPI',
+    oneLiner: 'Sleep-cycle scoring for wearables.',
+    targetCustomer: 'Wearable hardware companies with an existing app.',
+  });
+  ventures.setPricing(v.id, { currency: 'USD', floorMonthly: 29, perUnit: 0, unit: '' });
+
+  let prompt = '';
+  const runAgent = async ({ messages, actionHandlers }) => {
+    prompt = messages[0].content;
+    actionHandlers.present_pitch(fullPitch());
+    return { text: '', trace: [] };
+  };
+  await pitch.generatePitch({ anthropic: {}, runAgent, agents: {}, agentId: 'venture_partner' });
+
+  assert.match(prompt, /What the company is building now/);
+  assert.match(prompt, /CircadianAPI — Sleep-cycle scoring for wearables/);
+  assert.match(prompt, /buyer: Wearable hardware companies/);
+  assert.match(prompt, /USD 29\.00\/month/);
+  assert.match(prompt, /no customers yet/);
+  assert.match(prompt, /compounds with what is being built/, 'and is asked to build next to it');
+  assert.match(prompt, /Do not re-pitch a live venture under a new name/, 'without simply re-pitching it');
+  fs.rmSync(path.join(tmpDir, 'ventures.json'), { force: true });
+});
+
+test('with no live venture the kickoff says so rather than inventing a portfolio', async () => {
+  fs.rmSync(path.join(tmpDir, 'ventures.json'), { force: true });
+  let prompt = '';
+  const runAgent = async ({ messages, actionHandlers }) => {
+    prompt = messages[0].content;
+    actionHandlers.present_pitch(fullPitch());
+    return { text: '', trace: [] };
+  };
+  await pitch.generatePitch({ anthropic: {}, runAgent, agents: {}, agentId: 'venture_partner' });
+  assert.match(prompt, /no live venture yet/);
+  assert.doesNotMatch(prompt, /What the company is building now/);
+});
+
+test('the no-pitch email no longer claims that no venture exists', () => {
+  // The founder read "Nothing has been started and no venture exists" with a
+  // priced venture in the portfolio, and reasonably asked whether the
+  // generator could see it. The disclaimer meant "a pitch starts nothing" and
+  // said something else.
+  const { text } = pitch.formatPitchEmail({}, { note: 'No pitch today.' });
+  assert.doesNotMatch(text, /no venture exists/i);
+  assert.match(text, /a pitch never creates a venture/);
+  const deck = pitch.formatPitchEmail(fullPitch()).text;
+  assert.doesNotMatch(deck, /no venture exists/i);
 });

@@ -3611,3 +3611,43 @@ themselves in another**. That is the actual customer-service failure — not
 being unable to speak Spanish, but making a Spanish speaker feel like a problem
 to be routed. It opens in `DESK_LANGUAGE`, because a greeting must commit
 before the caller has spoken, and follows them from their first word.
+
+### Instance twelve: the pitch that was never once presented
+
+*"Pitch of the day: nothing new"* — every morning, for as long as the feature
+had existed. The founder's question was whether the generator could even see
+CircadianAPI, because the email also said *"no venture exists."*
+
+Two separate things, and the smaller one first: that sentence was a fixed
+disclaimer meaning *a pitch starts nothing*, and with a priced venture in the
+portfolio it read as a claim about the portfolio. It now says what it meant.
+
+The larger one is the pattern again, in its purest form so far. `generatePitch`
+passed `present_pitch` as an **action handler** — the thing that runs when the
+model calls the tool. But `runAgent` offers the model only the tools listed in
+`agent.actions`, and `PITCH_TOOL` was never added to any agent. The prompt said
+*"Call present_pitch once"* to a model that had no such tool. It could not
+comply. `captured` stayed null on both attempts, and the honest fallback said
+"nothing usable" — accurately, every single day.
+
+The test suite passed throughout. Its stand-in for `runAgent` called
+`actionHandlers.present_pitch` directly, never going through tool assembly, so
+the tests exercised the handler and not the door to it. The fake agreed with its
+author; the runner did not. Same shape as `"spanish"` → `"sp"`.
+
+The fix clones the root agent for the run with exactly one tool — and not its
+own `propose_venture`, so the promise that a pitch cannot create a venture now
+holds at the tool list rather than only at the handler map. The new tests
+assert on what `runAgent` is *handed*, which is the contract that was broken.
+
+### And why the ideas were not linked to anything
+
+They could not have been. The kickoff carried the previous pitches and nothing
+else; the generator had no idea CircadianAPI existed, who buys it, or at what
+price. `describeWhatWeAreBuilding()` now puts each live venture — one line,
+buyer, price, whether anyone is paying — into the prompt, with an instruction
+to prefer an idea that *compounds*: the same buyer reached again, the same
+distribution used twice, the same data sold a second way. That is where an
+agent-run company's edge is largest, because the first venture has already paid
+for the door. Re-pitching a live venture under a new name is named as a repeat,
+not a link.
