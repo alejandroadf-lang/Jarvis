@@ -1,0 +1,76 @@
+# Jarvis on a plain VPS — an IONOS Cloud VPS, or any box with Docker.
+#
+# Railway cannot accept inbound UDP, and WhatsApp calling carries its audio
+# as WebRTC over UDP. That one fact is why the phone line needed Twilio or
+# SIP. A VPS has no such limit: open a UDP range in the provider's firewall
+# and the app can answer a WhatsApp call itself.
+#
+# This file changes nothing about what the app is. Same Dockerfile, same
+# JARVIS_DATA_DIR, same PORT. What it adds is the two things a VPS does not
+# give you for free and Railway did: HTTPS (Caddy, automatic certificates —
+# Meta's webhooks and the browser microphone both refuse plain HTTP) and a
+# volume that survives `docker compose down`.
+#
+# Only ONE deployment may run the company at a time. Two containers sharing
+# one WhatsApp number and one 8am schedule are two companies with one name.
+# Stop the Railway service before this one takes the webhook.
+
+services:
+  jarvis:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      # Copy server/.env.example to server/.env and fill it in. Secrets live
+      # in that file on the server and nowhere else — never in this repo.
+      #
+      # Not required to exist: without it the container still starts, and
+      # the app's own boot warnings say exactly which variable is missing.
+      # "env file not found" from Compose says nothing the founder can act
+      # on; "No APP_ACCESS_TOKEN set" does.
+      - path: server/.env
+        required: false
+    environment:
+      JARVIS_DATA_DIR: /data
+      PORT: "3001"
+    volumes:
+      - jarvis-data:/data
+    ports:
+      # The WebRTC media range for WhatsApp calls. Nothing listens here yet:
+      # the calling client is the piece still to be built against Meta's
+      # documentation, and it will be pinned to this range so the firewall
+      # is opened once. Open the same range as UDP in the IONOS Cloud Panel.
+      - "50000-50100:50000-50100/udp"
+    healthcheck:
+      # The same check railway.json used, for the same reason: a scheduler
+      # that has died looks exactly like a scheduler that is waiting for 8am.
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3001/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - jarvis
+    environment:
+      # The public hostname, e.g. jarvis.example.com. Caddy fetches and
+      # renews the certificate for it; the DNS A record must already point
+      # at this VPS or the certificate request fails.
+      JARVIS_DOMAIN: ${JARVIS_DOMAIN:?set JARVIS_DOMAIN to the public hostname}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  jarvis-data:
+  caddy-data:
+  caddy-config:
