@@ -294,7 +294,10 @@ export async function openTicket({ summary, callerName = '', contact = '', langu
   const ticket = {
     id: data.tickets.length + 1,
     at: new Date().toISOString(),
-    product: supportProduct(),
+    // What the ticket is "for". A vendor desk names the product; the agency's
+    // own desk has no product to name, and a ticket labelled "Amadeus
+    // support" from a travel agency's line was the sanity run's finding.
+    product: supportMode() === 'vendor' ? supportProduct() : '',
     summary: text,
     callerName: String(callerName || '').trim(),
     contact: String(contact || '').trim(),
@@ -336,7 +339,10 @@ export const LOOKUP_ISSUE = {
     properties: {
       problem: {
         type: 'string',
-        description: "The problem in the caller's own terms, including any exact error text they read out. In English.",
+        description:
+          'The problem, in English, whatever language the caller spoke — translate it. The procedures are kept in ' +
+          'English and matched on words, so a problem passed in Spanish or Thai matches nothing. Keep any exact ' +
+          'error text, booking reference, code or product name as the caller said it.',
       },
     },
     required: ['problem'],
@@ -422,7 +428,7 @@ ${opening} Never comment on which language is in use and never ask them to repea
 
 HOW A SUPPORT CALL GOES
 1. Find out what is wrong. Ask for the exact message on their screen, or exactly what happened, and what they did just before.
-2. Call lookup_issue with the problem in their words. Do this before giving any steps.
+2. Call lookup_issue with the problem translated to English (error text, references and names kept exactly as said). Do this before giving any steps.
 3. Give the steps that came back, one at a time. Say one step, wait for them, ask what happened, then the next. Never read a whole procedure in one breath.
 4. If it is resolved, say so and ask if there is anything else.
 5. If nothing matched, or the steps did not resolve it, or they ask for a person: get their name and a way to reach them, call open_ticket, and read the ticket number back.

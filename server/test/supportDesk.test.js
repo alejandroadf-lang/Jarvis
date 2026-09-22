@@ -192,6 +192,26 @@ test('a language chosen on the keypad outranks DESK_LANGUAGE, and the ticket rec
   assert.equal(ticket.language, 'Thai');
 });
 
+test('the lookup is asked for in English, because the procedures are matched on English words', async () => {
+  // Found by the end-to-end sanity run: "quiero cancelar mi viaje y que me
+  // devuelvan el dinero" matched nothing, so a Spanish caller would have
+  // been told there is no procedure for a refund. The contract lives on
+  // the tool, where the model reads it, and in the brief's step two.
+  assert.match(desk.LOOKUP_ISSUE.parameters.properties.problem.description, /in English, whatever language the caller spoke/);
+  assert.match(desk.buildSupportInstructions(), /lookup_issue with the problem translated to English/);
+  const out = await desk.runSupportTool('lookup_issue', { problem: 'I want to cancel my trip and get my money back' });
+  assert.match(out, /Cancel a booking or ask for a refund/);
+});
+
+test('an agency ticket is not labelled with a vendor\'s product', async () => {
+  await desk.runSupportTool('open_ticket', { summary: 'Lost e-ticket for booking AB1' });
+  const [ticket] = desk.listTickets();
+  assert.equal(ticket.product, '', 'the agency has no product to name');
+  const { formatTicketEmail } = await import('../email.js');
+  assert.match(formatTicketEmail(ticket).text, /^Ticket #1 — help desk/);
+  assert.doesNotMatch(formatTicketEmail(ticket).text, /Amadeus/);
+});
+
 test('describeSupportDesk counts the examples still to be replaced', () => {
   assert.match(desk.describeSupportDesk(), /still the starting examples — replace them with ISSUE/);
   for (const issue of desk.listIssues()) desk.removeIssue(issue.id);

@@ -321,7 +321,7 @@ export async function sendCallSummary({ from, seconds, transcript }) {
 // note to self.
 export function formatTicketEmail(ticket) {
   const lines = [
-    `Ticket #${ticket.id} — ${ticket.product} support`,
+    ticket.product ? `Ticket #${ticket.id} — ${ticket.product} support` : `Ticket #${ticket.id} — help desk`,
     '',
     ticket.summary,
     '',
