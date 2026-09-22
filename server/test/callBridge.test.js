@@ -209,7 +209,9 @@ test('an interruption stops the model AND drops what Twilio has buffered', async
     h.send({ event: 'start', start: { streamSid: 'MZ9', customParameters: { from: '+66812345678' } } });
     await h.waitFor(() => h.fromModel.some((e) => e.type === 'session.update'), 'the session to open');
 
-    // The caller keeps talking past the barge-in window: this is speech.
+    // The model is mid-reply, and the caller keeps talking past the
+    // barge-in window: this is speech.
+    h.modelSays({ type: 'response.created' });
     h.modelSays({ type: 'input_audio_buffer.speech_started' });
 
     await h.waitFor(() => h.fromModel.some((e) => e.type === 'response.cancel'), 'the model to be cut off');
@@ -217,6 +219,26 @@ test('an interruption stops the model AND drops what Twilio has buffered', async
 
     const cleared = h.toTwilio.find((e) => e.event === 'clear');
     assert.equal(cleared.streamSid, 'MZ9', 'cleared on the right stream');
+  } finally {
+    await h.close();
+  }
+});
+
+test('speaking into a silence cancels nothing, so the log stays clean', async () => {
+  // Every call in Railway's log carried "Cancellation failed: no active
+  // response found" — the bridge cancelling a reply that had already ended.
+  // Twilio's buffer is still cleared, since it can hold the tail of a reply
+  // the model has finished generating.
+  const h = await callHarness();
+  try {
+    h.send({ event: 'start', start: { streamSid: 'MZ11', customParameters: { from: '+1' } } });
+    await h.waitFor(() => h.fromModel.some((e) => e.type === 'session.update'), 'the session to open');
+    h.modelSays({ type: 'response.created' });
+    h.modelSays({ type: 'response.done', response: { output: [] } });
+    h.modelSays({ type: 'input_audio_buffer.speech_started' });
+    await h.waitFor(() => h.toTwilio.some((e) => e.event === 'clear'), 'the buffer to be cleared');
+    await new Promise((r) => setTimeout(r, 50));
+    assert.ok(!h.fromModel.some((e) => e.type === 'response.cancel'), 'no cancel for a reply that already ended');
   } finally {
     await h.close();
   }

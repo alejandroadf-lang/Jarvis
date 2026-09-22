@@ -166,6 +166,11 @@ export function openRealtimeSession({
   // Pending barge-in: set on speech_started, cleared by speech_stopped if
   // the "speech" ended before it counted as one.
   let bargeIn = null;
+  // Whether the model is mid-reply. A cancel with nothing to cancel comes
+  // back as "Cancellation failed: no active response found" — the red line
+  // on every call in Railway's log, once per time the caller spoke into a
+  // silence. Now the cancel is only sent when there is a reply to stop.
+  let responseActive = false;
   // The turn the caller is waiting on, if any: when it began and what it is.
   // Cleared by the first audio of the reply, so a reply streaming in many
   // deltas is measured once, to its first sound — which is what a caller
@@ -281,7 +286,12 @@ export function openRealtimeSession({
         if (event.transcript) onTranscript(event.transcript.trim());
         break;
 
+      case 'response.created':
+        responseActive = true;
+        break;
+
       case 'response.done': {
+        responseActive = false;
         const outputs = event.response?.output || [];
         for (const item of outputs) {
           if (item.type !== 'function_call') continue;
@@ -353,8 +363,13 @@ export function openRealtimeSession({
       send({ type: 'response.create' });
     },
 
-    /** Stop talking. The caller has started and is no longer listening. */
+    /**
+     * Stop talking. The caller has started and is no longer listening.
+     * A no-op when nothing is being said: see responseActive.
+     */
     interrupt() {
+      if (!responseActive) return;
+      responseActive = false;
       send({ type: 'response.cancel' });
     },
 
