@@ -282,6 +282,33 @@ test('the keypad choice becomes the language the call opens in', async () => {
   }
 });
 
+test('each model turn is timed to its first sound, and the call reports them', async () => {
+  // "There is a lot of latency" needs a number. The greeting is measured from
+  // the socket opening; a reply from the moment the model decided the caller
+  // had stopped; a reply streamed in many deltas is measured once.
+  const h = await callHarness();
+  try {
+    h.send({ event: 'start', start: { streamSid: 'MZ_t', customParameters: { from: '+1' } } });
+    await h.waitFor(() => h.fromModel.some((e) => e.type === 'session.update'), 'the session to open');
+    h.modelSays({ type: 'response.output_audio.delta', delta: 'A' });
+    h.modelSays({ type: 'response.output_audio.delta', delta: 'B' });
+    h.modelSays({ type: 'input_audio_buffer.speech_stopped' });
+    await new Promise((r) => setTimeout(r, 30));
+    h.modelSays({ type: 'response.output_audio.delta', delta: 'C' });
+    h.modelSays({ type: 'response.output_audio.delta', delta: 'D' });
+    await h.waitFor(() => h.toTwilio.filter((e) => e.event === 'media').length === 4, 'audio to flow');
+    h.send({ event: 'stop' });
+    await h.waitFor(() => h.ended.length === 1, 'the call to end');
+
+    const { turns } = h.ended[0];
+    assert.deepEqual(turns.map((t) => t.what), ['greeting', 'reply'], 'one measurement per turn, not per delta');
+    assert.ok(turns[1].ms >= 25, `the reply wait is measured from speech_stopped, got ${turns[1].ms}ms`);
+    assert.ok(turns.every((t) => Number.isInteger(t.ms) && t.ms >= 0));
+  } finally {
+    await h.close();
+  }
+});
+
 test('the company answer arrives mid-call, in the voice, not after the call', async () => {
   // The whole design. The caller was told it was being asked; the answer has
   // to come back on the same call or the promise was empty.

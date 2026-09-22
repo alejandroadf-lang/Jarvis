@@ -87,7 +87,7 @@ export async function mintBrowserSession({ desk = '', support = false } = {}) {
               type: 'server_vad',
               threshold: 0.5,
               prefix_padding_ms: 300,
-              silence_duration_ms: 600,
+              silence_duration_ms: 500, // see openaiRealtime.js: the one latency knob that is ours
             },
           },
           output: { voice: realtimeVoice() },

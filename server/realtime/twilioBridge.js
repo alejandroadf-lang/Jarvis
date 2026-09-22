@@ -101,6 +101,10 @@ export function attachCallStream(server, { askTheTeam, onCallEnded = () => {} })
     let language = '';
     const startedAt = Date.now();
     const transcript = [];
+    // One entry per model turn: how long the caller waited for its first
+    // sound. Logged as it happens and summarised when the call ends, so a
+    // "the call felt slow" has a number next to it in Railway's log.
+    const turns = [];
     let closed = false;
     let hangupTimer = null;
 
@@ -124,7 +128,7 @@ export function attachCallStream(server, { askTheTeam, onCallEnded = () => {} })
       } catch {
         // Same.
       }
-      onCallEnded({ from, seconds, reason, transcript: transcript.slice() });
+      onCallEnded({ from, seconds, reason, transcript: transcript.slice(), turns: turns.slice() });
     }
 
     // A session that cannot open must end the call, not throw into Twilio's
@@ -166,6 +170,11 @@ export function attachCallStream(server, { askTheTeam, onCallEnded = () => {} })
 
         onTranscript(text) {
           transcript.push({ who: support ? 'caller' : 'founder', text });
+        },
+
+        onLatency({ ms, what }) {
+          turns.push({ ms, what });
+          console.log(`Call: ${what} took ${ms}ms to first sound (${from || 'unknown'}).`);
         },
 
         onToolCall({ id, name, args }) {
