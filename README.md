@@ -179,6 +179,13 @@ of it is done from a browser.
 strangers — and keeps the per-call and per-day caps. Without `CALL_MODE` the
 line is the founder's own, allowlisted to the WhatsApp numbers.
 
+**Languages.** The desk opens in `DESK_LANGUAGE` (English if unset) and
+follows the caller from their first word, switching when they switch. For a
+keypad menu first — "For English, press 1. Para español, pulse 2." — set
+`CALL_LANGUAGES=en,es,fr,th` (codes or names, up to nine). The chosen language
+is the one the desk opens in. Twilio speaks the menu, so the model's meter only
+starts once the caller has chosen.
+
 ## Deploy to an IONOS VPS
 
 Railway cannot accept inbound UDP, and WhatsApp calling carries its audio as

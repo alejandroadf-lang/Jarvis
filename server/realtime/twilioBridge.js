@@ -32,7 +32,7 @@ import { streamToken, verifyStreamToken } from './twilioAuth.js';
  * not on the call allowlist" knows exactly which variable to set, where a dead
  * line tells them nothing.
  */
-export function answerCallTwiml({ from, host, callSid = '' }) {
+export function answerCallTwiml({ from, host, callSid = '', language = '' }) {
   const refusal = refuseCall(from);
   if (refusal) {
     return `<?xml version="1.0" encoding="UTF-8"?><Response><Say>${escapeXml(refusal)}</Say><Hangup/></Response>`;
@@ -40,11 +40,14 @@ export function answerCallTwiml({ from, host, callSid = '' }) {
   const url = `wss://${host}/api/calls/stream`;
   // The per-call token rides along as a stream parameter and is checked when
   // the stream starts. A stream without it was not opened in answer to this
-  // TwiML — see twilioAuth.js.
+  // TwiML — see twilioAuth.js. The language, when the caller chose one on the
+  // keypad (languageMenu.js), rides the same way and becomes the language the
+  // desk opens in; absent, the desk opens in its default.
   const params =
     `<Parameter name="from" value="${escapeXml(from || '')}"/>` +
     `<Parameter name="callSid" value="${escapeXml(callSid)}"/>` +
-    `<Parameter name="token" value="${escapeXml(streamToken(callSid))}"/>`;
+    `<Parameter name="token" value="${escapeXml(streamToken(callSid))}"/>` +
+    (language ? `<Parameter name="language" value="${escapeXml(language)}"/>` : '');
   return (
     '<?xml version="1.0" encoding="UTF-8"?>' +
     `<Response><Connect><Stream url="${escapeXml(url)}">${params}</Stream></Connect></Response>`
@@ -95,6 +98,7 @@ export function attachCallStream(server, { askTheTeam, onCallEnded = () => {} })
     let streamSid = '';
     let session = null;
     let from = '';
+    let language = '';
     const startedAt = Date.now();
     const transcript = [];
     let closed = false;
@@ -143,8 +147,8 @@ export function attachCallStream(server, { askTheTeam, onCallEnded = () => {} })
       // number answered with it is a leak to whoever dials.
       const support = callMode() === 'support';
       return openRealtimeSession({
-        instructions: support ? buildSupportInstructions() : buildCallInstructions({}),
-        greeting: support ? supportGreeting() : callGreeting(),
+        instructions: support ? buildSupportInstructions({ language }) : buildCallInstructions({ language }),
+        greeting: support ? supportGreeting({ language }) : callGreeting({ language }),
         tools: support ? SUPPORT_TOOLS : [ASK_THE_TEAM],
 
         onAudio(base64) {
@@ -170,7 +174,7 @@ export function attachCallStream(server, { askTheTeam, onCallEnded = () => {} })
           // than through the ask-then-deliver dance below.
           if (name === 'lookup_issue' || name === 'open_ticket') {
             transcript.push({ who: 'desk', text: `${name}: ${JSON.stringify(args || {})}` });
-            runSupportTool(name, args || {}, { from })
+            runSupportTool(name, args || {}, { from, language })
               .then((out) => session?.completeToolCall(id, out))
               .catch((err) => session?.completeToolCall(id, `That failed: ${err.message}. Tell the caller plainly and offer a ticket.`));
             return;
@@ -235,6 +239,7 @@ export function attachCallStream(server, { askTheTeam, onCallEnded = () => {} })
           const custom = event.start?.customParameters || {};
           streamSid = event.start?.streamSid || '';
           from = custom.from || '';
+          language = custom.language || '';
           // A stream that cannot prove it belongs to a call we answered gets
           // no model session — that session is the thing that costs money.
           if (!verifyStreamToken(custom.callSid, custom.token)) {

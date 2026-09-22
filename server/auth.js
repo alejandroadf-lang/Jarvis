@@ -49,11 +49,13 @@ const PUBLIC_PATHS = new Set(['/api/health', '/api/whatsapp/webhook', '/privacy'
 // for the whole time the bridge existed: every test exercised the handler
 // directly, so nothing ever showed that on a deployment with an app token the
 // middleware answered 401 before the TwiML was built. Same door as the desk
-// paths above, one row down.
+// paths above, one row down. /api/calls/language is the keypad choice from
+// the language menu, posted by Twilio the same way and signed the same way.
 const SELF_AUTHENTICATED_PATHS = new Set([
   '/api/graph',
   '/api/payments/webhook',
   '/api/calls/incoming',
+  '/api/calls/language',
   '/api/desk/ping',
   '/api/desk/lookup',
   '/api/desk/ticket',

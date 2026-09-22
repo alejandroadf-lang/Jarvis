@@ -16,6 +16,7 @@
 //      concept of a phone bill and will happily talk until the sun comes up.
 
 import { allowedNumbers } from '../channels/whatsapp.js';
+import { describeLanguageMenu } from './languageMenu.js';
 
 function numberFromEnv(name, fallback) {
   const raw = Number(String(process.env[name] || '').trim());
@@ -137,11 +138,13 @@ export function refuseCall(from) {
 /** For the integration check and the founder: the calling setup in one line. */
 export function describeCalling() {
   if (!isCallingEnabled()) return 'Voice calls are off. VOICE_CALLS=true turns them on.';
+  const menu = describeLanguageMenu();
   if (callMode() === 'support') {
     const left = Math.round(callMinutesRemaining());
     return (
       `Voice calls are on as a public support desk — any caller gets through. ` +
-      `Up to ${Math.round(maxCallSeconds() / 60)} minutes a call, ${left} of ${maxCallMinutesPerDay()} minutes left today.`
+      `Up to ${Math.round(maxCallSeconds() / 60)} minutes a call, ${left} of ${maxCallMinutesPerDay()} minutes left today.` +
+      (menu ? ` ${menu}` : '')
     );
   }
   const allowed = callAllowedNumbers().length;

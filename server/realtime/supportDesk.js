@@ -70,9 +70,20 @@ export function isWhatsAppDeskEnabled() {
   return process.env.WHATSAPP_DESK === 'true';
 }
 
-/** Opens in this language; follows the caller from their first word. */
-export function supportLanguage() {
-  return languageName((process.env.DESK_LANGUAGE || '').trim()) || pinnedLanguage() || 'English';
+/**
+ * The language the desk opens in; it follows the caller from their first word.
+ *
+ * A language the caller chose on the keypad (languageMenu.js) wins over the
+ * configured default — that is what the menu is for.
+ */
+export function supportLanguage(chosen = '') {
+  return (
+    languageName(chosen) ||
+    String(chosen || '').trim() ||
+    languageName((process.env.DESK_LANGUAGE || '').trim()) ||
+    pinnedLanguage() ||
+    'English'
+  );
 }
 
 // --- The knowledge base -----------------------------------------------------------------
@@ -358,7 +369,7 @@ export const SUPPORT_TOOLS = [LOOKUP_ISSUE, OPEN_TICKET];
  * endpoint and the phone bridge, so a caller gets the same procedures
  * whichever way they reached the desk.
  */
-export async function runSupportTool(name, args = {}, { from = '' } = {}) {
+export async function runSupportTool(name, args = {}, { from = '', language = '' } = {}) {
   if (name === 'lookup_issue') {
     const matches = findIssues(args.problem || '');
     if (!matches.length) {
@@ -373,7 +384,7 @@ export async function runSupportTool(name, args = {}, { from = '' } = {}) {
     ].join('\n\n');
   }
   if (name === 'open_ticket') {
-    const ticket = await openTicket({ ...args, from });
+    const ticket = await openTicket({ ...args, language: args.language || language, from });
     const followUp = `Read the number back to the caller and tell them someone will follow up${ticket.contact ? ` at ${ticket.contact}` : ''}.`;
     if (!ticket.emailed) {
       // Honest to the caller, not just to the log. The ticket exists; the
@@ -387,24 +398,27 @@ export async function runSupportTool(name, args = {}, { from = '' } = {}) {
 
 // --- The brief -----------------------------------------------------------------------------
 
-export function supportGreeting() {
+export function supportGreeting({ language = '' } = {}) {
   return (
     `Open the call. Say hello, give the desk's name — "${supportDeskName()}" — and ask what the problem is, ` +
-    `in ${supportLanguage()}. One sentence. Do not list what you can do, and do not say you are an AI unless they ask ` +
+    `in ${supportLanguage(language)}. One sentence. Do not list what you can do, and do not say you are an AI unless they ask ` +
     'directly, in which case say so plainly.'
   );
 }
 
-export function buildSupportInstructions() {
-  return supportMode() === 'vendor' ? vendorInstructions() : agencyInstructions();
+export function buildSupportInstructions({ language = '' } = {}) {
+  return supportMode() === 'vendor' ? vendorInstructions({ language }) : agencyInstructions({ language });
 }
 
 // Shared by both personas: how a support call goes, how to talk, and what
 // must never happen. The opening paragraph is what differs — who the desk is
 // and what it is allowed to promise.
-function commonInstructions({ cannotDo }) {
+function commonInstructions({ cannotDo, language = '' }) {
+  const opening = language
+    ? `Open in ${supportLanguage(language)} — the caller chose it on the keypad, so stay in it unless they clearly switch. If they do switch, follow them.`
+    : `Open in ${supportLanguage()}. From the moment they speak, use their language and keep using it — switch again if they do.`;
   return `LANGUAGE
-Open in ${supportLanguage()}. From the moment they speak, use their language and keep using it — switch again if they do. Never comment on which language is in use and never ask them to repeat in another one. Keep names, booking references, error codes and product names exactly as they are, in every language.
+${opening} Never comment on which language is in use and never ask them to repeat in another one. Keep names, booking references, error codes and product names exactly as they are, in every language.
 
 HOW A SUPPORT CALL GOES
 1. Find out what is wrong. Ask for the exact message on their screen, or exactly what happened, and what they did just before.
@@ -427,23 +441,25 @@ ${cannotDo}
 The call is transcribed and every ticket reaches a person. Say so if they ask whether anyone will actually follow up.`;
 }
 
-function agencyInstructions() {
+function agencyInstructions({ language = '' } = {}) {
   return `You are answering the phone at ${supportDeskName()}. The caller is a customer of this travel agency — someone with a booking, or trying to make one — and they have a problem.
 
 You can look procedures up and log requests. You cannot change, cancel, refund, rebook or pay for anything on this call: a person does that from the ticket you open, and you say so plainly rather than implying it is done. A promise made on the phone that nobody keeps is the complaint that ends up in a review.
 
 ${commonInstructions({
+  language,
   cannotDo:
     '- Never say a change, cancellation or refund is done, approved or guaranteed. You log it; a person confirms it.\n' +
     '- Never quote a price, a fee or a refund amount you were not given by lookup_issue.',
 })}`;
 }
 
-function vendorInstructions() {
+function vendorInstructions({ language = '' } = {}) {
   const product = supportProduct();
   return `You are answering the phone at ${supportDeskName()}, an independent support desk for people who use ${product}. You are not ${product}, you do not work for ${product}, and you never say or imply that you do. If a caller asks whether they have reached ${product}, say plainly that this is an independent desk for ${product} users.
 
 ${commonInstructions({
+  language,
   cannotDo: `- Never promise a fix, a time, or that ${product} will do anything. You can log a ticket; you cannot commit anyone.`,
 })}`;
 }

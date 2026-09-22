@@ -26,8 +26,11 @@ import { maxCallSeconds } from './callPolicy.js';
  * paragraph delivered at speaking pace is thirty seconds the caller cannot
  * skim.
  */
-export function buildCallInstructions({ callerName = 'the founder' } = {}) {
-  const pinned = pinnedLanguage();
+export function buildCallInstructions({ callerName = 'the founder', language: chosen = '' } = {}) {
+  // A language chosen on the keypad (languageMenu.js) outranks the pinned
+  // one for this call: the founder pressed the button, and the setting is
+  // the default for when nobody does.
+  const pinned = chosen || pinnedLanguage();
   const language = pinned
     ? `Speak ${pinned}, whatever language ${callerName} uses. Keep product names, ventureIds and commands unchanged.`
     : `Speak whatever language ${callerName} speaks, and switch when they switch. Keep product names, ventureIds and commands unchanged.`;
@@ -65,9 +68,9 @@ ${buildCompanyContext()}`;
 }
 
 /** The first thing the caller hears. Short, because they just dialled. */
-export function callGreeting() {
+export function callGreeting({ language = '' } = {}) {
   return (
-    'Greet them in one short sentence and ask what they need. Do not list what you can do, ' +
+    `Greet them in one short sentence${language ? `, in ${language},` : ''} and ask what they need. Do not list what you can do, ` +
     'do not summarise the company, and do not say you are an AI assistant — they know who they called.'
   );
 }

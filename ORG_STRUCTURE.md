@@ -3696,6 +3696,31 @@ lesson joins the ledger: a test fixture that mirrors what the code sends is a
 test of consistency, not of correctness. The cure for that is not more
 fixtures but one real call, early — the one that was finally made today.
 
+## A language menu the desk did not need
+
+The desk follows the caller's language from the first word, and the founder
+was told so. They asked for a keypad menu anyway — *"For English, press 1"* —
+because a caller can see a choice and can only trust a behaviour. That is a
+fair reason, and the menu was built after the objection was raised once and
+answered.
+
+The one decision worth recording is *where* it plays. Twilio's `<Gather>`
+speaks the lines with Twilio's own voices, in each language, before the media
+stream opens. The realtime session is metered from the moment it connects, so
+a menu played by the model would cost a session-minute of prompts before the
+caller had said a word; a menu played by Twilio costs the call minute the
+caller was already spending. The choice rides into the stream as a
+`<Parameter>`, like the caller's number and the stream token, and becomes the
+language the desk opens in. After that nothing changes: the desk still follows
+the caller if they switch. No press, or a digit off the menu, means the
+configured default — and the caller is never told they pressed wrongly,
+because on a phone that is a sentence of scolding with no undo.
+
+Off unless `CALL_LANGUAGES` lists two or more. One language is not a choice,
+and a menu with one option is a delay with a prompt. The second Twilio webhook
+this adds, `/api/calls/language`, went into `SELF_AUTHENTICATED_PATHS` in the
+same commit as the route — the row instance thirteen was missing.
+
 ## A support desk for somebody else's software
 
 The founder asked for a call centre that solves problems with the Amadeus
