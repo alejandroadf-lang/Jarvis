@@ -18,7 +18,7 @@
 // scoped to one session and expiring in about a minute.
 
 import { readSecret } from '../env.js';
-import { realtimeModel, realtimeVoice, ASK_THE_TEAM } from './openaiRealtime.js';
+import { realtimeModel, realtimeVoice, noiseReduction, ASK_THE_TEAM } from './openaiRealtime.js';
 import { buildCallInstructions, callGreeting } from './callBrief.js';
 import { buildDeskInstructions, deskGreeting } from './deskBrief.js';
 import { buildSupportInstructions, supportGreeting, supportDeskName, SUPPORT_TOOLS } from './supportDesk.js';
@@ -81,6 +81,7 @@ export async function mintBrowserSession({ desk = '', support = false } = {}) {
           input: {
             // No format here, deliberately: see the note above the function.
             transcription: { model: 'whisper-1' },
+            ...(noiseReduction() ? { noise_reduction: { type: noiseReduction() } } : {}),
             // Same reason as the phone line: the founder should not have to
             // hold a button, and a conversation has no push-to-talk.
             turn_detection: {

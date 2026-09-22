@@ -45,6 +45,54 @@ export function realtimeVoice() {
   return (process.env.OPENAI_REALTIME_VOICE || '').trim() || 'marin';
 }
 
+// --- Noise ------------------------------------------------------------------------
+//
+// The founder's second finding from the first live call: "noise is also
+// impacting a lot the conversation". On a phone line that shows up three
+// ways, and each has its own knob below. Background noise is heard as the
+// caller starting to speak, so the desk stops mid-sentence (barge-in); the
+// noise then counts as a turn, so the desk answers nothing (turn detection);
+// and what the model does hear is muddier (noise reduction).
+
+/**
+ * How sure the detector must be that it is hearing speech, 0–1.
+ *
+ * 0.5 is the API default and was tuned for a microphone near a mouth in a
+ * quiet room. A phone line is eight-kilohertz μ-law with the street, the
+ * café and the handset's own hiss on it, so the bar is higher here: 0.6.
+ * Overridable because the right value depends on where the founder is
+ * calling from, which nobody can know from this file.
+ */
+export function vadThreshold() {
+  const n = Number.parseFloat(process.env.CALL_VAD_THRESHOLD || '');
+  return Number.isFinite(n) && n > 0 && n < 1 ? n : 0.6;
+}
+
+/**
+ * The API's own noise reduction on the caller's audio, before detection and
+ * before the model. near_field is for a microphone close to the mouth — a
+ * handset is one; far_field is for a laptop across a table. "off" disables
+ * it, which is the thing to try if a caller sounds clipped.
+ */
+export function noiseReduction() {
+  const raw = (process.env.CALL_NOISE_REDUCTION || '').trim().toLowerCase();
+  if (raw === 'off' || raw === 'none') return null;
+  return raw === 'far_field' ? 'far_field' : 'near_field';
+}
+
+/**
+ * How long the caller has to keep talking before the desk is cut off.
+ *
+ * Every burst of noise arrives as speech_started. Cutting the model off on
+ * each one is what makes a noisy call sound like a desk that cannot finish a
+ * sentence. So the model is told NOT to interrupt itself on speech_started
+ * (`interrupt_response: false`), and this file interrupts it instead — once
+ * the caller has been speaking for this long. A real interruption is barely
+ * later than before; a blip never interrupts at all, because speech_stopped
+ * arrives first and cancels the timer.
+ */
+export const BARGE_IN_MS = 250;
+
 /** The tool the voice uses to reach the actual company. */
 export const ASK_THE_TEAM = {
   type: 'function',
@@ -124,6 +172,9 @@ export function openRealtimeSession({
   let open = false;
   const queued = [];
   const openedAt = Date.now();
+  // Pending barge-in: set on speech_started, cleared by speech_stopped if
+  // the "speech" ended before it counted as one.
+  let bargeIn = null;
   // The turn the caller is waiting on, if any: when it began and what it is.
   // Cleared by the first audio of the reply, so a reply streaming in many
   // deltas is measured once, to its first sound — which is what a caller
@@ -155,6 +206,8 @@ export function openRealtimeSession({
             // The model decides when the caller has stopped talking.
             // Server-side detection rather than push-to-talk, because this
             // is meant to feel like a call and a call has no button.
+            // See the Noise section at the top of this file.
+            ...(noiseReduction() ? { noise_reduction: { type: noiseReduction() } } : {}),
             // 500ms of silence before the model takes its turn. This is
             // the one latency knob that is ours: every reply waits at
             // least this long after the caller's last word. 600 was the
@@ -163,9 +216,13 @@ export function openRealtimeSession({
             // mid-sentence on a phone line, where pauses are longer.
             turn_detection: {
               type: 'server_vad',
-              threshold: 0.5,
+              threshold: vadThreshold(),
               prefix_padding_ms: 300,
               silence_duration_ms: 500,
+              // Interruption is decided here, not by the API, so that a
+              // burst of noise does not stop the desk mid-sentence. See
+              // BARGE_IN_MS.
+              interrupt_response: false,
             },
           },
           output: {
@@ -204,18 +261,28 @@ export function openRealtimeSession({
         if (event.delta) onAudio(event.delta);
         break;
 
-      // The caller started talking over the model. The bridge needs this
-      // immediately to stop playing audio the caller is no longer listening
-      // to — a model that talks through an interruption is the single most
-      // unnatural thing a voice agent does.
+      // The caller may have started talking over the model. If they keep
+      // going for BARGE_IN_MS it was speech and the bridge is told, so it
+      // can stop playing audio the caller is no longer listening to — a
+      // model that talks through an interruption is the single most
+      // unnatural thing a voice agent does. If it stops sooner it was
+      // noise, and nothing happens.
       case 'input_audio_buffer.speech_started':
-        onSpeechStarted();
+        if (bargeIn) clearTimeout(bargeIn);
+        bargeIn = setTimeout(() => {
+          bargeIn = null;
+          onSpeechStarted();
+        }, BARGE_IN_MS);
         break;
 
       // The model decided the caller has finished. From here to the first
       // sound of the reply is the wait the caller feels; the silence window
       // above has already been spent by the time this arrives.
       case 'input_audio_buffer.speech_stopped':
+        if (bargeIn) {
+          clearTimeout(bargeIn);
+          bargeIn = null;
+        }
         waiting = { since: Date.now(), what: 'reply' };
         break;
 
@@ -250,6 +317,7 @@ export function openRealtimeSession({
   socket.on('error', (err) => onError(err));
   socket.on('close', () => {
     open = false;
+    if (bargeIn) clearTimeout(bargeIn);
     onClose();
   });
 

@@ -209,6 +209,7 @@ test('an interruption stops the model AND drops what Twilio has buffered', async
     h.send({ event: 'start', start: { streamSid: 'MZ9', customParameters: { from: '+66812345678' } } });
     await h.waitFor(() => h.fromModel.some((e) => e.type === 'session.update'), 'the session to open');
 
+    // The caller keeps talking past the barge-in window: this is speech.
     h.modelSays({ type: 'input_audio_buffer.speech_started' });
 
     await h.waitFor(() => h.fromModel.some((e) => e.type === 'response.cancel'), 'the model to be cut off');
@@ -216,6 +217,32 @@ test('an interruption stops the model AND drops what Twilio has buffered', async
 
     const cleared = h.toTwilio.find((e) => e.event === 'clear');
     assert.equal(cleared.streamSid, 'MZ9', 'cleared on the right stream');
+  } finally {
+    await h.close();
+  }
+});
+
+test('a burst of noise does not cut the desk off mid-sentence', async () => {
+  // Noise arrives as speech_started followed almost at once by speech_stopped.
+  // On the founder's first noisy call that stopped the desk on every burst.
+  // Now: nothing is cancelled, nothing is cleared, and the API was told not
+  // to interrupt on its own either.
+  const h = await callHarness();
+  try {
+    h.send({ event: 'start', start: { streamSid: 'MZ10', customParameters: { from: '+1' } } });
+    await h.waitFor(() => h.fromModel.some((e) => e.type === 'session.update'), 'the session to open');
+    const update = h.fromModel.find((e) => e.type === 'session.update').session;
+    assert.equal(update.audio.input.turn_detection.interrupt_response, false, 'interruption is decided here, not by the API');
+    assert.equal(update.audio.input.turn_detection.threshold, 0.6, 'a higher bar for "speech" on a phone line');
+    assert.deepEqual(update.audio.input.noise_reduction, { type: 'near_field' }, 'and the line is cleaned before detection');
+
+    h.modelSays({ type: 'input_audio_buffer.speech_started' });
+    await new Promise((r) => setTimeout(r, 60));
+    h.modelSays({ type: 'input_audio_buffer.speech_stopped' });
+    await new Promise((r) => setTimeout(r, 350));
+
+    assert.ok(!h.fromModel.some((e) => e.type === 'response.cancel'), 'the model was not cancelled');
+    assert.ok(!h.toTwilio.some((e) => e.event === 'clear'), 'and Twilio kept playing');
   } finally {
     await h.close();
   }
