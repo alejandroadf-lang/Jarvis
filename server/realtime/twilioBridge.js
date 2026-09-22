@@ -23,6 +23,7 @@ import { openRealtimeSession, ASK_THE_TEAM } from './openaiRealtime.js';
 import { buildCallInstructions, callGreeting } from './callBrief.js';
 import { refuseCall, maxCallSeconds, recordCallSeconds, callMode } from './callPolicy.js';
 import { buildSupportInstructions, supportGreeting, SUPPORT_TOOLS, runSupportTool } from './supportDesk.js';
+import { streamToken, verifyStreamToken } from './twilioAuth.js';
 
 /**
  * TwiML for an incoming call.
@@ -31,15 +32,22 @@ import { buildSupportInstructions, supportGreeting, SUPPORT_TOOLS, runSupportToo
  * not on the call allowlist" knows exactly which variable to set, where a dead
  * line tells them nothing.
  */
-export function answerCallTwiml({ from, host }) {
+export function answerCallTwiml({ from, host, callSid = '' }) {
   const refusal = refuseCall(from);
   if (refusal) {
     return `<?xml version="1.0" encoding="UTF-8"?><Response><Say>${escapeXml(refusal)}</Say><Hangup/></Response>`;
   }
   const url = `wss://${host}/api/calls/stream`;
+  // The per-call token rides along as a stream parameter and is checked when
+  // the stream starts. A stream without it was not opened in answer to this
+  // TwiML — see twilioAuth.js.
+  const params =
+    `<Parameter name="from" value="${escapeXml(from || '')}"/>` +
+    `<Parameter name="callSid" value="${escapeXml(callSid)}"/>` +
+    `<Parameter name="token" value="${escapeXml(streamToken(callSid))}"/>`;
   return (
     '<?xml version="1.0" encoding="UTF-8"?>' +
-    `<Response><Connect><Stream url="${escapeXml(url)}"><Parameter name="from" value="${escapeXml(from || '')}"/></Stream></Connect></Response>`
+    `<Response><Connect><Stream url="${escapeXml(url)}">${params}</Stream></Connect></Response>`
   );
 }
 
@@ -223,15 +231,24 @@ export function attachCallStream(server, { askTheTeam, onCallEnded = () => {} })
       }
 
       switch (event.event) {
-        case 'start':
+        case 'start': {
+          const custom = event.start?.customParameters || {};
           streamSid = event.start?.streamSid || '';
-          from = event.start?.customParameters?.from || '';
+          from = custom.from || '';
+          // A stream that cannot prove it belongs to a call we answered gets
+          // no model session — that session is the thing that costs money.
+          if (!verifyStreamToken(custom.callSid, custom.token)) {
+            console.warn('Call: a media stream arrived without a valid stream token; refusing it.');
+            endCall('bad-stream-token');
+            return;
+          }
           startSession();
           // A hard ceiling the model cannot talk its way past. It has been
           // told the limit and asked to wrap up, but a prompt is a request
           // and a timer is a rule.
           hangupTimer = setTimeout(() => endCall('max-duration'), maxCallSeconds() * 1000);
           break;
+        }
 
         case 'media':
           if (event.media?.payload) session?.sendAudio(event.media.payload);

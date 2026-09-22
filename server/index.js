@@ -123,6 +123,7 @@ import {
 import { isOpenAIConfigured, transcribeAudio } from './agents/openai.js';
 import { isSpeechConfigured, synthesize, spokenExcerpt, spokenReplyInstruction } from './speech.js';
 import { attachCallStream, answerCallTwiml } from './realtime/twilioBridge.js';
+import { verifyTwilioRequest } from './realtime/twilioAuth.js';
 import { refuseCall, describeCalling, callMinutesRemaining } from './realtime/callPolicy.js';
 import { mintBrowserSession, isBrowserCallConfigured } from './realtime/browserSession.js';
 import { runSupportTool, isWhatsAppDeskEnabled } from './realtime/supportDesk.js';
@@ -1476,10 +1477,16 @@ app.get('/privacy', (_req, res) => {
  */
 app.post('/api/calls/incoming', express.urlencoded({ extended: false }), (req, res) => {
   const from = req.body?.From || '';
+  // Proof it is Twilio calling, not somebody who found the URL. Passes when
+  // TWILIO_AUTH_TOKEN is unset, and the integration check says so.
+  if (!verifyTwilioRequest(req)) {
+    recordInbound({ stage: STAGES.BAD_SIGNATURE, from, detail: 'Twilio signature did not match TWILIO_AUTH_TOKEN' });
+    return res.status(403).type('text/plain').send('forbidden');
+  }
   // The public host Twilio reached us on, which is what the media stream must
   // dial back. Behind Railway's proxy the Host header is the public name.
   const host = req.get('x-forwarded-host') || req.get('host') || '';
-  const twiml = answerCallTwiml({ from, host });
+  const twiml = answerCallTwiml({ from, host, callSid: req.body?.CallSid || '' });
   const refusal = refuseCall(from);
   recordInbound({
     stage: refusal ? STAGES.NOT_ALLOWLISTED : STAGES.ANSWERED,

@@ -18,7 +18,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { once } from 'node:events';
 import { answerCallTwiml, attachCallStream } from '../realtime/twilioBridge.js';
 
-const ENV = ['VOICE_CALLS', 'CALL_ALLOWED_NUMBERS', 'OPENAI_API_KEY', 'CALL_MAX_SECONDS', 'OPENAI_REALTIME_URL'];
+const ENV = ['VOICE_CALLS', 'CALL_ALLOWED_NUMBERS', 'OPENAI_API_KEY', 'CALL_MAX_SECONDS', 'OPENAI_REALTIME_URL', 'TWILIO_AUTH_TOKEN'];
 
 function withEnv(values, run) {
   const saved = Object.fromEntries(ENV.map((k) => [k, process.env[k]]));
@@ -367,4 +367,48 @@ test('the answer is dropped rather than delivered if the caller already hung up'
   } finally {
     await h.close();
   }
+});
+
+
+// --- A stream has to prove it belongs to a call we answered --------------------------------
+//
+// The realtime session is the thing that costs money. With TWILIO_AUTH_TOKEN
+// set, a stream that does not carry the token issued for its CallSid gets no
+// session at all — the call is ended before the model is ever opened.
+
+test('the TwiML carries a per-call token when the auth token is set', async () => {
+  await withEnv({ VOICE_CALLS: 'true', CALL_ALLOWED_NUMBERS: '66812345678', TWILIO_AUTH_TOKEN: 'tok' }, async () => {
+    const { streamToken } = await import('../realtime/twilioAuth.js');
+    const xml = answerCallTwiml({ from: '+66812345678', host: 'h', callSid: 'CA123' });
+    assert.match(xml, /name="callSid" value="CA123"/);
+    assert.match(xml, new RegExp(`name="token" value="${streamToken('CA123')}"`));
+  });
+});
+
+test('a stream without a valid token is ended before any model session opens', async () => {
+  await withEnv({ TWILIO_AUTH_TOKEN: 'tok' }, async () => {
+    const h = await callHarness();
+    try {
+      h.send({ event: 'start', start: { streamSid: 'MZ1', customParameters: { from: '+1', callSid: 'CA123', token: 'forged' } } });
+      await h.waitFor(() => h.ended.length > 0, 'the stream to be refused');
+      assert.equal(h.ended[0].reason, 'bad-stream-token');
+      assert.deepEqual(h.fromModel, [], 'nothing was ever sent to the model');
+    } finally {
+      await h.close();
+    }
+  });
+});
+
+test('a stream carrying the token issued for its call proceeds to a session', async () => {
+  await withEnv({ TWILIO_AUTH_TOKEN: 'tok' }, async () => {
+    const { streamToken } = await import('../realtime/twilioAuth.js');
+    const h = await callHarness();
+    try {
+      h.send({ event: 'start', start: { streamSid: 'MZ2', customParameters: { from: '+1', callSid: 'CA777', token: streamToken('CA777') } } });
+      await h.waitFor(() => h.fromModel.some((e) => e.type === 'session.update'), 'the session to open');
+      assert.equal(h.ended.length, 0, 'still up');
+    } finally {
+      await h.close();
+    }
+  });
 });
