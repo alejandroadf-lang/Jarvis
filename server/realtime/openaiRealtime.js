@@ -60,9 +60,11 @@ export function realtimeVoice() {
 // quiet room. A phone line is eight-kilohertz μ-law with the street, the
 // café and the handset's own hiss on it, so the bar is higher here. Fixed
 // rather than a Railway variable at the founder's request, so a call can be
-// tested with nothing to set; raise it here if background noise is still
-// taken for the caller, lower it if quiet callers are not heard.
-export const VAD_THRESHOLD = 0.6;
+// tested with nothing to set. 0.6 was the first step up; a 15-second call
+// that logged seven model turns showed noise still crossing it, so 0.7.
+// Lower it if quiet callers stop being heard; the next step past this is
+// semantic turn detection, not a higher number.
+export const VAD_THRESHOLD = 0.7;
 
 // The API's own noise reduction on the caller's audio, before detection and
 // before the model. near_field is for a microphone close to the mouth — a
