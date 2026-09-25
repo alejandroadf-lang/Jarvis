@@ -255,7 +255,7 @@ test('a burst of noise does not cut the desk off mid-sentence', async () => {
     await h.waitFor(() => h.fromModel.some((e) => e.type === 'session.update'), 'the session to open');
     const update = h.fromModel.find((e) => e.type === 'session.update').session;
     assert.equal(update.audio.input.turn_detection.interrupt_response, false, 'interruption is decided here, not by the API');
-    assert.equal(update.audio.input.turn_detection.threshold, 0.6, 'a higher bar for "speech" on a phone line');
+    assert.equal(update.audio.input.turn_detection.threshold, 0.7, 'a higher bar for "speech" on a phone line');
     assert.deepEqual(update.audio.input.noise_reduction, { type: 'near_field' }, 'and the line is cleaned before detection');
 
     h.modelSays({ type: 'input_audio_buffer.speech_started' });
