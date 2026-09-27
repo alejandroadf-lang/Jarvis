@@ -275,7 +275,7 @@ def test_a_long_stopover_can_hold_sleep():
 
 def test_legs_must_be_in_order():
     from datetime import datetime as dt
-    with pytest.raises(ValueError, match="departs before flight 1 lands"):
+    with pytest.raises(ValueError, match="leaves .* before you land there .* check the times at stop 1"):
         plan_trip(legs=[
             {"departure": dt(2026, 10, 11, 1, 30), "departure_tz": "Asia/Bangkok",
              "arrival": dt(2026, 10, 11, 5, 0), "arrival_tz": "Asia/Dubai"},
@@ -367,7 +367,7 @@ def test_a_journeys_events_stop_before_the_next_departure():
 
 
 def test_journeys_out_of_order_are_refused():
-    with pytest.raises(ValueError, match="journey 2 departs before journey 1 lands"):
+    with pytest.raises(ValueError, match=r"^Flight 2 leaves .* before flight 1 lands .*check the landing date of flight 1"):
         plan_itinerary([
             [leg("2026-10-04T19:00", "Asia/Bangkok", "2026-10-05T15:00", "Europe/London")],
             [leg("2026-10-05T12:00", "Europe/London", "2026-10-06T06:00", "Asia/Bangkok")],
@@ -621,3 +621,15 @@ def test_a_long_journey_of_short_flights_points_at_the_dates():
     legs[1]["arrival"] = "2031-10-10T12:00"
     with pytest.raises(ValueError, match="^Flight 2 comes out at 1 day 7 hours"):
         plan_trip(legs=legs)
+
+
+def test_a_flight_back_before_the_flight_out_lands_names_both_times():
+    # The screenshot: the flight out's landing had slipped to the 10th, after
+    # the flight back on the 9th. Say both times and which date to check.
+    with pytest.raises(ValueError) as err:
+        plan_itinerary([
+            [leg("2026-10-06T19:00", "Asia/Bangkok", "2026-10-10T01:25", "Europe/London")],
+            [leg("2026-10-09T15:00", "Europe/London", "2026-10-10T09:25", "Asia/Bangkok")],
+        ])
+    assert str(err.value).startswith(
+        "Flight 2 leaves Fri 9 Oct 15:00, before flight 1 lands (Sat 10 Oct 01:25, local times)")
