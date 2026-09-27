@@ -208,3 +208,38 @@ def test_progress_without_a_connection_says_so(fake):
     later = max(e.end for e in plan.events if e.type == "sleep") + timedelta(hours=1)
     with pytest.raises(whoop.NotConnected):
         whoop.progress(DEVICE, plan, now=later)
+
+
+@pytest.mark.parametrize("status, body, reason", [
+    (401, {"error": "invalid_client", "error_description": "Client authentication failed"}, "keys"),
+    (400, {"error": "invalid_grant", "error_description": "The redirect_uri does not match"}, "redirect"),
+    (400, {"error": "invalid_grant", "error_description": "The authorization code has expired"}, "expired"),
+    (403, None, "whoop"),   # e.g. a bot filter's HTML page
+    (0, None, "network"),
+])
+def test_a_refused_sign_in_says_which_thing_to_fix(monkeypatch, capsys, status, body, reason):
+    # "Connecting WHOOP did not work" was all the owner got; each of these has a different fix.
+    monkeypatch.setattr(whoop, "_http", lambda *a, **k: (status, body))
+    with pytest.raises(whoop.ConnectFailed) as err:
+        whoop.exchange_code(DEVICE, "code123", "https://app.example/whoop/callback")
+    assert err.value.reason == reason
+    logged = capsys.readouterr().out
+    assert f"HTTP {status}" in logged and "csecret" not in logged and "code123" not in logged
+
+
+def test_requests_to_whoop_identify_the_app(monkeypatch):
+    seen = {}
+
+    class Res:
+        status = 200
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self): return b"{}"
+
+    def fake_urlopen(req, timeout):
+        seen.update({k.lower(): v for k, v in req.header_items()})
+        return Res()
+
+    monkeypatch.setattr(whoop.urllib.request, "urlopen", fake_urlopen)
+    whoop._http("POST", whoop.TOKEN_URL, form={"a": "b"})
+    assert seen["user-agent"].startswith("Circadian/") and "python-urllib" not in seen["user-agent"].lower()

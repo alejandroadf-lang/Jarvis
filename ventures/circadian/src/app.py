@@ -405,9 +405,13 @@ def whoop_callback(request: Request, code: Optional[str] = None, state: Optional
     try:
         device = whoop.verify_state(state)
         whoop.exchange_code(device, code, _redirect_uri(request))
-    except ValueError:
-        analytics.track("whoop_connect_failed", request.headers)
-        return RedirectResponse(f"{_prefix(request)}/?whoop=failed", status_code=302)
+    except ValueError as err:
+        # verify_state's refusals are a sign-in that took too long or was
+        # tampered with: starting again is the fix either way.
+        why = getattr(err, "reason", "link")
+        print(f"CircadianAPI: connecting WHOOP failed ({why}): {err}")
+        analytics.track("whoop_connect_failed", request.headers, {"reason": why})
+        return RedirectResponse(f"{_prefix(request)}/?whoop=failed&why={why}", status_code=302)
     analytics.track("whoop_connected", _as_device(request, device))
     return RedirectResponse(f"{_prefix(request)}/?whoop=connected", status_code=302)
 

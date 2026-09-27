@@ -843,9 +843,19 @@
   makePlan(trip, { quiet: true });
 
   const flag = new URLSearchParams(location.search).get("whoop");
+  const why = new URLSearchParams(location.search).get("why");
   if (flag) {
     history.replaceState(null, "", location.pathname);
-    const msg = { connected: "WHOOP is connected. Your progress appears below your plan.", failed: "Connecting WHOOP did not work. Try again.", cancelled: "WHOOP was not connected." }[flag];
+    // Why it failed, from the server (see whoop.ConnectFailed): each has a different fix.
+    const callback = new URL("whoop/callback", APP_URL).href;
+    const failed = {
+      keys: "WHOOP did not accept this app's keys. In Railway, check WHOOP_CLIENT_ID and WHOOP_CLIENT_SECRET match the WHOOP developer dashboard exactly, with no spaces, then redeploy.",
+      redirect: `WHOOP did not accept the return address. In the WHOOP developer dashboard, the Redirect URL must be exactly ${callback}`,
+      expired: "The WHOOP sign-in expired before it finished. Tap Connect WHOOP again.",
+      link: "The WHOOP sign-in took more than 10 minutes or was started elsewhere. Tap Connect WHOOP again.",
+      network: "Could not reach WHOOP. Try again in a minute.",
+    }[why] || "WHOOP refused the sign-in. Try again; if it keeps happening, the reason is in the server's logs.";
+    const msg = { connected: "WHOOP is connected. Your progress appears below your plan.", failed, cancelled: "WHOOP was not connected." }[flag];
     if (msg) { const e = $("error"); e.textContent = msg; e.className = flag === "connected" ? "ok" : "error"; e.hidden = false; }
   }
 

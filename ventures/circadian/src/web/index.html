@@ -139,7 +139,9 @@
   .t-flight, .t-stopover { border-left-color: var(--ink); }
   .section-title { font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 8px 0 0; }
   /* My trips: its own window, opened from the header. */
-  header .brand { flex: 1; min-width: 0; }
+  /* The brand keeps room for its line; when the buttons don't fit beside it
+     they wrap below, instead of squeezing the tagline to a word per line. */
+  header .brand { flex: 1 1 180px; min-width: 0; }
   .trips-button { font-size: 14px; padding: 8px 12px; border-radius: 999px; background: var(--surface-2); color: var(--ink); border: 1px solid var(--rule); white-space: nowrap; display: flex; align-items: center; gap: 6px; }
   .trips-button[hidden] { display: none; }
   header { flex-wrap: wrap; }
