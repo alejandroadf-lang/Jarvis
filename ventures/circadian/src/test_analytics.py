@@ -131,3 +131,25 @@ def test_a_rating_outside_the_scale_is_refused(sent):
     assert client.post("/app/feedback", json={"device": DEVICE, "rating": 3, "followed": "always"}).status_code == 422
     assert client.post("/app/feedback", json={"device": "../x", "rating": 3}).status_code == 400
     assert sent == []
+
+
+def test_a_days_taps_are_counted_and_checked(sent):
+    ok = client.post("/app/log", json={"device": DEVICE, "kind": "moment", "type": "light_seek", "value": "done", "day_number": 2})
+    assert ok.status_code == 200
+    ok = client.post("/app/log", json={"device": DEVICE, "kind": "feel", "value": "4", "recovery": 52, "day": "2031-10-11"})
+    assert ok.status_code == 200
+    assert sent.events() == ["moment_logged", "morning_feel"]
+    assert sent[0]["properties"]["type"] == "light_seek" and sent[0]["properties"]["value"] == "done"
+    assert sent[1]["properties"]["feel"] == 4 and sent[1]["properties"]["recovery"] == 52
+    assert "2031-10-11" not in json.dumps(sent[1]), "the date stays on the phone"
+    # Outside the vocabulary: refused, nothing counted.
+    assert client.post("/app/log", json={"device": DEVICE, "kind": "moment", "type": "flight", "value": "done"}).status_code == 422
+    assert client.post("/app/log", json={"device": DEVICE, "kind": "moment", "type": "nap", "value": "maybe"}).status_code == 400
+    assert client.post("/app/log", json={"device": DEVICE, "kind": "feel", "value": "9"}).status_code == 400
+    assert len(sent) == 2
+
+
+def test_the_post_trip_rating_carries_the_days_log(sent):
+    r = client.post("/app/feedback", json={"device": DEVICE, "rating": 2, "followed": "mostly", "done": 9, "skipped": 2})
+    assert r.status_code == 200
+    assert sent[0]["properties"]["moments_done"] == 9 and sent[0]["properties"]["moments_skipped"] == 2

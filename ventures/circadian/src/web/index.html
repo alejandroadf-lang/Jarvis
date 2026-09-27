@@ -195,7 +195,16 @@
   .lastnight { display: grid; gap: 2px; padding: 10px 12px; border: 1px solid var(--rule); border-radius: 12px; font-size: 14px; }
   .lastnight small { color: var(--muted); }
   .moments { display: grid; gap: 6px; }
-  .moment { display: grid; grid-template-columns: 76px 1fr; gap: 12px; padding: 6px 10px; border-radius: 10px; font-size: 14px; border-left: 3px solid var(--rule); }
+  .moment { display: grid; grid-template-columns: 76px 1fr auto; align-items: center; gap: 12px; padding: 6px 10px; border-radius: 10px; font-size: 14px; border-left: 3px solid var(--rule); }
+  .moment.done > span::after { content: " ✓"; color: var(--sage); }
+  .moment.skipped > span { text-decoration: line-through; color: var(--muted); }
+  .mark { display: flex; gap: 6px; }
+  .mark button { font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--rule); background: transparent; color: var(--muted); }
+  .mark button.on { background: var(--surface-2); color: var(--ink); border-color: var(--muted); }
+  .feel { display: grid; gap: 8px; }
+  .feel p { margin: 0; font-size: 14px; }
+  .feel-scale button { padding: 8px 4px; font-size: 13px; }
+  .mornings { margin: 0; font-size: 13px; color: var(--muted); }
   .moment time { font-variant-numeric: tabular-nums; font-weight: 600; }
   .moment.past { opacity: 0.55; }
   .moment.now { background: var(--surface-2); border-left-color: var(--dawn); }

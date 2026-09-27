@@ -528,10 +528,12 @@
 
   // The WHOOP button in the header: always visible, so connecting doesn't
   // depend on finding a card below a plan. Its label says what a tap does.
+  let lastWhoopStatus = null;
   async function refreshWhoopButton() {
     const button = $("whoop-button"), label = $("whoop-label");
     let st;
     try { st = await api(`app/whoop/status?device=${device()}`); } catch { return null; }
+    lastWhoopStatus = st;
     button.classList.toggle("connected", !!st.connected);
     button.classList.toggle("ready", !!st.configured && !st.connected);
     if (st.connected) { label.textContent = "WHOOP connected"; button.href = "#whoop-card"; }
@@ -554,7 +556,8 @@
     container.appendChild(card);
 
     let st;
-    try { st = await api(`app/whoop/status?device=${device()}`); } catch { return; }
+    // The redraw after WHOOP moved the plan already knows the status.
+    try { st = (progress && lastWhoopStatus) || await api(`app/whoop/status?device=${device()}`); } catch { return; }
     if (!st.configured) { text.textContent = "WHOOP is coming soon to Circadian."; button.hidden = true; return; }
     if (!st.connected) {
       if (example) text.textContent = "Connect WHOOP now; once you plan your own trip, each night you actually slept shows up here next to the plan.";
@@ -588,6 +591,8 @@
           const bits = [`slept ${n.actual_bed}–${n.actual_wake}`];
           if (n.sleep_performance != null) bits.push(`sleep ${n.sleep_performance}%`);
           if (n.recovery != null) bits.push(`recovery ${n.recovery}%`);
+          const felt = load(FEEL, {})[morningOf(n)];
+          if (felt) bits.push(`felt ${felt}/5`);
           row.appendChild(el("small", "", bits.join(" · ")));
         }
         body.appendChild(row);
@@ -762,15 +767,26 @@
     const text = el("p", "", `Your ${tripInfo(trip).route} trip is over. Two taps help us check the plans work.`);
     card.appendChild(text);
     const scale = el("div", "rating");
+    // What was logged day by day on this trip answers "how much did you follow".
+    const pts = clockPoints(plans);
+    const inTrip = (d) => pts.length && new Date(d + "T12:00:00Z").getTime() >= pts[0].t - DAY_MS && new Date(d + "T12:00:00Z").getTime() <= pts.at(-1).t + DAY_MS;
+    const logged = Object.entries(load(LOG, {})).filter(([k]) => inTrip(k.split("|")[1]));
+    const counts = { done: logged.filter(([, v]) => v === "done").length, skipped: logged.filter(([, v]) => v === "skipped").length };
     const done = (rating, followed) => {
       const first = plans[0].plan;
-      api("app/feedback", { device: device(), rating, followed, shift_hours: first.shift_hours || null, strategy: first.strategy || null }).catch(() => {});
+      api("app/feedback", { device: device(), rating, followed, shift_hours: first.shift_hours || null, strategy: first.strategy || null,
+        done: counts.done, skipped: counts.skipped }).catch(() => {});
       save(RATED, [...load(RATED, []), key].slice(-50));
       card.replaceChildren(el("h2", "", "Thanks"), el("p", "", "That's how we know whether the plans work."));
     };
     ["None", "Mild", "Moderate", "Bad", "Severe"].forEach((label, i) => {
       const b = el("button", "secondary", label); b.type = "button";
       b.addEventListener("click", () => {
+        if (counts.done + counts.skipped >= 3) {
+          const share = counts.done / (counts.done + counts.skipped);
+          done(i + 1, share >= 0.7 ? "mostly" : share >= 0.3 ? "partly" : "hardly");
+          return;
+        }
         text.textContent = "And how much of the plan did you follow?";
         const f = el("div", "followed");
         for (const [value, words] of [["mostly", "Most of it"], ["partly", "Some of it"], ["hardly", "Hardly any"]]) {
@@ -826,6 +842,17 @@
 
   let editing = false;
   const DAY_MS = 864e5;
+  // The day-by-day log, on the phone: moments marked done or skipped, keyed by
+  // type and local date (stable when the day's times move), and each morning's
+  // "how sharp" 1-5, keyed by local date. Each tap is also counted server-side.
+  const LOG = "circadian.log.v1", FEEL = "circadian.feel.v1";
+  const ACTIONABLE = ["light_seek", "light_avoid", "caffeine_ok", "melatonin", "nap"];
+  const momentKey = (e) => `${e.type}|${e.start_local.slice(0, 10)}`;
+  const nextDay = (iso) => new Date(new Date(iso + "T12:00:00Z").getTime() + DAY_MS).toISOString().slice(0, 10);
+  // The morning a night belongs to: night_of is the date the sleep started, so
+  // a bed at 23:30 wakes the next day and a bed at 00:10 wakes the same day.
+  const morningOf = (n) => (n.planned_bed < n.planned_wake ? n.night_of : nextDay(n.night_of));
+  const daysBetween = (a, b) => Math.round((new Date(b + "T12:00:00Z") - new Date(a + "T12:00:00Z")) / DAY_MS);
   const cityOfZone = (tz) => cityOf(tz);
 
   function clockPoints(plans) {
@@ -910,6 +937,36 @@
     }
     card.appendChild(ln);
 
+    // How sharp do you feel: one tap a morning, next to WHOOP's number.
+    if (t >= t0 && t <= t1 + 3 * DAY_MS) {
+      const feels = load(FEEL, {});
+      const todayLocal = new Intl.DateTimeFormat("sv-SE", { timeZone: zoneAt(points, t) }).format(now);
+      const feel = el("div", "feel");
+      if (feels[todayLocal]) {
+        feel.appendChild(el("p", "", `This morning you feel ${feels[todayLocal]}/5`
+          + (lastNight?.recovery != null && measuredRecent ? ` · WHOOP recovery ${lastNight.recovery}%` : "") + "."));
+      } else {
+        feel.appendChild(el("p", "", "How sharp do you feel this morning?"));
+        const scale = el("div", "rating feel-scale");
+        ["1 foggy", "2", "3", "4", "5 sharp"].forEach((label, i) => {
+          const b = el("button", "secondary", label); b.type = "button";
+          b.addEventListener("click", () => {
+            const all = load(FEEL, {}); all[todayLocal] = i + 1; save(FEEL, all);
+            api("app/log", { device: device(), kind: "feel", value: String(i + 1), day: todayLocal,
+              recovery: measuredRecent ? lastNight?.recovery ?? null : null, day_number: dayNo }).catch(() => {});
+            renderToday(plans, trip, progress);
+          });
+          scale.appendChild(b);
+        });
+        feel.appendChild(scale);
+      }
+      card.appendChild(feel);
+      const rated = Object.entries(feels).filter(([d]) => new Date(d + "T12:00:00Z").getTime() >= t0 - DAY_MS).sort();
+      if (rated.length > 1) {
+        card.appendChild(el("p", "mornings", "Mornings: " + rated.slice(-7).map(([d, n]) => `${shortDate(d).replace(/^\w+, /, "")} ${n}/5`).join(" · ")));
+      }
+    }
+
     // Today's moments, on the clock where the traveller is.
     const zone = zoneAt(points, t);
     const todayKey = new Intl.DateTimeFormat("sv-SE", { timeZone: zone }).format(now);
@@ -921,13 +978,30 @@
     if (moments.length) {
       card.appendChild(el("h3", "", `Today · ${cityOfZone(zone)} time`));
       const list = el("div", "moments");
+      const log = load(LOG, {});
       for (const e of moments) {
         const live = new Date(e.start) <= now && e.end && new Date(e.end) > now;
         const past = new Date(e.end || e.start) <= now;
-        const row = el("div", `moment t-${e.type}${live ? " now" : past ? " past" : ""}`);
+        const state = log[momentKey(e)];
+        const row = el("div", `moment t-${e.type}${live ? " now" : past && !state ? " past" : ""}${state ? " " + state : ""}`);
         const time = el("time", "", hm(e.start_local));
         if (e.end_local) time.appendChild(document.createTextNode(`–${hm(e.end_local)}`));
         row.append(time, el("span", "", (live ? "Now: " : "") + (LABELS[e.type] || e.type)));
+        if (ACTIONABLE.includes(e.type) && (past || live)) {
+          // One tap: did you do it. Only once it is under way; there is nothing to report before.
+          const mark = el("div", "mark");
+          for (const [value, label] of [["done", "Done"], ["skipped", "Skip"]]) {
+            const b = el("button", value === state ? "on" : "", label); b.type = "button";
+            b.setAttribute("aria-pressed", String(value === state));
+            b.addEventListener("click", () => {
+              const all = load(LOG, {}); all[momentKey(e)] = value; save(LOG, all);
+              api("app/log", { device: device(), kind: "moment", type: e.type, value, day_number: dayNo }).catch(() => {});
+              renderToday(plans, trip, progress);
+            });
+            mark.appendChild(b);
+          }
+          row.appendChild(mark);
+        }
         list.appendChild(row);
       }
       card.appendChild(list);
