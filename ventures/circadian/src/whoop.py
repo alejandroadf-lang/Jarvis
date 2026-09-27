@@ -44,7 +44,7 @@ from zoneinfo import ZoneInfo
 import requests
 
 from src import store
-from src.itinerary import TripPlan
+from src.itinerary import TripPlan, hours_off_local
 
 UTC = timezone.utc
 AUTHORIZE_URL = "https://api.prod.whoop.com/oauth/oauth2/auth"
@@ -491,12 +491,20 @@ def progress(device: str, plan: TripPlan, now: Optional[datetime] = None) -> dic
             onset = round((a0 - e.start).total_seconds() / 60)
             wake = round((a1 - e.end).total_seconds() / 60)
             score = best.get("score") or {}
+            # Where the body clock was that night, against the local clock: the
+            # plan's expectation, and it corrected by the same rule as the
+            # day's plan (half the night's lateness). What the graph plots.
+            mid = e.start + (e.end - e.start) / 2
+            planned_hours = hours_off_local(plan, mid)
             row.update(
                 tracked=True,
                 actual_bed=a0.astimezone(tz).strftime("%H:%M"),
                 actual_wake=a1.astimezone(tz).strftime("%H:%M"),
                 bed_minutes_late=onset,
                 wake_minutes_late=wake,
+                clock_at=mid.astimezone(UTC).isoformat().replace("+00:00", "Z"),
+                clock_planned=planned_hours,
+                clock_measured=round(planned_hours + ADJUST_FRACTION * ((onset + wake) / 2) / 60, 2),
                 on_track=abs(onset) <= ON_TRACK_MINUTES and abs(wake) <= ON_TRACK_MINUTES,
                 sleep_performance=score.get("sleep_performance_percentage") if best.get("score_state") == "SCORED" else None,
                 recovery=recovery_by_sleep.get(str(best.get("id"))),

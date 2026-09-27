@@ -802,6 +802,7 @@
   function show(plans, trip, req, supplements, progress = null) {
     const minutes = progress?.adjustment?.minutes || 0;
     const shown = minutes ? shiftPlans(plans, minutes) : plans;
+    renderToday(shown, trip, progress);
     const out = $("result"); out.replaceChildren();
     renderRating(out, shown, trip);
     renderNow(out, shown);
@@ -814,6 +815,215 @@
     renderSupplements(out, supplements);
     for (const p of shown) renderPlan(out, p.title, p.plan, minutes);
     out.appendChild(el("p", "disclaimer", shown[0].plan.disclaimer));
+  }
+
+  // --- today -------------------------------------------------------------------------------
+  //
+  // The first screen once there is a trip. Its centre is the body-clock graph:
+  // the plan's line for how far the body is from the local clock across the
+  // whole trip, and a dot for every night WHOOP has measured. Under it, last
+  // night in one row and today's few moments. The form waits behind Edit trip.
+
+  let editing = false;
+  const DAY_MS = 864e5;
+  const cityOfZone = (tz) => cityOf(tz);
+
+  function clockPoints(plans) {
+    return plans.flatMap((p) => p.plan.clock || []).map((c) => ({ ...c, t: new Date(c.at).getTime() }));
+  }
+
+  // The plan's value at a moment, between the points either side of it.
+  function planAt(points, t) {
+    if (!points.length) return null;
+    if (t <= points[0].t) return points[0].hours;
+    for (let i = 1; i < points.length; i++) {
+      if (t <= points[i].t) {
+        const a = points[i - 1], b = points[i];
+        return b.t === a.t ? b.hours : a.hours + (b.hours - a.hours) * (t - a.t) / (b.t - a.t);
+      }
+    }
+    return points.at(-1).hours;
+  }
+
+  const zoneAt = (points, t) => (points.filter((p) => p.t <= t).at(-1) || points[0])?.local_tz;
+
+  function describeHours(h, tz) {
+    const city = cityOfZone(tz);
+    if (Math.abs(h) < 0.25) return `on ${city} time`;
+    const n = Math.abs(h) < 10 ? Math.abs(h).toFixed(1).replace(/\.0$/, "") : Math.round(Math.abs(h));
+    return `${n} h ${h > 0 ? "ahead of" : "behind"} ${city} time`;
+  }
+
+  function renderToday(plans, trip, progress) {
+    const card = $("today");
+    const points = clockPoints(plans);
+    if (trip.example || !points.length) {
+      card.hidden = true; $("trip-card").hidden = false;
+      return;
+    }
+    card.hidden = false;
+    $("trip-card").hidden = !editing;
+    card.replaceChildren();
+    const now = new Date(), t = now.getTime();
+
+    const t0 = points[0].t, t1 = points.at(-1).t;
+    const total = Math.max(1, Math.ceil((t1 - t0) / DAY_MS));
+    const dayNo = Math.floor((t - t0) / DAY_MS) + 1;
+    const head = el("div", "today-head");
+    head.appendChild(el("h2", "", tripInfo(trip).route));
+    head.appendChild(el("span", "day", t < t0 ? `Starts in ${Math.ceil((t0 - t) / DAY_MS)} day${Math.ceil((t0 - t) / DAY_MS) === 1 ? "" : "s"}`
+      : t > t1 ? "Trip over" : `Day ${dayNo} of ${total} · ${cityOfZone(zoneAt(points, t))}`));
+    card.appendChild(head);
+
+    const nights = (progress?.nights || []).filter((n) => n.tracked && n.clock_measured != null);
+    const caption = el("p", "chart-caption");
+    const tz = zoneAt(points, t);
+    const planned = planAt(points, t);
+    const lastNight = nights.at(-1);
+    const measuredRecent = lastNight && t - new Date(lastNight.clock_at).getTime() < 30 * 36e5;
+    caption.textContent = t < t0 ? `Your body is ${describeHours(0, points[0].local_tz)}. The plan starts moving it on ${shortDate(points[0].at)}.`
+      : measuredRecent ? `Last night your body was ${describeHours(lastNight.clock_measured, lastNight.local_tz)}; the plan expected ${describeHours(lastNight.clock_planned, lastNight.local_tz)}.`
+      : `By the plan, your body is now ${describeHours(planned, tz)}.`;
+    card.appendChild(clockChart(points, nights, now, caption));
+    const legend = el("p", "legend");
+    const a = el("span"); a.append(el("i"), document.createTextNode("Plan"));
+    const b = el("span"); b.append(el("b"), document.createTextNode(nights.length ? "WHOOP nights" : "WHOOP nights (none yet)"));
+    legend.append(a, b);
+    card.appendChild(legend);
+    card.appendChild(caption);
+
+    // Last night, in one row.
+    const ln = el("div", "lastnight");
+    if (lastNight && measuredRecent) {
+      const late = Math.round((lastNight.bed_minutes_late + lastNight.wake_minutes_late) / 2);
+      ln.appendChild(el("div", "", `Last night: slept ${lastNight.actual_bed}–${lastNight.actual_wake}` +
+        (Math.abs(late) < 15 ? ", on the plan" : `, ${Math.abs(late)} min ${late > 0 ? "later" : "earlier"} than planned`)));
+      const bits = [];
+      if (lastNight.recovery != null) bits.push(`recovery ${lastNight.recovery}%`);
+      if (lastNight.sleep_performance != null) bits.push(`sleep ${lastNight.sleep_performance}%`);
+      if (progress?.adjustment?.minutes) bits.push(`today's times moved ${Math.abs(progress.adjustment.minutes)} min ${progress.adjustment.minutes > 0 ? "later" : "earlier"}`);
+      if (bits.length) ln.appendChild(el("small", "", bits.join(" · ")));
+    } else if ($("whoop-button").classList.contains("connected")) {
+      ln.appendChild(el("small", "", t < t0 ? "Nights on the plan will show here, from WHOOP, each morning." : "WHOOP has not scored last night yet."));
+    } else {
+      ln.appendChild(el("small", "", "Connect WHOOP and each night you actually slept lands on this graph."));
+    }
+    card.appendChild(ln);
+
+    // Today's moments, on the clock where the traveller is.
+    const zone = zoneAt(points, t);
+    const todayKey = new Intl.DateTimeFormat("sv-SE", { timeZone: zone }).format(now);
+    const all = plans.flatMap((p) => p.plan.events).sort((x, y) => new Date(x.start) - new Date(y.start));
+    const moments = all.filter((e) => !["flight", "stopover", "fog"].includes(e.type) && e.local_tz === zone && e.start_local.slice(0, 10) === todayKey);
+    // Tonight's bed belongs to today even when it falls after midnight.
+    const bed = all.find((e) => e.type === "sleep" && ["home", "destination"].includes(e.where) && new Date(e.start) > now && new Date(e.start) - now < 30 * 36e5);
+    if (bed && !moments.includes(bed)) moments.push(bed);
+    if (moments.length) {
+      card.appendChild(el("h3", "", `Today · ${cityOfZone(zone)} time`));
+      const list = el("div", "moments");
+      for (const e of moments) {
+        const live = new Date(e.start) <= now && e.end && new Date(e.end) > now;
+        const past = new Date(e.end || e.start) <= now;
+        const row = el("div", `moment t-${e.type}${live ? " now" : past ? " past" : ""}`);
+        const time = el("time", "", hm(e.start_local));
+        if (e.end_local) time.appendChild(document.createTextNode(`–${hm(e.end_local)}`));
+        row.append(time, el("span", "", (live ? "Now: " : "") + (LABELS[e.type] || e.type)));
+        list.appendChild(row);
+      }
+      card.appendChild(list);
+    } else if (t >= t0 && t <= t1) {
+      card.appendChild(el("p", "", "Nothing more on the plan today."));
+    }
+
+    const actions = el("div", "today-actions");
+    const edit = el("button", "secondary", editing ? "Hide trip form" : "Edit trip"); edit.type = "button";
+    edit.addEventListener("click", () => {
+      editing = !editing;
+      $("trip-card").hidden = !editing;
+      edit.textContent = editing ? "Hide trip form" : "Edit trip";
+      if (editing) $("trip-card").scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    const full = el("button", "secondary", "Full plan"); full.type = "button";
+    full.addEventListener("click", () => $("result").scrollIntoView({ behavior: "smooth", block: "start" }));
+    actions.append(edit, full);
+    card.appendChild(actions);
+  }
+
+  // The graph, as plain SVG. x is the trip's span, y is hours off the local
+  // clock (0 = adapted). Marks: the plan as a 2px line, WHOOP nights as 10px
+  // dots with a surface ring, hairline grid, a "now" line. Tapping a dot puts
+  // that night into the caption; there is no hover on a phone.
+  function clockChart(points, nights, now, caption) {
+    const NS = "http://www.w3.org/2000/svg";
+    const svgEl = (tag, attrs = {}, text) => {
+      const n = document.createElementNS(NS, tag);
+      for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+      if (text !== undefined) n.textContent = text;
+      return n;
+    };
+    const W = Math.max(300, Math.min(540, ($("today").clientWidth || 360) - 32)), H = 200;
+    const m = { l: 36, r: 14, t: 22, b: 26 };
+    const t = now.getTime();
+    const dotTs = nights.map((n) => new Date(n.clock_at).getTime());
+    const x0 = Math.min(points[0].t, ...dotTs), x1 = Math.max(points.at(-1).t, ...dotTs, t < points.at(-1).t + 3 * DAY_MS ? t : 0);
+    const hours = [...points.map((p) => p.hours), ...nights.map((n) => n.clock_measured), 0];
+    let yMin = Math.floor(Math.min(...hours)) - 0.5, yMax = Math.ceil(Math.max(...hours)) + 0.5;
+    if (yMax - yMin < 3) { yMin -= 1; yMax += 1; }
+    const X = (tt) => m.l + (tt - x0) / (x1 - x0 || 1) * (W - m.l - m.r);
+    const Y = (h) => m.t + (yMax - h) / (yMax - yMin) * (H - m.t - m.b);
+    const svg = svgEl("svg", { class: "clock-chart", viewBox: `0 0 ${W} ${H}`, role: "img",
+      "aria-label": "Your body clock against the local clock over the trip: the plan as a line, nights measured by WHOOP as dots." });
+
+    // Grid: whole hours, one label each; the zero line a shade stronger.
+    const step = yMax - yMin > 12 ? 3 : yMax - yMin > 6 ? 2 : 1;
+    for (let h = Math.ceil(yMin); h <= Math.floor(yMax); h += step) {
+      svg.appendChild(svgEl("line", { class: h === 0 ? "zero" : "grid", x1: m.l, x2: W - m.r, y1: Y(h), y2: Y(h) }));
+      svg.appendChild(svgEl("text", { x: m.l - 6, y: Y(h) + 4, "text-anchor": "end" }, h === 0 ? "0" : `${h > 0 ? "+" : "−"}${Math.abs(h)} h`));
+    }
+    // Where the traveller is: a label per stretch, a hairline at each change.
+    let segStart = x0, segZone = points[0].local_tz;
+    const segments = [];
+    for (const p of points) {
+      if (p.local_tz !== segZone) { segments.push([segStart, p.t, segZone]); segStart = p.t; segZone = p.local_tz; }
+    }
+    segments.push([segStart, x1, segZone]);
+    for (const [sa, sb, z] of segments) {
+      if (sa !== x0) svg.appendChild(svgEl("line", { class: "grid", x1: X(sa), x2: X(sa), y1: m.t - 4, y2: H - m.b }));
+      if (X(sb) - X(sa) > 40) svg.appendChild(svgEl("text", { x: (X(sa) + X(sb)) / 2, y: m.t - 8, "text-anchor": "middle" }, cityOfZone(z)));
+    }
+    // Dates along the bottom: about five, on day boundaries.
+    const days = Math.max(1, Math.round((x1 - x0) / DAY_MS));
+    const every = Math.max(1, Math.ceil(days / 4));
+    let lastLabelX = -Infinity;
+    for (let d = 0; d <= days; d += every) {
+      const tt = x0 + d * DAY_MS;
+      if (tt > x1 || X(tt) - lastLabelX < 56) continue;   // no two dates on top of each other
+      lastLabelX = X(tt);
+      svg.appendChild(svgEl("text", { x: X(tt), y: H - 8, "text-anchor": d === 0 ? "start" : "middle" }, shortDate(new Date(tt).toISOString()).replace(/^\w+, /, "")));
+    }
+    // Now.
+    if (t >= x0 && t <= x1) {
+      svg.appendChild(svgEl("line", { class: "now", x1: X(t), x2: X(t), y1: m.t, y2: H - m.b }));
+      svg.appendChild(svgEl("text", { x: X(t) + 4, y: H - m.b - 4 }, "now"));
+    }
+    // The plan.
+    svg.appendChild(svgEl("polyline", { class: "plan", points: points.map((p) => `${X(p.t)},${Y(p.hours)}`).join(" ") }));
+    // WHOOP nights, with a bigger invisible hit target under each dot.
+    const dots = [];
+    nights.forEach((n, i) => {
+      const cx = X(dotTs[i]), cy = Y(n.clock_measured);
+      const hit = svgEl("circle", { class: "hit", cx, cy, r: 16 });
+      const dot = svgEl("circle", { class: "dot", cx, cy, r: 5 });
+      dot.appendChild(svgEl("title", {}, `Night of ${n.night_of}: ${describeHours(n.clock_measured, n.local_tz)}`));
+      const pick = () => {
+        dots.forEach((d) => d.classList.remove("picked")); dot.classList.add("picked");
+        caption.textContent = `Night of ${shortDate(n.night_of)}: your body was ${describeHours(n.clock_measured, n.local_tz)}; the plan expected ${describeHours(n.clock_planned, n.local_tz)}.`
+          + (n.recovery != null ? ` Recovery ${n.recovery}%.` : "");
+      };
+      hit.addEventListener("click", pick); dot.addEventListener("click", pick);
+      svg.append(hit, dot); dots.push(dot);
+    });
+    return svg;
   }
 
   // One way, direct, landing days after take-off: that is someone flying out on
@@ -862,7 +1072,9 @@
       note.hidden = false;
     }
     remember(trip);
+    editing = false;
     makePlan(trip);
+    scrollTo({ top: 0, behavior: "smooth" });
   });
 
   // First look: the current trip if there is one, otherwise a real example.

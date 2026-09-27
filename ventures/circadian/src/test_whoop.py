@@ -372,3 +372,16 @@ def test_adaptation_is_two_good_nights_running_with_recovery_back_to_usual(fake)
     out = whoop.progress(DEVICE, plan, now=nights[1].end + timedelta(hours=2))
     assert out["adaptation"]["adapted_after_nights"] is None
     assert out["adaptation"]["verdict"].startswith("Not yet on local time after 2 nights there")
+
+
+def test_each_night_is_placed_on_the_body_clock_graph(fake):
+    plan = trip()
+    connect(fake)
+    n0 = [e for e in plan.events if e.type == "sleep" and e.where == "destination"][0]
+    fake.sleeps = [sleep_record(1, n0.start + timedelta(minutes=120), n0.end + timedelta(minutes=120))]
+    night = whoop.progress(DEVICE, plan, now=n0.end + timedelta(hours=2))["nights"][-1]
+    # London body in Tokyo, first night: the plan expects it hours behind local; sleeping two hours
+    # late reads as an hour further behind... later, that is: measured = planned + 1 h.
+    assert night["clock_planned"] < 0
+    assert night["clock_measured"] == round(night["clock_planned"] + 1.0, 2)
+    assert night["clock_at"].startswith("2026-10-11T")

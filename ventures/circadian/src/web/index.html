@@ -39,6 +39,11 @@
     --sage: #6FCF97;
     --rose: #E58FA0;
     --danger: #F28B82;
+    /* The body-clock graph: deeper steps of dusk and dawn, so both marks sit in
+       the lightness band that reads on this surface and apart from each other
+       under colour-blindness (checked with the dataviz palette validator). */
+    --plan-line: #6F76E6;
+    --whoop-dot: #CC7A28;
   }
   * { box-sizing: border-box; }
   /* Component display rules would otherwise beat the hidden attribute. */
@@ -169,6 +174,37 @@
   .night:first-child { border-top: 0; }
   .night small { color: var(--muted); grid-column: 1 / -1; }
   .adjusted { color: var(--dawn); font-size: 14px; }
+  /* Today */
+  .today-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .today-head h2 { margin: 0; font-size: 20px; }
+  .today-head .day { color: var(--muted); font-size: 14px; white-space: nowrap; }
+  .clock-chart { width: 100%; display: block; overflow: visible; font-size: 11px; }
+  .clock-chart text { fill: var(--muted); }
+  .clock-chart .grid { stroke: var(--rule); stroke-width: 1; }
+  .clock-chart .zero { stroke: var(--muted); stroke-width: 1; }
+  .clock-chart .now { stroke: var(--ink); stroke-opacity: 0.55; stroke-width: 1; }
+  .clock-chart .plan { fill: none; stroke: var(--plan-line); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+  .clock-chart .dot { fill: var(--whoop-dot); stroke: var(--surface); stroke-width: 2; cursor: pointer; }
+  .clock-chart .dot.picked { stroke: var(--ink); }
+  .clock-chart .hit { fill: transparent; cursor: pointer; }
+  .legend { display: flex; gap: 16px; font-size: 13px; color: var(--muted); margin: 0; flex-wrap: wrap; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend i { display: inline-block; width: 18px; height: 2px; background: var(--plan-line); border-radius: 1px; }
+  .legend b { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--whoop-dot); }
+  .chart-caption { margin: 0; font-size: 14px; color: var(--ink); min-height: 1.5em; }
+  .lastnight { display: grid; gap: 2px; padding: 10px 12px; border: 1px solid var(--rule); border-radius: 12px; font-size: 14px; }
+  .lastnight small { color: var(--muted); }
+  .moments { display: grid; gap: 6px; }
+  .moment { display: grid; grid-template-columns: 76px 1fr; gap: 12px; padding: 6px 10px; border-radius: 10px; font-size: 14px; border-left: 3px solid var(--rule); }
+  .moment time { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .moment.past { opacity: 0.55; }
+  .moment.now { background: var(--surface-2); border-left-color: var(--dawn); }
+  .moment.t-light_seek { border-left-color: var(--dawn); }
+  .moment.t-light_avoid { border-left-color: var(--rose); }
+  .moment.t-sleep { border-left-color: var(--dusk); }
+  .moment.t-caffeine_ok { border-left-color: var(--sage); }
+  .moment.t-focus { border-left-color: var(--sage); }
+  .today-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .verdict { font-size: 14px; }
   .verdict b { color: var(--sage); }
   .pill { font-size: 12px; font-weight: 600; border-radius: 999px; padding: 2px 10px; align-self: start; }
@@ -220,7 +256,12 @@
     </div>
   </header>
 
-  <section class="card">
+  <!-- The first screen once there is a trip: where the body clock is against
+       the local clock, last night from WHOOP, and today's few moments. The form
+       below waits behind "Edit trip". Filled in by renderToday (app.js). -->
+  <section class="card today" id="today" hidden></section>
+
+  <section class="card" id="trip-card">
     <form id="trip" novalidate>
       <p class="example" id="example-note" hidden>An example trip, filled in to show how it works. Change it to yours.</p>
       <div class="segmented" role="radiogroup" aria-label="Trip type" id="trip-type">
