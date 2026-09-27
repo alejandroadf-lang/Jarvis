@@ -34,6 +34,7 @@ import {
   setDeploymentEnabled,
   setDeploymentCaps,
   setServiceUrl,
+  serviceUrl,
   clearServiceUrl,
   setPricing,
   describePricing,
@@ -262,9 +263,9 @@ export function parseFounderCommand(text) {
     };
   }
 
-  const serviceUrl = raw.match(SERVICE_URL_GRANT);
-  if (serviceUrl) {
-    return { kind: 'service_url', ventureId: serviceUrl[1], url: serviceUrl[2] };
+  const serviceGrant = raw.match(SERVICE_URL_GRANT);
+  if (serviceGrant) {
+    return { kind: 'service_url', ventureId: serviceGrant[1], url: serviceGrant[2] };
   }
 
   const grant = raw.match(OUTREACH_GRANT);
@@ -291,7 +292,7 @@ function describeVenture(venture) {
     ? `outreach ${venture.outreach.enabled ? 'ON' : 'off'} → ${venture.outreach.allowedRecipients.join(', ') || 'nobody'}`
     : 'no outreach scope';
   const service = venture.service?.origin
-    ? venture.service.origin
+    ? serviceUrl(venture)
     : 'no service URL — they cannot check if it is up';
   return `${venture.title}\n  ${venture.id}\n  ${repo}\n  ${outreach}\n  ${service}`;
 }
@@ -848,7 +849,7 @@ export async function runFounderCommand(command, deps = {}) {
       // setServiceUrl validates the URL and throws with the reason, which is
       // the message the founder needs — "that is http" rather than "invalid".
       const venture = setServiceUrl(command.ventureId, command.url);
-      return `"${venture.title}" is deployed at ${venture.service.origin}.\n\nThe team can now run a real request against it and see what comes back, which is the only thing that proves the product works — a passing CI run does not.\n\nURL CLEAR ${command.ventureId} revokes it.`;
+      return `"${venture.title}" is deployed at ${serviceUrl(venture)}.\n\nThe team can now run a real request against it and see what comes back, which is the only thing that proves the product works — a passing CI run does not.\n\nURL CLEAR ${command.ventureId} revokes it.`;
     }
 
     case 'service_url_clear': {

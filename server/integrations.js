@@ -32,6 +32,7 @@ import { MODELS, CHEAP_TIER } from './agents/models.js';
 import { readSecret } from './env.js';
 import { getStorageStatus } from './storage.js';
 import { accessStatus } from './auth.js';
+import { describeCircadian } from './circadian.js';
 
 // A probe must never hang a page load. Both services are normally fast; if
 // one isn't, "couldn't reach it" is a more useful answer than a spinner.
@@ -442,6 +443,10 @@ export async function getIntegrationStatus() {
     // Synchronous: there is nothing to probe without placing a call, and a
     // check that costs a phone call is a check nobody runs.
     calling: probeCalling(),
+    // A product this service hosts rather than a service it calls. Here so a
+    // Circadian that failed to start is visible on the same panel, instead of
+    // only as a 503 a traveller sees.
+    circadian: describeCircadian(),
     // The desk as an outside bot sees it. Presence is the signal: with the
     // key set the endpoints answer, and the bot's first real call is the
     // probe nothing here can run.

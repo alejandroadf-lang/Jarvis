@@ -100,6 +100,19 @@ function fail(message) {
 }
 
 /**
+ * The path a service is mounted under, without a trailing slash: "" for a
+ * service at the root of its host, "/circadian" for one below it. Query and
+ * fragment are dropped; they are never part of where a service lives.
+ */
+export function basePathOf(raw) {
+  try {
+    return new URL(String(raw || '').trim()).pathname.replace(/\/+$/, '');
+  } catch {
+    return '';
+  }
+}
+
+/**
  * One GET against a founder-approved origin.
  *
  * Returns what happened in both cases rather than throwing on a non-2xx: a 500
@@ -110,12 +123,24 @@ function fail(message) {
  */
 export async function probeEndpoint({ origin, path = '/', timeoutMs = DEFAULT_TIMEOUT_MS }) {
   const base = assertProbeableUrl(origin);
-  // Resolved against the approved origin, so "../", a leading "//host" or an
-  // absolute URL cannot move the request to a different host: anything that
-  // resolves away from the grant is refused rather than silently followed.
-  const target = new URL(String(path || '/'), `${base}/`);
-  if (target.origin !== base) {
-    fail(`"${path}" points outside ${base}. Pass a path on this venture's own service, not a full URL.`);
+  // The grant can carry a path as well as a host: a venture served below a
+  // shared host (Circadian at jarvis…/circadian) is that path, not the whole
+  // host. Without it "/health" would probe the host's own page, which answers
+  // 200 and reports a dead venture as up.
+  const basePath = basePathOf(origin);
+  const raw = String(path || '/');
+  // A leading "/" means "from the service's root", which is the base path. A
+  // leading "//" (or "/\", which URL parsing treats the same) is a host, so it
+  // is left alone and refused below.
+  const joined = basePath && raw.startsWith('/') && !/^[/\\]{2}/.test(raw) ? basePath + raw : raw;
+  // Resolved against the approved base, so "../", a leading "//host" or an
+  // absolute URL cannot move the request to a different host or out of the
+  // base path: anything that resolves away from the grant is refused rather
+  // than silently followed.
+  const target = new URL(joined, `${base}${basePath}/`);
+  const insideBase = !basePath || target.pathname === basePath || target.pathname.startsWith(`${basePath}/`);
+  if (target.origin !== base || !insideBase) {
+    fail(`"${path}" points outside ${base}${basePath}. Pass a path on this venture's own service, not a full URL.`);
   }
 
   const startedAt = Date.now();

@@ -22,7 +22,7 @@
 import { readJson, writeJson } from '../store.js';
 import { assertRealActionsAllowed } from '../killSwitch.js';
 import { assertInApprovedPlan } from '../dailyPlan.js';
-import { assertProbeableUrl } from '../execute/probe.js';
+import { assertProbeableUrl, basePathOf } from '../execute/probe.js';
 import { requiresConsent } from '../outreachCompliance.js';
 
 const FILE = 'ventures.json';
@@ -1528,7 +1528,11 @@ export function setServiceUrl(id, url) {
   // assertProbeableUrl would later refuse — a stored value that fails at probe
   // time is a grant that looks live and is not.
   const origin = assertProbeableUrl(url);
-  venture.service = { origin, setAt: new Date().toISOString() };
+  // The path is kept: a venture can live below a shared host, as Circadian
+  // does at /circadian inside Jarvis, and the grant is that path, not the
+  // whole host.
+  const basePath = basePathOf(url);
+  venture.service = { origin, ...(basePath ? { basePath } : {}), setAt: new Date().toISOString() };
   venture.probes = venture.probes || [];
   save(data);
   return venture;
@@ -1581,7 +1585,12 @@ export function authorizeProbe(id) {
         'path you are asking for, and checking again will return the same answer — read the last result instead.'
     );
   }
-  return venture.service.origin;
+  return serviceUrl(venture);
+}
+
+/** Where a venture is deployed, as the founder set it: host plus any base path. */
+export function serviceUrl(venture) {
+  return venture?.service?.origin ? venture.service.origin + (venture.service.basePath || '') : '';
 }
 
 export function recordProbe(id, { path, status, ok, ms, agentId }) {

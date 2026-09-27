@@ -396,13 +396,15 @@ test('a venture created without that reasoning stores an empty string, not undef
 // forgery primitive (see execute/probe.js for the boundary itself). What is
 // tested here is the grant: that it validates on the way in, that nothing can
 // be probed without it, and that the kill switch still covers it.
-test('setServiceUrl stores the origin only, and refuses a URL that could not be probed', () => {
+test('setServiceUrl stores the host and the path it is mounted under, and refuses a URL that could not be probed', () => {
   const v = makeVenture();
 
-  const linked = ventures.setServiceUrl(v.id, 'https://circadian-api.up.railway.app/health?x=1');
-  // The origin, not the path: the grant is the host, and the agent supplies
-  // the path on each call.
+  const linked = ventures.setServiceUrl(v.id, 'https://circadian-api.up.railway.app/?x=1');
+  // A service at the root of its host: the grant is the host, and the agent
+  // supplies the path on each call.
   assert.equal(linked.service.origin, 'https://circadian-api.up.railway.app');
+  assert.equal(linked.service.basePath, undefined);
+  assert.equal(ventures.serviceUrl(linked), 'https://circadian-api.up.railway.app');
 
   // Validated here rather than at probe time, so a stored URL can never be one
   // the probe would later refuse — a grant that looks live and is not is the
@@ -412,6 +414,17 @@ test('setServiceUrl stores the origin only, and refuses a URL that could not be 
   assert.throws(() => ventures.setServiceUrl(v.id, 'https://localhost'), /public address/);
   // And the bad attempts left the good grant alone.
   assert.equal(ventures.getVenture(v.id).service.origin, 'https://circadian-api.up.railway.app');
+});
+
+// Circadian is served by Jarvis at /circadian. Dropping the path, as this used
+// to, would send "/health" to Jarvis's own page, which answers 200 whether
+// Circadian is running or not.
+test('a service below a shared host keeps its path, and the probe is scoped to it', () => {
+  const v = makeVenture();
+  const linked = ventures.setServiceUrl(v.id, 'https://jarvis-production-3d47.up.railway.app/circadian/');
+  assert.equal(linked.service.origin, 'https://jarvis-production-3d47.up.railway.app');
+  assert.equal(linked.service.basePath, '/circadian');
+  assert.equal(ventures.authorizeProbe(v.id), 'https://jarvis-production-3d47.up.railway.app/circadian');
 });
 
 test('authorizeProbe refuses when no URL is set, and says the founder has to provide it', () => {
