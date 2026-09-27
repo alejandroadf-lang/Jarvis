@@ -165,6 +165,18 @@ def test_the_web_app_uses_only_relative_urls_so_it_works_under_a_prefix():
             assert needle not in text, f"{name} has an absolute URL {needle}"
 
 
+def test_link_previews_carry_the_absolute_address_the_app_is_reached_at():
+    # A bare URL in a Reddit or WhatsApp post gets no title or picture; the
+    # preview tags need absolute URLs, and the app may sit under /circadian.
+    r = client.get("/", headers={"x-forwarded-proto": "https", "x-forwarded-host": "jarvis.example",
+                                 "x-forwarded-prefix": "/circadian"})
+    assert r.status_code == 200
+    assert '<meta property="og:image" content="https://jarvis.example/circadian/card.png">' in r.text
+    assert '<meta property="og:url" content="https://jarvis.example/circadian/">' in r.text
+    assert "{{BASE_URL}}" not in r.text
+    assert client.get("/card.png").headers["content-type"] == "image/png"
+
+
 def test_whoop_progress_without_connection_is_a_clear_409():
     r = client.post("/app/whoop/progress", json={"device": DEVICE, "trip": dict(TRIP)})
     assert r.status_code == 409 and r.json()["error"]["code"] == "whoop_not_connected"

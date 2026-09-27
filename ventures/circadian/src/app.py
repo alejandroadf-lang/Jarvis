@@ -396,6 +396,27 @@ def whoop_disconnect(req: DeviceRequest, _limit=Depends(app_rate_limit)):
     return {"connected": False}
 
 
+def _public_base(request: Request) -> str:
+    """Where the app is reached from outside, with a trailing slash: the proxy's
+    scheme and host plus any path prefix (see _prefix)."""
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme).split(",")[0].strip()
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    return f"{proto}://{host}{_prefix(request)}/"
+
+
+@app.get("/", include_in_schema=False)
+@app.get("/index.html", include_in_schema=False)
+def web_index(request: Request):
+    """
+    The page, with its link-preview URLs filled in. Reddit, WhatsApp and the
+    rest only show a title and picture for absolute URLs, and the app can be
+    served at the root of a host or below /circadian, so the address is taken
+    from the request rather than written into the file.
+    """
+    html = (WEB_DIR / "index.html").read_text(encoding="utf-8").replace("{{BASE_URL}}", _public_base(request))
+    return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
+
+
 # The consumer app itself. Mounted last so every route above wins.
 if WEB_DIR.is_dir():
     app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")
