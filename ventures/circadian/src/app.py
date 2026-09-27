@@ -422,7 +422,8 @@ def whoop_callback(request: Request, code: Optional[str] = None, state: Optional
         why = getattr(err, "reason", "link")
         print(f"CircadianAPI: connecting WHOOP failed ({why}): {err}")
         analytics.track("whoop_connect_failed", request.headers, {"reason": why})
-        return RedirectResponse(f"{_prefix(request)}/?whoop=failed&why={why}", status_code=302)
+        status = f"&status={int(err.status)}" if getattr(err, "status", 0) else ""
+        return RedirectResponse(f"{_prefix(request)}/?whoop=failed&why={why}{status}", status_code=302)
     print("CircadianAPI: WHOOP connected.")
     analytics.track("whoop_connected", _as_device(request, device))
     return RedirectResponse(f"{_prefix(request)}/?whoop=connected", status_code=302)
