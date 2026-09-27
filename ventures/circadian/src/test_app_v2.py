@@ -152,7 +152,7 @@ def test_under_a_path_prefix_the_callback_and_redirects_keep_it(monkeypatch):
 
 def test_a_hostile_prefix_is_ignored_rather_than_redirecting_off_site():
     for bad in ["//evil.example", "/../x", "https://evil.example", "/a b"]:
-        r = client.get("/whoop/callback", params={"error": "x"}, follow_redirects=False,
+        r = client.get("/whoop/callback", params={"error": "access_denied"}, follow_redirects=False,
                        headers={"x-forwarded-prefix": bad})
         assert r.headers["location"] == "/?whoop=cancelled", bad
 
@@ -255,3 +255,15 @@ def test_the_privacy_page_is_served_and_its_contact_is_the_owners_choice(monkeyp
     monkeypatch.setenv("CIRCADIAN_CONTACT_EMAIL", '"><script>x</script>@a.b')
     text = client.get("/privacy").text
     assert "<script>" not in text and "mailto:" not in text
+
+
+def test_whoop_stopping_the_sign_in_is_not_reported_as_the_traveller_saying_no(monkeypatch):
+    # An invalid scope used to come back as "WHOOP was not connected", reason dropped.
+    r = client.get("/whoop/callback", params={"error": "invalid_scope", "error_description": "offline"},
+                   follow_redirects=False)
+    assert r.headers["location"] == "/?whoop=failed&why=refused&error=invalid_scope"
+    r = client.get("/whoop/callback", params={"error": "access_denied"}, follow_redirects=False)
+    assert r.headers["location"] == "/?whoop=cancelled"
+    # Whatever WHOOP sends, only a plain word goes back into the page's address.
+    r = client.get("/whoop/callback", params={"error": "<b>x</b>&y=1"}, follow_redirects=False)
+    assert r.headers["location"] == "/?whoop=failed&why=refused&error=bxby"
