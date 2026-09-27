@@ -56,6 +56,15 @@ COLLECTION = "whoop"
 STATE_MAX_AGE = 600
 ON_TRACK_MINUTES = 60
 LOW_RECOVERY = 34          # WHOOP's red band
+BASELINE_DAYS = 14         # nights that stand for "usual" before a trip
+# Correcting the plan from a real night. Sleep timing is one of the things
+# that sets the clock, light is the other and it was (we assume) taken as
+# planned, so only half of a late night is counted as a late clock. Under 20
+# minutes is noise; over 3 hours the plan itself is wrong, not the clock.
+ADJUST_FRACTION = 0.5
+ADJUST_MIN_MINUTES = 20
+ADJUST_MAX_MINUTES = 180
+RECOVERY_SLACK = 10        # points below the pre-trip median still counts as recovered
 DEVICE_RE = re.compile(r"^[0-9a-fA-F-]{32,40}$")
 
 
@@ -329,6 +338,55 @@ def _parse(ts: str) -> datetime:
     return datetime.fromisoformat(ts.replace("Z", "+00:00"))
 
 
+def _offset(tzd: Optional[str]) -> timezone:
+    """WHOOP's timezone_offset ("+07:00", "-05:00", "Z") as a tzinfo."""
+    if not tzd or tzd == "Z":
+        return UTC
+    sign = -1 if tzd.startswith("-") else 1
+    h, m = tzd.lstrip("+-").split(":")
+    return timezone(sign * timedelta(hours=int(h), minutes=int(m)))
+
+
+def _clock_minutes(ts: str, tzd: Optional[str]) -> int:
+    local = _parse(ts).astimezone(_offset(tzd))
+    return local.hour * 60 + local.minute
+
+
+def _clock_median(minutes: List[int]) -> int:
+    """Median of clock times that may straddle midnight: 23:30 and 00:30 give 00:00, not 12:00."""
+    shifted = sorted((m - 720) % 1440 for m in minutes)   # measured from noon
+    mid = int(median(shifted))
+    return int(round(((mid + 720) % 1440) / 5.0) * 5) % 1440
+
+
+def _hm(minutes: int) -> str:
+    return f"{minutes // 60:02d}:{minutes % 60:02d}"
+
+
+def _remember_user_id(device: str, records: List[dict]) -> None:
+    """
+    WHOOP's webhooks name the member by user_id, not by our device id, so the
+    id is kept from the first record seen. The profile scope would give it
+    directly but asks the traveller for their name and email, which nothing
+    here needs.
+    """
+    uid = next((r.get("user_id") for r in records if r.get("user_id")), None)
+    if not uid:
+        return
+
+    def change(all_):
+        entry = all_.get(device)
+        if entry is not None and entry.get("user_id") != uid:
+            entry["user_id"] = uid
+        return all_
+
+    store.update(COLLECTION, {}, change)
+
+
+def device_for_user(user_id) -> Optional[str]:
+    return next((d for d, e in store.read(COLLECTION, {}).items() if e.get("user_id") == user_id), None)
+
+
 # --- what the app calls -------------------------------------------------------------------
 
 def status(device: str) -> dict:
@@ -345,8 +403,39 @@ def disconnect(device: str, now: Optional[float] = None) -> None:
     _forget(device)
 
 
+def baseline(device: str, now: Optional[datetime] = None) -> dict:
+    """
+    The traveller's usual bedtime, wake time and recovery, from their last
+    two weeks on WHOOP. The form's 23:00-07:00 is a guess; a plan for a
+    person whose real nights run 00:40-08:20 is 100 minutes off from its
+    first line. Clock times are taken on the zone each night was slept in.
+    """
+    check_device(device)
+    if not store.read(COLLECTION, {}).get(device):
+        raise NotConnected()
+    now = now or datetime.now(UTC)
+    t = now.timestamp()
+    start = now - timedelta(days=BASELINE_DAYS)
+    sleeps = [x for x in _collection(device, "/activity/sleep", start, now, t)
+              if not x.get("nap") and x.get("start") and x.get("end")]
+    recoveries = [r for r in _collection(device, "/recovery", start, now, t)
+                  if r.get("score_state") == "SCORED" and (r.get("score") or {}).get("recovery_score") is not None]
+    _remember_user_id(device, sleeps + recoveries)
+    out = {"days": BASELINE_DAYS, "nights": len(sleeps), "bed": None, "wake": None, "recovery": None}
+    if recoveries:
+        out["recovery"] = int(round(median(r["score"]["recovery_score"] for r in recoveries)))
+    if len(sleeps) >= 3:
+        out["bed"] = _hm(_clock_median([_clock_minutes(x["start"], x.get("timezone_offset")) for x in sleeps]))
+        out["wake"] = _hm(_clock_median([_clock_minutes(x["end"], x.get("timezone_offset")) for x in sleeps]))
+    return out
+
+
 def progress(device: str, plan: TripPlan, now: Optional[datetime] = None) -> dict:
-    """Each planned night next to the real one, and what to do about the gap."""
+    """
+    Each planned night next to the real one, what to do about the gap, how far
+    the plan should move to match last night, and whether the traveller is
+    back on local time yet.
+    """
     check_device(device)
     if not store.read(COLLECTION, {}).get(device):
         raise NotConnected()
@@ -355,18 +444,28 @@ def progress(device: str, plan: TripPlan, now: Optional[datetime] = None) -> dic
     planned = [e for e in plan.events if e.type == "sleep" and e.where in ("home", "destination") and e.end <= now]
     if not planned:
         return {"nights": [], "summary": "No planned nights have passed yet. Check back after your first night on the plan.",
-                "advice": [], "latest_recovery": None}
+                "advice": [], "latest_recovery": None, "adjustment": _no_adjustment(), "adaptation": None}
 
     start = min(e.start for e in planned) - timedelta(hours=12)
     end = min(now, max(e.end for e in planned) + timedelta(hours=12))
     sleeps = [s for s in _collection(device, "/activity/sleep", start, end, t)
               if not s.get("nap") and s.get("start") and s.get("end")]
-    recoveries = _collection(device, "/recovery", start, end + timedelta(hours=12), t)
+    # Recoveries from two weeks before the first night too: the pre-trip
+    # median is what "recovered" is measured against after arrival.
+    recoveries = _collection(device, "/recovery", start - timedelta(days=BASELINE_DAYS), end + timedelta(hours=12), t)
+    _remember_user_id(device, sleeps + recoveries)
     recovery_by_sleep: Dict[str, int] = {}
+    before_trip = []
     for r in recoveries:
         score = (r.get("score") or {}).get("recovery_score")
-        if r.get("score_state") == "SCORED" and r.get("sleep_id") and score is not None:
+        if r.get("score_state") != "SCORED" or score is None:
+            continue
+        if r.get("sleep_id"):
             recovery_by_sleep[str(r["sleep_id"])] = int(round(score))
+        created = r.get("created_at")
+        if created and _parse(created) < start:
+            before_trip.append(score)
+    baseline_recovery = int(round(median(before_trip))) if before_trip else None
 
     nights = []
     onsets = []
@@ -380,6 +479,7 @@ def progress(device: str, plan: TripPlan, now: Optional[datetime] = None) -> dic
                 best, best_overlap = s, overlap
         row = {
             "night_of": e.start.astimezone(tz).date().isoformat(),
+            "where": e.where,
             "planned_bed": e.start.astimezone(tz).strftime("%H:%M"),
             "planned_wake": e.end.astimezone(tz).strftime("%H:%M"),
             "local_tz": tz.key,
@@ -424,4 +524,66 @@ def progress(device: str, plan: TripPlan, now: Optional[datetime] = None) -> dic
         summary = "WHOOP has no sleep recorded for your planned nights yet."
     else:
         summary = f"{len(on_track)} of {len(tracked)} night{'s' if len(tracked) != 1 else ''} within an hour of the plan."
-    return {"nights": nights, "summary": summary, "advice": advice, "latest_recovery": latest_recovery}
+
+    still_to_come = any(e.start > now for e in plan.events if e.type not in ("flight", "stopover"))
+    latest_is_last = bool(tracked) and nights[-1]["tracked"]
+    adjustment = _adjustment(nights[-1]) if still_to_come and latest_is_last else _no_adjustment()
+
+    return {"nights": nights, "summary": summary, "advice": advice, "latest_recovery": latest_recovery,
+            "adjustment": adjustment, "adaptation": _adaptation(plan, nights, baseline_recovery)}
+
+
+def _no_adjustment() -> dict:
+    return {"minutes": 0, "night_of": None, "note": None}
+
+
+def _adjustment(last: dict) -> dict:
+    """How far the rest of the plan moves to match last night. See ADJUST_*."""
+    mid = (last["bed_minutes_late"] + last["wake_minutes_late"]) / 2
+    minutes = int(round(mid * ADJUST_FRACTION / 5.0) * 5)
+    minutes = max(-ADJUST_MAX_MINUTES, min(ADJUST_MAX_MINUTES, minutes))
+    if abs(minutes) < ADJUST_MIN_MINUTES:
+        return {"minutes": 0, "night_of": last["night_of"],
+                "note": "Last night was close enough to the plan: today's times stand."}
+    later = minutes > 0
+    slept = abs(int(round(mid)))
+    return {
+        "minutes": minutes,
+        "night_of": last["night_of"],
+        "note": (f"Last night you slept about {slept} min {'later' if later else 'earlier'} than planned, so your body clock "
+                 f"is running about {abs(minutes)} min {'later' if later else 'earlier'} than the plan assumes. "
+                 f"Today's times are moved {abs(minutes)} min {'later' if later else 'earlier'} to match."),
+    }
+
+
+def _adaptation(plan: TripPlan, nights: List[dict], baseline_recovery: Optional[int]) -> Optional[dict]:
+    """
+    Whether the traveller is back on local time, measured the way the plan
+    predicts it: sleeping within an hour of the local schedule two nights
+    running, with recovery not below their pre-trip usual. The plan's own
+    prediction sits next to it, which is the number that tells a traveller,
+    and us, whether the plan was right.
+    """
+    if plan.mode != "adapt":
+        return None
+    dest = [n for n in nights if n["where"] == "destination"]
+    if not dest:
+        return None
+
+    def recovered(n):
+        return n["tracked"] and n["on_track"] and (
+            n.get("recovery") is None or baseline_recovery is None or n["recovery"] >= baseline_recovery - RECOVERY_SLACK)
+
+    adapted_after = next((i + 1 for i in range(len(dest) - 1) if recovered(dest[i]) and recovered(dest[i + 1])), None)
+    tracked = len([n for n in dest if n["tracked"]])
+    predicted = plan.days_to_adapt_after_arrival
+    if adapted_after is not None:
+        verdict = (f"Back on local time after {adapted_after} night{'s' if adapted_after != 1 else ''}; "
+                   f"the plan expected {predicted}.")
+    elif tracked:
+        verdict = (f"Not yet on local time after {tracked} night{'s' if tracked != 1 else ''} there; "
+                   f"the plan expects {predicted}.")
+    else:
+        verdict = None
+    return {"nights_at_destination": tracked, "adapted_after_nights": adapted_after,
+            "predicted_nights": predicted, "baseline_recovery": baseline_recovery, "verdict": verdict}

@@ -437,19 +437,35 @@ def whoop_status(device: str = Query(...), _limit=Depends(app_rate_limit)):
     return whoop.status(device)
 
 
+_NOT_CONNECTED = {"error": {"code": "whoop_not_connected", "message": "WHOOP is not connected on this phone. Tap Connect WHOOP."}}
+
+
+@app.get("/app/whoop/baseline")
+def whoop_baseline(device: str = Query(...), _limit=Depends(app_rate_limit)):
+    """The traveller's usual nights from WHOOP, to start the plan from their real clock."""
+    try:
+        return whoop.baseline(device)
+    except whoop.NotConnected:
+        return JSONResponse(status_code=409, content=_NOT_CONNECTED)
+
+
 @app.post("/app/whoop/progress")
 def whoop_progress(req: ProgressRequest, request: Request, _limit=Depends(app_rate_limit)):
     try:
         out = whoop.progress(req.device, _plan(req.trip))
         tracked = [n for n in out.get("nights", []) if n.get("tracked")]
+        adaptation = out.get("adaptation") or {}
         analytics.track("whoop_progress_viewed", _as_device(request, req.device), {
             "nights_tracked": len(tracked),
             "nights_on_track": len([n for n in tracked if n.get("on_track")]),
+            "adjust_minutes": out["adjustment"]["minutes"],
+            # The product question, per trip: did it work, and was the prediction right.
+            "adapted_after_nights": adaptation.get("adapted_after_nights"),
+            "predicted_nights": adaptation.get("predicted_nights"),
         })
         return out
     except whoop.NotConnected:
-        return JSONResponse(status_code=409, content={"error": {
-            "code": "whoop_not_connected", "message": "WHOOP is not connected on this phone. Tap Connect WHOOP."}})
+        return JSONResponse(status_code=409, content=_NOT_CONNECTED)
 
 
 class FeedbackRequest(BaseModel):
