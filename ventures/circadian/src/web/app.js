@@ -475,8 +475,23 @@
 
   // --- WHOOP ------------------------------------------------------------------------------
 
-  async function renderWhoop(container, tripReq) {
+  // The WHOOP button in the header: always visible, so connecting doesn't
+  // depend on finding a card below a plan. Its label says what a tap does.
+  async function refreshWhoopButton() {
+    const button = $("whoop-button"), label = $("whoop-label");
+    let st;
+    try { st = await api(`app/whoop/status?device=${device()}`); } catch { return null; }
+    button.classList.toggle("connected", !!st.connected);
+    button.classList.toggle("ready", !!st.configured && !st.connected);
+    if (st.connected) { label.textContent = "WHOOP connected"; button.href = "#whoop-card"; }
+    else if (st.configured) { label.textContent = "Connect WHOOP"; button.href = `whoop/connect?device=${device()}`; }
+    else { label.textContent = "WHOOP"; button.href = "#whoop-card"; }
+    return st;
+  }
+
+  async function renderWhoop(container, tripReq, example = false) {
     const card = el("div", "card");
+    card.id = "whoop-card";
     card.appendChild(el("h2", "", "Progress from WHOOP"));
     const text = el("p", "", "Connect WHOOP to see each night you actually slept next to the plan.");
     card.appendChild(text);
@@ -490,7 +505,10 @@
     let st;
     try { st = await api(`app/whoop/status?device=${device()}`); } catch { return; }
     if (!st.configured) { text.textContent = "WHOOP is coming soon to Circadian."; button.hidden = true; return; }
-    if (!st.connected) return;
+    if (!st.connected) {
+      if (example) text.textContent = "Connect WHOOP now; once you plan your own trip, each night you actually slept shows up here next to the plan.";
+      return;
+    }
 
     button.textContent = "Disconnect WHOOP";
     button.href = "#";
@@ -499,7 +517,9 @@
       await api("app/whoop/disconnect", { device: device() }).catch(() => {});
       body.replaceChildren(); text.textContent = "WHOOP is disconnected. Nothing from it is kept here.";
       button.hidden = true;
+      refreshWhoopButton();
     });
+    if (example) { text.textContent = "WHOOP is connected. Plan your own trip and your real nights show up here next to the plan."; return; }
     text.textContent = "Checking your sleep…";
     try {
       const p = await api("app/whoop/progress", { device: device(), trip: tripReq });
@@ -712,10 +732,9 @@
     renderActions(out, req, plans);
     // Reminders and WHOOP take the whole trip, so a return or a second city
     // gets its reminders and its nights too.
-    if (!trip.example) {
-      renderReminders(out, req);
-      renderWhoop(out, req);
-    }
+    if (!trip.example) renderReminders(out, req);
+    // WHOOP shows on the example too: connecting is per phone, not per trip.
+    renderWhoop(out, req, !!trip.example);
     renderSupplements(out, supplements);
     for (const p of plans) renderPlan(out, p.title, p.plan);
     out.appendChild(el("p", "disclaimer", plans[0].plan.disclaimer));
@@ -742,6 +761,8 @@
     const msg = { connected: "WHOOP is connected. Your progress appears below your plan.", failed: "Connecting WHOOP did not work. Try again.", cancelled: "WHOOP was not connected." }[flag];
     if (msg) { const e = $("error"); e.textContent = msg; e.className = flag === "connected" ? "ok" : "error"; e.hidden = false; }
   }
+
+  refreshWhoopButton();
 
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 })();
