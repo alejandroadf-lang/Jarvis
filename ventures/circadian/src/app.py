@@ -29,7 +29,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from src import analytics, push, store, whoop
+from src import advice, analytics, push, store, whoop
 from src.auth import RateLimiter, auth_and_rate_limit
 from src.ics import plan_to_ics
 from src.itinerary import merge_plans, plan_itinerary, plan_to_dict, plan_trip
@@ -251,9 +251,10 @@ def app_plan(req: TripRequest, request: Request, _limit=Depends(app_rate_limit))
 @app.post("/app/itinerary", responses={400: {"model": ErrorResponse}})
 def app_itinerary(req: TripRequest, request: Request, _limit=Depends(app_rate_limit)):
     """The same trip as one plan per journey, which is how the page shows it."""
-    plans = [plan_to_dict(p) for p in _plans(req)]
+    raw = _plans(req)
+    plans = [plan_to_dict(p) for p in raw]
     _count_plan(req, request, plans[0])
-    return {"journeys": plans}
+    return {"journeys": plans, "supplements": advice.supplements(raw)}
 
 
 @app.get("/app/plan.ics")

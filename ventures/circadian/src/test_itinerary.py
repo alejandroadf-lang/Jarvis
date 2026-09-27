@@ -456,3 +456,57 @@ def test_describe_can_run_twice_without_doubling_up():
     before = [e.note for e in plan.events]
     advice.describe(plan)
     assert [e.note for e in plan.events] == before
+
+
+# --- the plan in brief, and supplements -----------------------------------------------------
+
+from src.itinerary import plan_itinerary as _plan_itinerary  # noqa: E402
+
+
+def _round_trip():
+    leg_ = lambda a, b, d, r: [{"departure": d, "departure_tz": a, "arrival": r, "arrival_tz": b}]
+    return _plan_itinerary([leg_("Europe/London", "Asia/Tokyo", "2026-10-10T19:00", "2026-10-11T15:00"),
+                            leg_("Asia/Tokyo", "Europe/London", "2026-10-24T11:00", "2026-10-24T15:30")])
+
+
+def test_the_brief_is_built_from_this_trip():
+    out, back = _round_trip()
+    brief = {b["title"]: b["text"] for b in advice.briefing(out)}
+    assert "8 hours earlier" in brief and "harder direction" in brief["8 hours earlier"]
+    assert "Tokyo time by" in brief["8 hours earlier"]
+    assert "22:00, then 21:00" in brief["Before you fly"]
+    assert "Tokyo time" in brief["On the plane"] and "alcohol" in brief["On the plane"]
+    first_light = next(e for e in out.events if e.type == "light_seek" and e.where == "destination")
+    assert first_light.start.astimezone(ZoneInfo("Asia/Tokyo")).strftime("%H:%M") in brief["Your most important light"]
+
+
+def test_exercise_timing_follows_the_direction():
+    out, back = _round_trip()
+    east = {b["title"]: b["text"] for b in advice.briefing(out)}["Exercise"]
+    west = {b["title"]: b["text"] for b in advice.briefing(back)}["Exercise"]
+    assert "earlier" in east and "Avoid exercising between 19:00 and 22:00" in east
+    assert "between 19:00 and 22:00 local time helps move your clock later" in west
+
+
+def test_the_brief_is_in_the_json():
+    from src.itinerary import plan_to_dict
+    assert plan_to_dict(lhr_to_hnd())["briefing"][0]["title"].endswith("earlier")
+
+
+def test_supplements_are_graded_dated_and_cautioned():
+    plans = _round_trip()
+    out = advice.supplements(plans)
+    items = {s["name"]: s for s in out["items"]}
+    assert items["Melatonin"]["evidence"] == "Good evidence"
+    assert "Thu 8 Oct" in items["Melatonin"]["when"] and "0.5 to 5 mg" in items["Melatonin"]["why"]
+    assert "Prescription" in items["Melatonin"]["caution"]
+    assert "Sat 3 Oct" in items["Vitamin C"]["when"], "a week before the first flight"
+    assert "nasal" in items["Zinc lozenges"]["caution"]
+    assert any(s["evidence"] == "No evidence for jet lag" for s in out["items"]), "says what not to take"
+    assert "Not medical advice" in out["caution"]
+
+
+def test_melatonin_is_not_suggested_for_a_westward_trip():
+    west = [bkk_to_cdg()]
+    mel = next(s for s in advice.supplements(west)["items"] if s["name"] == "Melatonin")
+    assert mel["evidence"] == "Not for this trip"

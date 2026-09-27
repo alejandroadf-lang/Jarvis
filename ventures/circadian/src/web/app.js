@@ -352,6 +352,20 @@
     head.appendChild(stats);
     container.appendChild(head);
 
+    // The few things that matter most for this flight, before the day list.
+    if (plan.briefing?.length) {
+      const brief = el("div", "card brief");
+      brief.appendChild(el("h2", "", "Your plan in brief"));
+      const list = el("div", "brief-list");
+      for (const b of plan.briefing) {
+        const item = el("div", "brief-item");
+        item.append(el("b", "", b.title), el("p", "", b.text));
+        list.appendChild(item);
+      }
+      brief.appendChild(list);
+      container.appendChild(brief);
+    }
+
     const groups = new Map();
     for (const e of plan.events) {
       const key = `${e.start_local.slice(0, 10)}|${e.local_tz}`;
@@ -609,23 +623,46 @@
     try { req = toRequest(trip); } catch (err) { if (!quiet) { error.textContent = err.message; error.hidden = false; } return; }
     const button = $("go"); button.disabled = true; button.textContent = "Making your plan…";
     try {
-      const { journeys } = await api("app/itinerary", req, quiet ? {} : { "x-circadian-intent": "submit" });
+      const { journeys, supplements } = await api("app/itinerary", req, quiet ? {} : { "x-circadian-intent": "submit" });
       const plans = journeys.map((plan, i) => ({
         title: (journeys.length > 1 ? `Flight ${i + 1}: ` : "") + `${cityOf(plan.home_tz)} to ${cityOf(plan.destination_tz)}`,
         plan,
       }));
-      save("circadian.plans.v3", { req, plans });
-      show(plans, trip, req);
+      save("circadian.plans.v3", { req, plans, supplements });
+      show(plans, trip, req, supplements);
     } catch (err) {
       const cached = load("circadian.plans.v3", null);
-      if (cached && !navigator.onLine) show(cached.plans, trip, cached.req);
+      if (cached && !navigator.onLine) show(cached.plans, trip, cached.req, cached.supplements);
       else if (!quiet) { error.textContent = err.message; error.hidden = false; }
     } finally {
       button.disabled = false; button.textContent = "Make my plan";
     }
   }
 
-  function show(plans, trip, req) {
+  // Graded by the evidence for this use; the grade is the first thing read.
+  const GRADE = (evidence) => /^good/i.test(evidence) ? "good" : /^some/i.test(evidence) ? "some"
+    : /^weak/i.test(evidence) ? "weak" : "none";
+
+  function renderSupplements(container, supplements) {
+    if (!supplements?.items?.length) return;
+    const card = el("div", "card supplements");
+    card.appendChild(el("h2", "", "Supplements for this trip"));
+    card.appendChild(el("p", "", "What the evidence supports, with your dates. Only melatonin has good evidence for jet lag itself."));
+    for (const s of supplements.items) {
+      const item = el("div", "supp");
+      const head = el("div", "supp-head");
+      head.append(el("b", "", s.name), el("span", `pill grade-${GRADE(s.evidence)}`, s.evidence));
+      item.appendChild(head);
+      item.appendChild(el("p", "supp-when", s.when));
+      item.appendChild(el("p", "", s.why));
+      if (s.caution) item.appendChild(el("p", "supp-caution", s.caution));
+      card.appendChild(item);
+    }
+    card.appendChild(el("p", "disclaimer", supplements.caution));
+    container.appendChild(card);
+  }
+
+  function show(plans, trip, req, supplements) {
     const out = $("result"); out.replaceChildren();
     renderNow(out, plans);
     renderActions(out, req, plans);
@@ -635,6 +672,7 @@
       renderReminders(out, req);
       renderWhoop(out, req);
     }
+    renderSupplements(out, supplements);
     for (const p of plans) renderPlan(out, p.title, p.plan);
     out.appendChild(el("p", "disclaimer", plans[0].plan.disclaimer));
   }

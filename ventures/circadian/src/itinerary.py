@@ -670,6 +670,7 @@ def plan_to_dict(plan: TripPlan) -> dict:
         "days_to_adapt_after_arrival": plan.days_to_adapt_after_arrival,
         "adapted_by": plan.adapted_by.isoformat() if plan.adapted_by else None,
         "summary": plan.summary,
+        "briefing": advice.briefing(plan),
         "events": out,
         "disclaimer": plan.disclaimer,
     }
