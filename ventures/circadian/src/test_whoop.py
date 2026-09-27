@@ -416,3 +416,71 @@ def test_the_week_before_a_trip_is_read_from_whoop_and_turned_into_advice(fake):
     rested = whoop.pretrip_advice({"nights": 10, "debt_hours": 0.2, "asleep_hours": 7.4, "recovery_week": 63, "recovery": 60}, 5)
     assert rested == ["You are going in rested: recovery 63% against your usual 60%, 7.4 h asleep a night. Keep your usual bedtime until the plan starts."]
     assert "Not enough nights" in whoop.pretrip_advice({"nights": 2}, 5)[0]
+
+
+def _scored(i, n, late_bed, late_wake, hrv, rhr, rec, asleep=6.0, need=7.6, debt=1.4, temp=33.7):
+    sleep = sleep_record(i, n.start + timedelta(minutes=late_bed), n.end + timedelta(minutes=late_wake))
+    sleep["score"].update(
+        stage_summary={"total_in_bed_time_milli": int((asleep + 0.5) * 3.6e6), "total_awake_time_milli": int(0.5 * 3.6e6),
+                       "total_no_data_time_milli": 0, "total_rem_sleep_time_milli": int(1.1 * 3.6e6),
+                       "total_slow_wave_sleep_time_milli": int(1.4 * 3.6e6), "disturbance_count": 9},
+        sleep_needed={"baseline_milli": int(need * 3.6e6), "need_from_sleep_debt_milli": int(debt * 3.6e6),
+                      "need_from_recent_strain_milli": 0, "need_from_recent_nap_milli": 0},
+        sleep_consistency_percentage=61.0, sleep_efficiency_percentage=90.4, respiratory_rate=15.8)
+    recovery = {"sleep_id": f"s{i}", "score_state": "SCORED", "created_at": (n.end + timedelta(minutes=5)).isoformat(),
+                "score": {"recovery_score": rec, "hrv_rmssd_milli": hrv, "resting_heart_rate": rhr,
+                          "spo2_percentage": 96.2, "skin_temp_celsius": temp}}
+    return sleep, recovery
+
+
+def test_this_morning_is_read_against_the_travellers_own_baseline(fake):
+    plan = trip()
+    connect(fake)
+    nights = [e for e in plan.events if e.type == "sleep" and e.where == "destination"]
+    first = nights[0].start
+    # Two weeks before: HRV around 45, resting heart rate 54, skin 33.7.
+    for d in range(1, 8):
+        fake.recoveries.append({"score_state": "SCORED", "created_at": (first - timedelta(days=d)).isoformat(),
+                                "score": {"recovery_score": 60 + d % 3, "hrv_rmssd_milli": 44 + d % 3,
+                                          "resting_heart_rate": 54, "skin_temp_celsius": 33.7}})
+    sleep, recovery = _scored(1, nights[0], 90, 50, hrv=31, rhr=60, rec=52)
+    fake.sleeps.append(sleep); fake.recoveries.append(recovery)
+    out = whoop.progress(DEVICE, plan, now=nights[0].end + timedelta(hours=2))
+
+    assert out["baseline"] == {"recovery": 61, "hrv": 45, "rhr": 54, "skin_temp": 33.7}
+    w = out["nights"][-1]["whoop"]
+    assert w["asleep_hours"] == 6.0 and w["need_hours"] == 7.6 and w["debt_hours"] == 1.4 and w["need_total_hours"] == 9.0
+    assert w["rem_hours"] == 1.1 and w["deep_hours"] == 1.4 and w["disturbances"] == 9
+    assert w["hrv"] == 31 and w["rhr"] == 60 and w["spo2"] == 96.2 and w["skin_temp"] == 33.7
+    assert w["consistency"] == 61 and w["efficiency"] == 90 and w["resp_rate"] == 15.8
+    assert out["insight"] == ("Recovery 52%, HRV 31 ms against your usual 45 and resting heart rate 60 against your usual 54: "
+                              "your body is still working through the shift. Today the light window and the nap matter more "
+                              "than usual; keep training easy. You slept 6 h of the 9 h WHOOP says you needed.")
+    # Tonight: the plan's 8 h does not cover 7.6 h baseline plus 3 h of debt left, so lights out earlier,
+    # the wake kept (moved 35 min later with the rest of the plan after last night's late sleep).
+    t = out["tonight"]
+    assert out["adjustment"]["minutes"] == 35
+    assert t["planned_hours"] == 8.0 and t["debt_left_hours"] == 3.0 and t["need_hours"] == 8.6
+    assert t["wake"] == "07:35" and t["bed_by"] == "22:59"
+    assert t["note"] == "Lights out by 22:59 to be up at 07:35: the 7.6 h WHOOP says you need, plus 1 h toward 3 h of sleep debt."
+
+
+def test_a_green_morning_and_a_feverish_one_read_differently(fake):
+    plan = trip()
+    connect(fake)
+    nights = [e for e in plan.events if e.type == "sleep" and e.where == "destination"]
+    first = nights[0].start
+    for d in range(1, 6):
+        fake.recoveries.append({"score_state": "SCORED", "created_at": (first - timedelta(days=d)).isoformat(),
+                                "score": {"recovery_score": 62, "hrv_rmssd_milli": 45, "resting_heart_rate": 54, "skin_temp_celsius": 33.7}})
+    sleep, recovery = _scored(1, nights[0], 5, 5, hrv=47, rhr=53, rec=74, asleep=7.9, debt=0.0)
+    fake.sleeps.append(sleep); fake.recoveries.append(recovery)
+    out = whoop.progress(DEVICE, plan, now=nights[0].end + timedelta(hours=2))
+    assert out["insight"] == "Recovery 74%: your body is taking the shift well. Keep to the plan."
+    assert out["tonight"]["note"] == "Bed 23:00, up 07:00 (8 h, which covers WHOOP's need of 7.6 h)."
+
+    sleep2, recovery2 = _scored(2, nights[1], 5, 5, hrv=40, rhr=63, rec=40, asleep=7.0, debt=0.0, temp=34.4)
+    fake.sleeps.append(sleep2); fake.recoveries.append(recovery2)
+    out = whoop.progress(DEVICE, plan, now=nights[1].end + timedelta(hours=2))
+    assert "resting heart rate 63 against your usual 54" in out["insight"]
+    assert out["insight"].endswith("A raised temperature or heart rate can also be a cold coming on; if you feel off, that is not the jet lag.")

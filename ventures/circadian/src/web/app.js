@@ -441,29 +441,6 @@
     container.appendChild(actions);
   }
 
-  function renderNow(container, plans) {
-    const now = new Date();
-    const upcoming = plans.flatMap((p) => p.plan.events)
-      .filter((e) => e.type !== "flight" && e.type !== "stopover" && new Date(e.end || e.start) > now)
-      .sort((a, b) => new Date(a.start) - new Date(b.start)).slice(0, 3);
-    if (!upcoming.length) return;
-    const card = el("div", "card upcoming");
-    card.appendChild(el("h2", "", "Coming up"));
-    // Three rows can span two days and two cities, and a bare "21:00" left
-    // the traveller asking which day it meant: head each day as the full plan does.
-    let box, shown;
-    for (const e of upcoming) {
-      const key = `${e.start_local.slice(0, 10)}|${e.local_tz}`;
-      if (key !== shown) {
-        shown = key;
-        card.appendChild(el("h3", "", dayTitle(e.start_local, e.local_tz, now)));
-        box = card.appendChild(el("div", "events"));
-      }
-      box.appendChild(eventRow(e, now));
-    }
-    container.appendChild(card);
-  }
-
   // --- reminders ------------------------------------------------------------------------
 
   const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
@@ -815,22 +792,44 @@
     }) } }));
   }
 
+  // A collapsible section of the page below Today, opened by its button.
+  function fold(id, title) {
+    const d = el("details", "fold"); d.id = id;
+    d.appendChild(el("summary", "", title));
+    return d;
+  }
+
   function show(plans, trip, req, supplements, progress = null) {
     const minutes = progress?.adjustment?.minutes || 0;
     const shown = minutes ? shiftPlans(plans, minutes) : plans;
     renderToday(shown, trip, progress);
     const out = $("result"); out.replaceChildren();
+    const whoopOpts = { progress, rerender: (p) => show(plans, trip, req, supplements, p) };
+    if (trip.example) {
+      // A first visit: the plan itself is the point, with WHOOP as an offer.
+      renderActions(out, req, shown);
+      renderWhoop(out, req, true, whoopOpts);
+      renderSupplements(out, supplements);
+      for (const p of shown) renderPlan(out, p.title, p.plan, minutes);
+      out.appendChild(el("p", "disclaimer", shown[0].plan.disclaimer));
+      return;
+    }
     renderRating(out, shown, trip);
-    renderNow(out, shown);
-    renderActions(out, req, shown);
-    // Reminders and WHOOP take the whole trip, so a return or a second city
-    // gets its reminders and its nights too.
-    if (!trip.example) renderReminders(out, req);
-    // WHOOP shows on the example too: connecting is per phone, not per trip.
-    renderWhoop(out, req, !!trip.example, { progress, rerender: (p) => show(plans, trip, req, supplements, p) });
-    renderSupplements(out, supplements);
-    for (const p of shown) renderPlan(out, p.title, p.plan, minutes);
-    out.appendChild(el("p", "disclaimer", shown[0].plan.disclaimer));
+    // Once there is a trip, Today says what matters; the rest waits behind three folds.
+    const history = fold("history", "History: your body clock and every night");
+    const graphBox = el("div", "graph"); history.appendChild(graphBox);
+    renderClockGraph(graphBox, shown, progress);
+    renderWhoop(history, req, false, whoopOpts);
+    out.appendChild(history);
+    const full = fold("fullplan", "Full plan");
+    renderActions(full, req, shown);
+    renderSupplements(full, supplements);
+    for (const p of shown) renderPlan(full, p.title, p.plan, minutes);
+    full.appendChild(el("p", "disclaimer", shown[0].plan.disclaimer));
+    out.appendChild(full);
+    const reminders = fold("reminders", "Reminders");
+    renderReminders(reminders, req);
+    out.appendChild(reminders);
   }
 
   // --- today -------------------------------------------------------------------------------
@@ -881,6 +880,14 @@
     return `${n} h ${h > 0 ? "ahead of" : "behind"} ${city} time`;
   }
 
+  // The plan whose span holds this moment: on a return, the leg you are on.
+  function currentPlan(plans, t) {
+    return plans.find((p) => { const c = p.plan.clock || []; return c.length && t >= new Date(c[0].at).getTime() && t <= new Date(c.at(-1).at).getTime(); })
+      || plans.find((p) => (p.plan.clock || []).length && t < new Date(p.plan.clock[0].at).getTime()) || plans.at(-1);
+  }
+
+  const recoveryBand = (r) => (r == null ? "" : r >= 67 ? "green" : r < 34 ? "red" : "yellow");
+
   function renderToday(plans, trip, progress) {
     const card = $("today");
     const points = clockPoints(plans);
@@ -892,53 +899,82 @@
     $("trip-card").hidden = !editing;
     card.replaceChildren();
     const now = new Date(), t = now.getTime();
-
     const t0 = points[0].t, t1 = points.at(-1).t;
     const total = Math.max(1, Math.ceil((t1 - t0) / DAY_MS));
     const dayNo = Math.floor((t - t0) / DAY_MS) + 1;
+    const zone = zoneAt(points, t);
+    const cur = currentPlan(plans, t).plan;
+    const nights = (progress?.nights || []).filter((n) => n.tracked && n.clock_measured != null);
+    const lastNight = nights.at(-1);
+    const measuredRecent = lastNight && t - new Date(lastNight.clock_at).getTime() < 30 * 36e5;
+    const connected = $("whoop-button").classList.contains("connected");
+
     const head = el("div", "today-head");
     head.appendChild(el("h2", "", tripInfo(trip).route));
     head.appendChild(el("span", "day", t < t0 ? `Starts in ${Math.ceil((t0 - t) / DAY_MS)} day${Math.ceil((t0 - t) / DAY_MS) === 1 ? "" : "s"}`
-      : t > t1 ? "Trip over" : `Day ${dayNo} of ${total} · ${cityOfZone(zoneAt(points, t))}`));
+      : t > t1 ? "Trip over" : `Day ${dayNo} of ${total} · ${cityOfZone(zone)}`));
     card.appendChild(head);
 
-    const nights = (progress?.nights || []).filter((n) => n.tracked && n.clock_measured != null);
-    const caption = el("p", "chart-caption");
-    const tz = zoneAt(points, t);
-    const planned = planAt(points, t);
-    const lastNight = nights.at(-1);
-    const measuredRecent = lastNight && t - new Date(lastNight.clock_at).getTime() < 30 * 36e5;
-    caption.textContent = t < t0 ? `Your body is ${describeHours(0, points[0].local_tz)}. The plan starts moving it on ${shortDate(points[0].at)}.`
-      : measuredRecent ? `Last night your body was ${describeHours(lastNight.clock_measured, lastNight.local_tz)}; the plan expected ${describeHours(lastNight.clock_planned, lastNight.local_tz)}.`
-      : `By the plan, your body is now ${describeHours(planned, tz)}.`;
-    card.appendChild(clockChart(points, nights, now, caption));
-    const legend = el("p", "legend");
-    const a = el("span"); a.append(el("i"), document.createTextNode("Plan"));
-    const b = el("span"); b.append(el("b"), document.createTextNode(nights.length ? "WHOOP nights" : "WHOOP nights (none yet)"));
-    legend.append(a, b);
-    card.appendChild(legend);
-    card.appendChild(caption);
-
-    // Last night, in one row.
-    const ln = el("div", "lastnight");
-    if (lastNight && measuredRecent) {
-      const late = Math.round((lastNight.bed_minutes_late + lastNight.wake_minutes_late) / 2);
-      ln.appendChild(el("div", "", `Last night: slept ${lastNight.actual_bed}–${lastNight.actual_wake}` +
-        (Math.abs(late) < 15 ? ", on the plan" : `, ${Math.abs(late)} min ${late > 0 ? "later" : "earlier"} than planned`)));
-      const bits = [];
-      if (lastNight.recovery != null) bits.push(`recovery ${lastNight.recovery}%`);
-      if (lastNight.sleep_performance != null) bits.push(`sleep ${lastNight.sleep_performance}%`);
-      if (progress?.adjustment?.minutes) bits.push(`today's times moved ${Math.abs(progress.adjustment.minutes)} min ${progress.adjustment.minutes > 0 ? "later" : "earlier"}`);
-      if (bits.length) ln.appendChild(el("small", "", bits.join(" · ")));
-    } else if ($("whoop-button").classList.contains("connected")) {
-      ln.appendChild(el("small", "", t < t0 ? "Nights on the plan will show here, from WHOOP, each morning." : "WHOOP has not scored last night yet."));
-    } else {
-      ln.appendChild(el("small", "", "Connect WHOOP and each night you actually slept lands on this graph."));
+    // 1. Where the body clock is: one line and a bar from home to there.
+    const hoursNow = measuredRecent ? lastNight.clock_measured : planAt(points, t);
+    const home = cur.home_tz, dest = cur.destination_tz;
+    // Hours off the destination's clock, whichever clock the line is on right now.
+    const offDest = zone === dest ? hoursNow : hoursNow - (cur.local_time_difference_hours ?? cur.time_difference_hours);
+    const span = Math.max(Math.abs(cur.shift_hours || cur.time_difference_hours || 0), 0.01);
+    const progressPct = Math.max(0, Math.min(100, Math.round((1 - Math.abs(offDest) / span) * 100)));
+    const hero = el("div", "hero");
+    const adapted = progress?.adaptation?.adapted_after_nights;
+    hero.appendChild(el("p", "hero-line", t < t0 ? `Your body is on ${cityOfZone(home)} time.`
+      : adapted ? `You are back on ${cityOfZone(dest)} time.` : `Your body is ${describeHours(hoursNow, zone)}.`));
+    if (span > 0.5 && home !== dest) {
+      const bar = el("div", "clockbar");
+      bar.appendChild(el("span", "", cityOfZone(home)));
+      const track = el("div", "track");
+      const fill = el("div", "fill"); fill.style.width = `${progressPct}%`; track.appendChild(fill);
+      bar.append(track, el("span", "", cityOfZone(dest)));
+      hero.appendChild(bar);
     }
-    card.appendChild(ln);
+    const sub = [];
+    if (measuredRecent) sub.push(`plan expected ${describeHours(lastNight.clock_planned, lastNight.local_tz)}`);
+    if (t < t0) sub.push(`the plan starts moving it on ${shortDate(points[0].at)}`);
+    else if (!adapted && cur.adapted_by && cur.mode === "adapt") sub.push(`on ${cityOfZone(dest)} time by ${shortDate(cur.adapted_by)}`);
+    if (sub.length) hero.appendChild(el("p", "hero-sub", sub.join(" · ")));
+    card.appendChild(hero);
+
+    // 2. What WHOOP says this morning: four tiles and one sentence.
+    if (measuredRecent) {
+      const w = lastNight.whoop || {}, b = progress.baseline || {};
+      const tiles = el("div", "tiles");
+      const tile = (label, value, sub, cls = "") => {
+        const d = el("div", `tile ${cls}`);
+        d.append(el("small", "", label), el("b", "", value));
+        if (sub) d.appendChild(el("span", "", sub));
+        return d;
+      };
+      if (lastNight.recovery != null) tiles.appendChild(tile("Recovery", `${lastNight.recovery}%`, b.recovery != null ? `yours ${b.recovery}%` : "", recoveryBand(lastNight.recovery)));
+      if (w.hrv != null) tiles.appendChild(tile("HRV", `${w.hrv} ms`, b.hrv != null ? `yours ${b.hrv}` : ""));
+      if (w.rhr != null) tiles.appendChild(tile("Resting HR", `${w.rhr}`, b.rhr != null ? `yours ${b.rhr}` : ""));
+      if (w.asleep_hours != null) tiles.appendChild(tile("Sleep", `${w.asleep_hours} h`, w.need_total_hours != null ? `of ${w.need_total_hours} h needed` : `${lastNight.actual_bed}–${lastNight.actual_wake}`));
+      if (tiles.childElementCount) card.appendChild(tiles);
+      const late = Math.round((lastNight.bed_minutes_late + lastNight.wake_minutes_late) / 2);
+      const bits = [`Slept ${lastNight.actual_bed}–${lastNight.actual_wake}` + (Math.abs(late) < 15 ? ", on the plan" : `, ${Math.abs(late)} min ${late > 0 ? "later" : "earlier"} than planned`)];
+      if (w.rem_hours != null) bits.push(`REM ${w.rem_hours} h · deep ${w.deep_hours} h`);
+      if (w.skin_temp != null) bits.push(`skin ${w.skin_temp}°C`);
+      if (w.spo2 != null) bits.push(`SpO₂ ${w.spo2}%`);
+      card.appendChild(el("p", "night-line", bits.join(" · ")));
+      if (progress.insight) card.appendChild(el("p", "insight", progress.insight));
+      if (progress.adjustment?.minutes) card.appendChild(el("p", "adjusted", `Today's times are moved ${Math.abs(progress.adjustment.minutes)} min ${progress.adjustment.minutes > 0 ? "later" : "earlier"} to match your clock.`));
+    } else if (connected && t >= t0 && t <= t1) {
+      card.appendChild(el("p", "night-line", "WHOOP has not scored last night yet. This fills in when it has."));
+    } else if (!connected) {
+      const p = el("p", "night-line");
+      const a = el("a", "", "Connect WHOOP"); a.href = `whoop/connect?device=${device()}`;
+      p.append(a, document.createTextNode(" and each morning shows recovery, HRV, sleep against need, and what they mean for today."));
+      card.appendChild(p);
+    }
 
     // Before the trip: how rested you are going in, from the last week on WHOOP.
-    if (t < t0 && $("whoop-button").classList.contains("connected")) {
+    if (t < t0 && connected) {
       const pre = el("div", "pretrip");
       pre.appendChild(el("h3", "", "Before you fly"));
       const body = el("p", "", "Reading your last week on WHOOP…");
@@ -946,55 +982,23 @@
       card.appendChild(pre);
       getBaseline(Math.ceil((t0 - t) / DAY_MS)).then((b) => {
         if (!b || b.nights === undefined) return;
-        const facts = [];
-        if (b.recovery_week != null) facts.push(`recovery ${b.recovery_week}% this week` + (b.recovery != null ? ` (usual ${b.recovery}%)` : ""));
-        if (b.asleep_hours != null) facts.push(`${b.asleep_hours} h asleep a night`);
-        if (b.debt_hours != null) facts.push(`sleep debt ${b.debt_hours} h`);
+        const tiles = el("div", "tiles");
+        const tile = (label, value, sub) => { const d = el("div", "tile"); d.append(el("small", "", label), el("b", "", value)); if (sub) d.appendChild(el("span", "", sub)); return d; };
+        if (b.recovery_week != null) tiles.appendChild(tile("Recovery", `${b.recovery_week}%`, b.recovery != null ? `usual ${b.recovery}%` : "this week"));
+        if (b.asleep_hours != null) tiles.appendChild(tile("Sleep", `${b.asleep_hours} h`, "a night, this week"));
+        if (b.debt_hours != null) tiles.appendChild(tile("Sleep debt", `${b.debt_hours} h`, "per WHOOP"));
         body.replaceChildren();
-        if (facts.length) pre.insertBefore(el("p", "facts", facts.join(" · ")), body);
+        if (tiles.childElementCount) pre.insertBefore(tiles, body);
         for (const a of b.advice || []) body.appendChild(el("span", "advice", a));
       }).catch(() => { body.textContent = "WHOOP did not answer just now."; });
     }
 
-    // How sharp do you feel: one tap a morning, next to WHOOP's number.
-    if (t >= t0 && t <= t1 + 3 * DAY_MS) {
-      const feels = load(FEEL, {});
-      const todayLocal = new Intl.DateTimeFormat("sv-SE", { timeZone: zoneAt(points, t) }).format(now);
-      const feel = el("div", "feel");
-      if (feels[todayLocal]) {
-        feel.appendChild(el("p", "", `This morning you feel ${feels[todayLocal]}/5`
-          + (lastNight?.recovery != null && measuredRecent ? ` · WHOOP recovery ${lastNight.recovery}%` : "") + "."));
-      } else {
-        feel.appendChild(el("p", "", "How sharp do you feel this morning?"));
-        const scale = el("div", "rating feel-scale");
-        ["1 foggy", "2", "3", "4", "5 sharp"].forEach((label, i) => {
-          const b = el("button", "secondary", label); b.type = "button";
-          b.addEventListener("click", () => {
-            const all = load(FEEL, {}); all[todayLocal] = i + 1; save(FEEL, all);
-            api("app/log", { device: device(), kind: "feel", value: String(i + 1), day: todayLocal,
-              recovery: measuredRecent ? lastNight?.recovery ?? null : null, day_number: dayNo }).catch(() => {});
-            renderToday(plans, trip, progress);
-          });
-          scale.appendChild(b);
-        });
-        feel.appendChild(scale);
-      }
-      card.appendChild(feel);
-      const rated = Object.entries(feels).filter(([d]) => new Date(d + "T12:00:00Z").getTime() >= t0 - DAY_MS).sort();
-      if (rated.length > 1) {
-        card.appendChild(el("p", "mornings", "Mornings: " + rated.slice(-7).map(([d, n]) => `${shortDate(d).replace(/^\w+, /, "")} ${n}/5`).join(" · ")));
-      }
-    }
-
-    // Today's moments, on the clock where the traveller is.
-    const zone = zoneAt(points, t);
+    // 3. Today's moments, on the clock where the traveller is, with Done / Skip.
     const todayKey = new Intl.DateTimeFormat("sv-SE", { timeZone: zone }).format(now);
     const all = plans.flatMap((p) => p.plan.events).sort((x, y) => new Date(x.start) - new Date(y.start));
-    const moments = all.filter((e) => !["flight", "stopover", "fog"].includes(e.type) && e.local_tz === zone && e.start_local.slice(0, 10) === todayKey);
-    // Tonight's bed belongs to today even when it falls after midnight.
-    const bed = all.find((e) => e.type === "sleep" && ["home", "destination"].includes(e.where) && new Date(e.start) > now && new Date(e.start) - now < 30 * 36e5);
-    if (bed && !moments.includes(bed)) moments.push(bed);
-    if (moments.length) {
+    const moments = all.filter((e) => !["flight", "stopover", "fog", "sleep"].includes(e.type) && e.local_tz === zone && e.start_local.slice(0, 10) === todayKey);
+    const tonight = progress?.tonight;
+    if (moments.length || tonight) {
       card.appendChild(el("h3", "", `Today · ${cityOfZone(zone)} time`));
       const list = el("div", "moments");
       const log = load(LOG, {});
@@ -1007,13 +1011,12 @@
         if (e.end_local) time.appendChild(document.createTextNode(`–${hm(e.end_local)}`));
         row.append(time, el("span", "", (live ? "Now: " : "") + (LABELS[e.type] || e.type)));
         if (ACTIONABLE.includes(e.type) && (past || live)) {
-          // One tap: did you do it. Only once it is under way; there is nothing to report before.
           const mark = el("div", "mark");
           for (const [value, label] of [["done", "Done"], ["skipped", "Skip"]]) {
             const b = el("button", value === state ? "on" : "", label); b.type = "button";
             b.setAttribute("aria-pressed", String(value === state));
             b.addEventListener("click", () => {
-              const all = load(LOG, {}); all[momentKey(e)] = value; save(LOG, all);
+              const all2 = load(LOG, {}); all2[momentKey(e)] = value; save(LOG, all2);
               api("app/log", { device: device(), kind: "moment", type: e.type, value, day_number: dayNo }).catch(() => {});
               renderToday(plans, trip, progress);
             });
@@ -1023,9 +1026,42 @@
         }
         list.appendChild(row);
       }
+      if (tonight?.note) {
+        const row = el("div", "moment t-sleep tonight");
+        row.append(el("time", "", tonight.bed_by || tonight.bed), el("span", "", "Tonight: " + tonight.note));
+        list.appendChild(row);
+      } else {
+        const bed = all.find((e) => e.type === "sleep" && ["home", "destination"].includes(e.where) && new Date(e.start) > now && new Date(e.start) - now < 30 * 36e5);
+        if (bed) { const row = el("div", "moment t-sleep"); row.append(el("time", "", `${hm(bed.start_local)}–${hm(bed.end_local)}`), el("span", "", "Sleep")); list.appendChild(row); }
+      }
       card.appendChild(list);
     } else if (t >= t0 && t <= t1) {
       card.appendChild(el("p", "", "Nothing more on the plan today."));
+    }
+
+    // 4. How sharp do you feel: one tap a morning.
+    if (t >= t0 && t <= t1 + 3 * DAY_MS) {
+      const feels = load(FEEL, {});
+      const feel = el("div", "feel");
+      if (feels[todayKey]) {
+        feel.appendChild(el("p", "", `This morning you feel ${feels[todayKey]}/5`
+          + (lastNight?.recovery != null && measuredRecent ? ` · WHOOP recovery ${lastNight.recovery}%` : "") + "."));
+      } else {
+        feel.appendChild(el("p", "", "How sharp do you feel this morning?"));
+        const scale = el("div", "rating feel-scale");
+        ["1 foggy", "2", "3", "4", "5 sharp"].forEach((label, i) => {
+          const b = el("button", "secondary", label); b.type = "button";
+          b.addEventListener("click", () => {
+            const all2 = load(FEEL, {}); all2[todayKey] = i + 1; save(FEEL, all2);
+            api("app/log", { device: device(), kind: "feel", value: String(i + 1), day: todayKey,
+              recovery: measuredRecent ? lastNight?.recovery ?? null : null, day_number: dayNo }).catch(() => {});
+            renderToday(plans, trip, progress);
+          });
+          scale.appendChild(b);
+        });
+        feel.appendChild(scale);
+      }
+      card.appendChild(feel);
     }
 
     const actions = el("div", "today-actions");
@@ -1036,10 +1072,32 @@
       edit.textContent = editing ? "Hide trip form" : "Edit trip";
       if (editing) $("trip-card").scrollIntoView({ behavior: "smooth", block: "start" });
     });
-    const full = el("button", "secondary", "Full plan"); full.type = "button";
-    full.addEventListener("click", () => $("result").scrollIntoView({ behavior: "smooth", block: "start" }));
-    actions.append(edit, full);
+    const open = (id, label) => {
+      const b = el("button", "secondary", label); b.type = "button";
+      b.addEventListener("click", () => { const d = $(id); if (d) { d.open = true; d.scrollIntoView({ behavior: "smooth", block: "start" }); } });
+      return b;
+    };
+    actions.append(edit, open("history", "History"), open("fullplan", "Full plan"));
     card.appendChild(actions);
+  }
+
+  // The body-clock graph with its legend and caption, in the History fold.
+  function renderClockGraph(container, plans, progress) {
+    const points = clockPoints(plans);
+    if (!points.length) return;
+    const now = new Date(), t = now.getTime();
+    const nights = (progress?.nights || []).filter((n) => n.tracked && n.clock_measured != null);
+    const caption = el("p", "chart-caption");
+    const lastNight = nights.at(-1);
+    caption.textContent = lastNight
+      ? `Latest night, ${shortDate(lastNight.night_of)}: your body was ${describeHours(lastNight.clock_measured, lastNight.local_tz)}; the plan expected ${describeHours(lastNight.clock_planned, lastNight.local_tz)}. Tap a dot for another night.`
+      : `By the plan, your body is now ${describeHours(planAt(points, t), zoneAt(points, t))}. Nights from WHOOP land here as dots.`;
+    container.appendChild(clockChart(points, nights, now, caption));
+    const legend = el("p", "legend");
+    const a = el("span"); a.append(el("i"), document.createTextNode("Plan"));
+    const b = el("span"); b.append(el("b"), document.createTextNode("WHOOP nights"));
+    legend.append(a, b);
+    container.append(legend, caption);
   }
 
   // The graph, as plain SVG. x is the trip's span, y is hours off the local
