@@ -239,7 +239,9 @@ def _check_lengths(flights) -> None:
             raise ValueError(
                 f"{which} comes out at {_duration(a - d)} ({_when(d.astimezone(dz))} to "
                 f"{_when(a.astimezone(az))}, local times). "
-                "The longest flights are about 19 hours: check the landing date on your ticket."
+                "The longest flights are about 19 hours: check the landing date on your ticket. "
+                "For a stay of a few days, choose Return and add the flight home: under "
+                f"{SHORT_TRIP_HOURS // 24} days there, the plan keeps you on home time."
             )
     dep, arr = flights[0][0], flights[-1][1]
     if arr - dep > timedelta(hours=MAX_FLIGHT_HOURS):
