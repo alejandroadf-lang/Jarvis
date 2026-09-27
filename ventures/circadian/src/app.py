@@ -401,7 +401,16 @@ def whoop_connect(request: Request, device: str = Query(...), _limit=Depends(app
 def whoop_callback(request: Request, code: Optional[str] = None, state: Optional[str] = None,
                    error: Optional[str] = None, _limit=Depends(app_rate_limit)):
     if error or not code or not state:
-        return RedirectResponse(f"{_prefix(request)}/?whoop=cancelled", status_code=302)
+        # Only "access_denied" is the traveller saying no. Anything else (an
+        # invalid scope, a client WHOOP doesn't know) is a setup problem that
+        # used to read as "not connected" with the reason thrown away.
+        detail = request.query_params.get("error_description", "")[:200]
+        print(f"CircadianAPI: WHOOP sign-in returned without a code: error={error!r} {detail}")
+        if error in (None, "access_denied"):
+            return RedirectResponse(f"{_prefix(request)}/?whoop=cancelled", status_code=302)
+        code_word = re.sub(r"[^a-z_]", "", error.lower())[:40] or "unknown"
+        analytics.track("whoop_connect_failed", request.headers, {"reason": code_word})
+        return RedirectResponse(f"{_prefix(request)}/?whoop=failed&why=refused&error={code_word}", status_code=302)
     try:
         device = whoop.verify_state(state)
         whoop.exchange_code(device, code, _redirect_uri(request))

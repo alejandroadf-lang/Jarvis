@@ -844,6 +844,7 @@
 
   const flag = new URLSearchParams(location.search).get("whoop");
   const why = new URLSearchParams(location.search).get("why");
+  const werr = new URLSearchParams(location.search).get("error") || "";
   if (flag) {
     history.replaceState(null, "", location.pathname);
     // Why it failed, from the server (see whoop.ConnectFailed): each has a different fix.
@@ -854,6 +855,10 @@
       expired: "The WHOOP sign-in expired before it finished. Tap Connect WHOOP again.",
       link: "The WHOOP sign-in took more than 10 minutes or was started elsewhere. Tap Connect WHOOP again.",
       network: "Could not reach WHOOP. Try again in a minute.",
+      refused: `WHOOP stopped the sign-in with "${werr || "an error"}". `
+        + (/scope/.test(werr) ? "The app asks for read:sleep, read:recovery and offline: tick those in the WHOOP developer dashboard."
+          : /client/.test(werr) ? "Check WHOOP_CLIENT_ID in Railway matches the WHOOP developer dashboard."
+          : "The details are in the server's logs."),
     }[why] || "WHOOP refused the sign-in. Try again; if it keeps happening, the reason is in the server's logs.";
     const msg = { connected: "WHOOP is connected. Your progress appears below your plan.", failed, cancelled: "WHOOP was not connected." }[flag];
     if (msg) { const e = $("error"); e.textContent = msg; e.className = flag === "connected" ? "ok" : "error"; e.hidden = false; }
