@@ -71,13 +71,16 @@
   .journey-head { display: flex; justify-content: space-between; align-items: center; font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
   .journey-head[hidden] { display: none; }
   .journey-head .link { text-transform: none; letter-spacing: 0; font-weight: 500; font-size: 13px; }
-  .journey .legs { display: grid; gap: 12px; }
-  .journey .add-leg { justify-self: start; font-size: 14px; }
-  .journey.mirrored .leg:first-child .cities { display: none; }
-  .leg { display: grid; gap: 12px; }
-  .leg + .leg { padding-top: 12px; border-top: 1px dashed var(--rule); }
-  .leg-head { display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: var(--muted); }
-  .leg-head[hidden] { display: none; }
+  .journey.mirrored .cities { display: none; }
+  /* Stops, as a search site asks: Direct by default, details only if not. */
+  .stops-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; color: var(--muted); }
+  .segmented.small { padding: 3px; gap: 3px; }
+  .segmented.small button { flex: 1; font: inherit; font-size: 13px; font-weight: 600; padding: 6px 12px; border: 0; border-radius: 8px; background: none; color: var(--muted); cursor: pointer; }
+  .segmented.small button[aria-checked="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.3); }
+  .stops { display: grid; gap: 10px; }
+  .stops:empty { display: none; }
+  .stop { display: grid; gap: 10px; padding: 12px; border: 1px dashed var(--rule); border-radius: 12px; }
+  .stop-head { font-size: 13px; color: var(--muted); font-weight: 600; }
   .cities { position: relative; }
   .cities input { padding-right: 28px; }
   .cities label:last-child input { padding-left: 28px; padding-right: 12px; }
@@ -209,13 +212,6 @@
 <template id="journey-template">
   <div class="journey">
     <div class="journey-head"><span class="journey-title">Your flight</span><button type="button" class="link remove-journey" hidden>Remove</button></div>
-    <div class="legs"></div>
-    <button type="button" class="link add-leg">+ Add a connection</button>
-  </div>
-</template>
-<template id="leg-template">
-  <div class="leg">
-    <div class="leg-head"><span class="leg-title">Connection</span><button type="button" class="link remove-leg" hidden>Remove</button></div>
     <div class="row cities">
       <label>From<input class="from" list="zones" autocomplete="off" placeholder="City" required></label>
       <button type="button" class="swap" aria-label="Swap from and to" title="Swap">
@@ -226,6 +222,25 @@
     <div class="row">
       <label>Departs, local time<input class="departure" type="datetime-local" required></label>
       <label>Lands, local time<input class="arrival" type="datetime-local" required></label>
+    </div>
+    <div class="stops-row">
+      <span>Stops</span>
+      <div class="segmented small stops-choice" role="radiogroup" aria-label="Stops">
+        <button type="button" role="radio" aria-checked="true" data-stops="0">Direct</button>
+        <button type="button" role="radio" aria-checked="false" data-stops="1">1 stop</button>
+        <button type="button" role="radio" aria-checked="false" data-stops="2">2 stops</button>
+      </div>
+    </div>
+    <div class="stops"></div>
+  </div>
+</template>
+<template id="stop-template">
+  <div class="stop">
+    <div class="stop-head">Stop 1</div>
+    <label>Stop city<input class="stop-city" list="zones" autocomplete="off" placeholder="City" required></label>
+    <div class="row">
+      <label>Arrives there<input class="stop-arrival" type="datetime-local" required></label>
+      <label>Leaves there<input class="stop-departure" type="datetime-local" required></label>
     </div>
   </div>
 </template>
