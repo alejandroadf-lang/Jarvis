@@ -20,6 +20,7 @@ import {
   circadianDataDir,
   startCircadian,
   describeCircadian,
+  probeWhoop,
 } from '../circadian.js';
 
 let upstream;
@@ -210,4 +211,32 @@ test('stopping Jarvis with SIGTERM stops Circadian too', async () => {
   if (alive) process.kill(childPid, 'SIGKILL');
   assert.equal(alive, false, 'Circadian outlived Jarvis');
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// The WHOOP reachability check from Node: it must read WHOOP's JSON error as
+// "reachable" and a firewall page as "not", and never send the secret anywhere
+// but WHOOP's token URL.
+test('probeWhoop reports reachable on an OAuth error and blocked on a firewall page', async () => {
+  const env = { WHOOP_CLIENT_ID: 'cid', WHOOP_CLIENT_SECRET: 'csecret' };
+  const calls = [];
+  const answer = (status, body, headers = {}) => async (url, init) => {
+    calls.push({ url, init });
+    return { status, headers: new Map(Object.entries(headers)), text: async () => body };
+  };
+  const logs = [];
+  const log = mock.method(console, 'log', (line) => logs.push(line));
+  try {
+    assert.deepEqual(await probeWhoop({ env, fetchImpl: answer(400, '{"error":"invalid_grant"}') }), { status: 400, reachable: true });
+    assert.deepEqual(await probeWhoop({ env, fetchImpl: answer(403, '<html>blocked</html>', { server: 'cloudflare', 'cf-ray': 'ray1' }) }), { status: 403, reachable: false });
+    assert.deepEqual(await probeWhoop({ env, fetchImpl: async () => { throw new Error('ECONNRESET'); } }), { status: 0, reachable: false });
+    assert.equal(await probeWhoop({ env: {}, fetchImpl: answer(200, '{}') }), null, 'nothing is sent without keys');
+  } finally {
+    log.mock.restore();
+  }
+  assert.equal(calls.length, 2);
+  assert.ok(calls.every((c) => c.url === 'https://api.prod.whoop.com/oauth/oauth2/token'));
+  assert.equal(calls[0].init.body.get('client_secret'), 'csecret');
+  assert.match(logs[0], /reachable from Node .*invalid_grant/);
+  assert.match(logs[1], /NOT reachable from Node.*cloudflare.*ray1/);
+  assert.ok(logs.every((l) => !l.includes('csecret')), 'the secret is never logged');
 });

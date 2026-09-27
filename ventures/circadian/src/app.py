@@ -20,6 +20,7 @@ is the only source of truth on whether the API is actually being used.
 import html
 import os
 import re
+import threading
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
@@ -333,6 +334,8 @@ def _startup() -> None:
     print(store.describe_storage())
     print(analytics.describe())
     print(whoop.describe())
+    # In the background: a slow WHOOP must not hold up serving the page.
+    threading.Thread(target=lambda: print(whoop.reachability()), daemon=True).start()
     push.start_scheduler()
 
 

@@ -156,6 +156,53 @@ function launch(spawnFn) {
   });
 }
 
+/**
+ * The same check Circadian makes at startup (whoop.reachability), from this
+ * process. Cloudflare in front of WHOOP blocked the live token exchange from
+ * the Python child three times without naming a rule. Two answers tell the
+ * causes apart: Node refused too means this server's address is blocked and
+ * only WHOOP can lift it; Node through while Python is refused means the
+ * client, and WHOOP calls can move here. The code sent is one WHOOP cannot
+ * know, so the only correct answer is its JSON error.
+ */
+export async function probeWhoop({ fetchImpl = globalThis.fetch, env = process.env } = {}) {
+  const id = (env.WHOOP_CLIENT_ID || '').trim();
+  const secret = (env.WHOOP_CLIENT_SECRET || '').trim();
+  if (!id || !secret) return null;
+  const body = new URLSearchParams({
+    grant_type: 'authorization_code',
+    code: 'reachability-check',
+    redirect_uri: 'https://example.invalid/whoop/callback',
+    client_id: id,
+    client_secret: secret,
+  });
+  let res;
+  try {
+    res = await fetchImpl('https://api.prod.whoop.com/oauth/oauth2/token', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json', 'user-agent': 'Circadian/1.0' },
+      body,
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch (err) {
+    console.log(`Circadian: WHOOP could not be reached from Node (${err.message}).`);
+    return { status: 0, reachable: false };
+  }
+  let error;
+  try {
+    error = JSON.parse(await res.text()).error;
+  } catch {
+    error = undefined;
+  }
+  if (error) {
+    console.log(`Circadian: WHOOP's OAuth server is reachable from Node (it answered HTTP ${res.status} ${error} to a check).`);
+    return { status: res.status, reachable: true };
+  }
+  console.log(`Circadian: WHOOP is NOT reachable from Node either: HTTP ${res.status} from ${res.headers.get('server') || '?'}`
+    + ` (cf-ray ${res.headers.get('cf-ray') || '-'}). Both processes refused means this server's address is blocked; only WHOOP can lift that.`);
+  return { status: res.status, reachable: false };
+}
+
 export function describeCircadian() {
   if (state.running) {
     return { configured: true, ok: true, detail: `Running, served at ${CIRCADIAN_PREFIX}/. Data in ${circadianDataDir()}.` };

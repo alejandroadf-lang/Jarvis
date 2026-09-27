@@ -13,7 +13,7 @@ import { loadSessions, saveSession, deleteSession,
   trimHistory,
 } from './sessionStore.js';
 import { getLedger } from './finance/ledger.js';
-import { CIRCADIAN_PREFIX, circadianProxy, startCircadian } from './circadian.js';
+import { CIRCADIAN_PREFIX, circadianProxy, startCircadian, probeWhoop } from './circadian.js';
 import {
   listVentures,
   getVenture,
@@ -1699,4 +1699,5 @@ httpServer.listen(PORT, () => {
   startWeeklyReflectionScheduler({ anthropic });
   startInboxWatcher({ anthropic });
   startCircadian();
+  probeWhoop().catch(() => {});
 });

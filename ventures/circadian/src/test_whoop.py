@@ -279,3 +279,12 @@ def test_whoop_unreachable_is_status_zero(monkeypatch):
         raise whoop.requests.ConnectionError("no route")
     monkeypatch.setattr(whoop.requests, "request", down)
     assert whoop._http("GET", whoop.API + "/recovery") == (0, None)
+
+
+def test_the_startup_check_tells_whoop_apart_from_whatever_is_in_front_of_it(monkeypatch):
+    monkeypatch.setattr(whoop.requests, "request", lambda *a, **k: FakeResponse(400, b'{"error":"invalid_grant"}'))
+    assert "reachable from Python" in whoop.reachability() and "invalid_grant" in whoop.reachability()
+    monkeypatch.setattr(whoop.requests, "request", lambda *a, **k: FakeResponse(403, b"<html>blocked</html>", {"server": "cloudflare"}))
+    assert "NOT reachable from Python" in whoop.reachability()
+    monkeypatch.delenv("WHOOP_CLIENT_ID")
+    assert "not checked" in whoop.reachability()
