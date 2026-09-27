@@ -216,7 +216,7 @@
         { legs: [{ from: labelOf(to), to: labelOf(from), departure: localInput(back), arrival: localInput(home) }] },
       ],
       sleep_start: "23:00", sleep_end: "07:00", chronotype: "intermediate", preflight_days: "2",
-      melatonin: true, caffeine: true, example: true,
+      light_device: "none", melatonin: true, caffeine: true, example: true,
     };
   }
 
@@ -238,7 +238,7 @@
     for (const j of trip.journeys || []) addJourney(j);
     if (!journeyNodes().length) addJourney();
     setMode(tripType(trip));
-    for (const k of ["sleep_start", "sleep_end", "chronotype", "preflight_days"]) {
+    for (const k of ["sleep_start", "sleep_end", "chronotype", "preflight_days", "light_device"]) {
       if (trip[k] !== undefined) $(k).value = trip[k];
     }
     $("melatonin").checked = trip.melatonin !== false;
@@ -250,7 +250,8 @@
     return {
       journeys: journeyNodes().map((j) => ({ legs: legsOf(j) })),
       sleep_start: $("sleep_start").value, sleep_end: $("sleep_end").value, chronotype: $("chronotype").value,
-      preflight_days: $("preflight_days").value, melatonin: $("melatonin").checked, caffeine: $("caffeine").checked,
+      preflight_days: $("preflight_days").value, light_device: $("light_device").value,
+      melatonin: $("melatonin").checked, caffeine: $("caffeine").checked,
     };
   }
 
@@ -272,6 +273,7 @@
     return {
       sleep_start: trip.sleep_start || null, sleep_end: trip.sleep_end || null, chronotype: trip.chronotype || "intermediate",
       preflight_days: Number(trip.preflight_days || 0), melatonin: !!trip.melatonin, caffeine: !!trip.caffeine,
+      light_device: trip.light_device || "none",
     };
   }
 
@@ -662,8 +664,49 @@
     container.appendChild(card);
   }
 
+  // After the trip: how bad was it, and how much of the plan was followed.
+  // The only real evidence a plan works; asked once per trip.
+  const RATED = "circadian.rated.v1";
+
+  function renderRating(container, plans, trip) {
+    if (trip.example) return;
+    const nights = plans.flatMap((p) => p.plan.events).filter((e) => e.type === "sleep" && e.where === "destination");
+    const last = nights.map((e) => new Date(e.end)).sort((a, b) => b - a)[0];
+    if (!last || new Date() < last) return;
+    const key = tripInfo(trip).key;
+    if (load(RATED, []).includes(key)) return;
+    const card = el("div", "card");
+    card.appendChild(el("h2", "", "How was your jet lag?"));
+    const text = el("p", "", `Your ${tripInfo(trip).route} trip is over. Two taps help us check the plans work.`);
+    card.appendChild(text);
+    const scale = el("div", "rating");
+    const done = (rating, followed) => {
+      const first = plans[0].plan;
+      api("app/feedback", { device: device(), rating, followed, shift_hours: first.shift_hours || null, strategy: first.strategy || null }).catch(() => {});
+      save(RATED, [...load(RATED, []), key].slice(-50));
+      card.replaceChildren(el("h2", "", "Thanks"), el("p", "", "That's how we know whether the plans work."));
+    };
+    ["None", "Mild", "Moderate", "Bad", "Severe"].forEach((label, i) => {
+      const b = el("button", "secondary", label); b.type = "button";
+      b.addEventListener("click", () => {
+        text.textContent = "And how much of the plan did you follow?";
+        const f = el("div", "followed");
+        for (const [value, words] of [["mostly", "Most of it"], ["partly", "Some of it"], ["hardly", "Hardly any"]]) {
+          const fb = el("button", "secondary", words); fb.type = "button";
+          fb.addEventListener("click", () => done(i + 1, value));
+          f.appendChild(fb);
+        }
+        scale.replaceWith(f);
+      });
+      scale.appendChild(b);
+    });
+    card.appendChild(scale);
+    container.appendChild(card);
+  }
+
   function show(plans, trip, req, supplements) {
     const out = $("result"); out.replaceChildren();
+    renderRating(out, plans, trip);
     renderNow(out, plans);
     renderActions(out, req, plans);
     // Reminders and WHOOP take the whole trip, so a return or a second city

@@ -174,35 +174,53 @@ def _progress(plan, e, zone: str) -> str:
             f"this window is what closes the gap.")
 
 
+def _device(plan) -> str:
+    return getattr(plan, "light_device", "none") or "none"
+
+
+def _indoor_light(plan, start: str, end: str) -> str:
+    """The traveller's own light source when daylight isn't available."""
+    if _device(plan) == "glasses":
+        return f"put your light glasses on, {start} to {end}"
+    if _device(plan) == "box":
+        return f"sit at your light box, {start} to {end}"
+    return f"sit close to the brightest lamp you have, {start} to {end}"
+
+
 def _light_seek(plan, e, zone: str, n: int = 1) -> str:
     start, end, here = _hm(e.start, zone), _hm(e.end, zone), city(zone)
     why = (f"Light now pulls your body clock {_way(plan)}, towards {city(plan.destination_tz)} time."
            if n == 1 else _progress(plan, e, zone))
     if e.where == "flight":
+        if _device(plan) == "glasses":
+            return f"On the plane: light glasses on until {end} {here} time, and the reading light on. {why}"
         return (f"On the plane until {end} {here} time: window shade up if it's light out, reading light on, "
                 f"phone or tablet bright and close to your face. {why}")
     if e.where == "stopover":
-        return f"At the {here} stopover until {end}: sit by the big windows or walk the terminal. {why}"
+        extra = " or wear your light glasses" if _device(plan) == "glasses" else ""
+        return f"At the {here} stopover until {end}: sit by the big windows{extra} or walk the terminal. {why}"
     spans = daylight_spans(e.start, e.end, zone)
     aim = "Aim for at least 30 minutes of it."
+    if _device(plan) == "glasses":
+        aim += " Stuck indoors? Your light glasses do the job."
     if spans is None:
         return f"Bright light {start} to {end}: outdoors if it's light out, otherwise a bright lamp close up. {aim} {why}"
     if all(day for _, _, day in spans):
         return (f"Get outside in {here} between {start} and {end}: {OUTDOORS[(n - 1) % len(OUTDOORS)]}. "
                 f"{aim} {why}")
     if not any(day for _, _, day in spans):
-        return (f"It's dark in {here} until after {end}, so bring the light to you: a light box, or sit close "
-                f"to the brightest lamp you have, {start} to {end}. {why}")
+        return f"It's dark in {here} until after {end}, so bring the light to you: {_indoor_light(plan, start, end)}. {why}"
     first_day = next(s for s, _, day in spans if day)
     last_day = max(t for _, t, day in spans if day)
+    source = {"glasses": "Light glasses", "box": "Light box"}.get(_device(plan), "Bright lamp")
     if spans[0][2] is False:
-        return (f"Bright lamp or light box from {start}, then outside once the sun is up at "
+        return (f"{source} from {start}, then outside once the sun is up at "
                 f"{_hm(first_day, zone)}, until {end}. {aim} {why}")
-    return (f"Get outside until sunset at {_hm(last_day, zone)}, then bright indoor light until {end}. "
+    return (f"Get outside until sunset at {_hm(last_day, zone)}, then {source.lower()} until {end}. "
             f"{aim} {why}")
 
 
-def _light_avoid(plan, e, zone: str, n: int = 1) -> str:
+def _light_avoid(plan, e, zone: str, n: int = 1, explain_sunglasses: bool = True) -> str:
     start, end, here = _hm(e.start, zone), _hm(e.end, zone), city(zone)
     why = ("Light now would pull your body clock the wrong way." if n == 1
            else "Same reason as before: light now pulls the wrong way.")
@@ -213,8 +231,13 @@ def _light_avoid(plan, e, zone: str, n: int = 1) -> str:
         return f"At the {here} stopover until {end}: sunglasses on, find a dim corner, skip the bright shops. {why}"
     spans = daylight_spans(e.start, e.end, zone)
     if spans is not None and any(day for _, _, day in spans):
+        # Which sunglasses matters: all visible light reaches the clock, so the
+        # darkest wrap-around pair beats a tinted fashion pair, and blue-blocking
+        # lenses let through too much in daylight. Said once, then short.
+        which = (" The darkest pair you have, wrap-around if possible; blue-blocking glasses aren't dark enough in daylight."
+                 if explain_sunglasses else "")
         return (f"Sunglasses on outside and stay in the shade from {start} to {end}; "
-                f"indoors, sit away from the windows. {why}")
+                f"indoors, sit away from the windows.{which} {why}")
     return (f"Keep the lights low from {start} to {end}: lamps instead of ceiling lights, "
             f"night mode on your phone. {why}")
 
@@ -271,9 +294,9 @@ def _melatonin(plan, e, zone: str, n: int = 1) -> str:
         # the only one of these a traveller ever reads.
         return (f"Melatonin at {_hm(e.start, zone)} if you're using it, 30 minutes before bed. "
                 f"Prescription-only in some countries; check with a doctor.")
-    return (f"If you use melatonin: take it at {_hm(e.start, zone)}, 30 minutes before bed. The timing "
-            f"is what moves your clock, not the dose. Check with a doctor first; it needs a prescription "
-            f"in some countries.")
+    return (f"If you use melatonin: take it at {_hm(e.start, zone)}, 30 minutes before bed. Choose a low-dose, "
+            f"fast-release tablet, not slow-release: the timing is what moves your clock, and slow-release keeps "
+            f"working into the morning. Check with a doctor first; it needs a prescription in some countries.")
 
 
 def _nap(plan, e, zone: str) -> str:
@@ -287,13 +310,18 @@ def describe(plan) -> None:
     home_nights = [e for e in sleeps if e.where == "home"]
     dest_nights = [e for e in sleeps if e.where == "destination"]
     seen: Dict[str, int] = {}
+    sunglasses_explained = False
     for e in sorted(plan.events, key=lambda e: e.start):
         zone = _zone_of(plan, e)
         n = seen[e.type] = seen.get(e.type, 0) + 1
         if e.type == "light_seek":
             e.note = _light_seek(plan, e, zone, n)
         elif e.type == "light_avoid":
-            e.note = _light_avoid(plan, e, zone, n)
+            # Which sunglasses is said on the first note that asks for them,
+            # which is often not the first light-avoid event (that one tends
+            # to be on the plane).
+            e.note = _light_avoid(plan, e, zone, n, explain_sunglasses=not sunglasses_explained)
+            sunglasses_explained = sunglasses_explained or e.note.startswith("Sunglasses")
         elif e.type == "sleep":
             group = home_nights if e.where == "home" else dest_nights
             index = group.index(e) + 1 if e in group else 1
@@ -367,6 +395,20 @@ def briefing(plan) -> List[Dict[str, str]]:
             text = "Sleep when it's night at home, whatever the cabin lights are doing."
         items.append({"title": "On the plane", "text": text + " Water, not alcohol: alcohol makes plane sleep shorter and worse."})
 
+    if plan.mode == "adapt" and flight:
+        landing = max(e.end for e in events if e.type == "flight")
+        bed = next((e for e in events if e.type == "sleep" and e.where == "destination"), None)
+        nap = next((e for e in events if e.type == "nap"), None)
+        coffee = next((e for e in events if e.type == "caffeine_ok" and e.start >= landing - timedelta(hours=12)), None)
+        if bed:
+            z = plan.destination_tz
+            parts = [f"You land at {_hm(landing, z)}. Stay up until {_hm(bed.start, z)}, however tired you are"]
+            if nap:
+                parts.append(f"one nap at most, {_hm(nap.start, z)} to {_hm(nap.end, z)}, with an alarm")
+            if coffee and coffee.end > landing:
+                parts.append(f"coffee is fine until {_hm(coffee.end, z)}")
+            items.append({"title": "Arrival day", "text": "; ".join(parts) + "."})
+
     if plan.mode == "adapt":
         seek = next((e for e in events if e.type == "light_seek" and e.where == "destination"), None)
         if seek:
@@ -428,7 +470,8 @@ def supplements(plans) -> Dict[str, object]:
             "when": f"30 minutes before bed, from {_day(first_mel.start, zone(first_mel))} to {_day(last_mel.start, zone(last_mel))}; "
                     f"each night's time is in your plan.",
             "why": "The best-studied aid for jet lag after flying east across five or more time zones. "
-                   "Studies used 0.5 to 5 mg; more is not better.",
+                   "Use a fast-release tablet at a low dose: studies used 0.5 to 5 mg, and more is not better. "
+                   "Slow-release versions keep working into the morning and blur the signal.",
             "caution": "Prescription-only in some countries, including the UK. Avoid with blood thinners, sleeping pills, epilepsy, "
                        "pregnancy or breastfeeding, and don't drive for a few hours after.",
         })

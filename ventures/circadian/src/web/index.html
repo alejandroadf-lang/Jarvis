@@ -175,6 +175,18 @@
   .pill.grade-some { background: #3A2A1F; color: var(--dawn); }
   .pill.grade-weak { background: var(--surface-2); color: var(--muted); }
   .pill.grade-none { background: #3A1F28; color: var(--rose); }
+  /* After the trip, and the facts. */
+  .rating { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+  .rating button, .followed button { padding: 10px 4px; font-size: 13px; }
+  .followed { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .facts summary { list-style: none; cursor: pointer; }
+  .facts summary::-webkit-details-marker { display: none; }
+  .facts summary h2 { display: inline; }
+  .facts summary::after { content: " +"; color: var(--muted); }
+  .facts[open] summary::after { content: " −"; }
+  .facts dl { margin: 12px 0 0; display: grid; gap: 4px; }
+  .facts dt { font-weight: 600; font-size: 15px; margin-top: 8px; }
+  .facts dd { margin: 0; color: var(--muted); font-size: 14px; }
   .disclaimer { font-size: 12px; color: var(--muted); margin: 0; }
   @media (max-width: 380px) { .row:not(.cities), .actions { grid-template-columns: 1fr; } }
 </style>
@@ -222,6 +234,13 @@
               <option value="3">3 days before</option>
             </select>
           </label>
+          <label for="light_device">When you can't get outside for light
+            <select id="light_device">
+              <option value="none" selected>Nothing special: a bright lamp will do</option>
+              <option value="glasses">I have light glasses</option>
+              <option value="box">I have a light box</option>
+            </select>
+          </label>
           <label class="check" for="melatonin"><input id="melatonin" type="checkbox" checked> Include melatonin timing</label>
           <label class="check" for="caffeine"><input id="caffeine" type="checkbox" checked> Include coffee timing</label>
         </div>
@@ -233,6 +252,26 @@
   </section>
 
   <section id="result" aria-live="polite"></section>
+
+  <details class="card facts">
+    <summary><h2>Jet lag: what works and what doesn't</h2></summary>
+    <dl>
+      <dt>Light is the main lever</dt>
+      <dd>Timed light and darkness move your body clock. Everything else in the plan helps, but less.</dd>
+      <dt>East is harder than west</dt>
+      <dd>Your clock stays up later more easily than it goes to bed earlier, so flying east takes longer to get over.</dd>
+      <dt>Dark sunglasses beat blue-blockers</dt>
+      <dd>All visible light reaches your clock. The darker and more wrap-around the pair, the better.</dd>
+      <dt>More melatonin isn't better</dt>
+      <dd>A low dose of a fast-release tablet at the right time works; a big or slow-release dose lingers into the morning.</dd>
+      <dt>Water doesn't cure jet lag</dt>
+      <dd>Drink normally on the plane for comfort, but it won't move your clock.</dd>
+      <dt>Jet lag diets haven't held up</dt>
+      <dd>Eating on local time helps; special fasting plans have little evidence behind them.</dd>
+      <dt>Alcohol backfires</dt>
+      <dd>It helps you fall asleep, then breaks up the second half of the night.</dd>
+    </dl>
+  </details>
 </main>
 
 <dialog id="trips-dialog" aria-labelledby="trips-heading">

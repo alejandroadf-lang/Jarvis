@@ -115,3 +115,19 @@ def test_a_failing_posthog_is_swallowed(monkeypatch, capsys):
     analytics._send(analytics.payload("plan_made", DEVICE))
     analytics._send(analytics.payload("plan_made", DEVICE))
     assert capsys.readouterr().out.count("could not send analytics") == 1
+
+
+def test_a_post_trip_rating_is_counted_and_nothing_else_happens(sent):
+    r = client.post("/app/feedback", json={"device": DEVICE, "rating": 2, "followed": "mostly",
+                                           "shift_hours": 8, "strategy": "advance"})
+    assert r.status_code == 200 and r.json() == {"thanks": True}
+    assert sent.events() == ["jet_lag_rated"]
+    props = sent[0]["properties"]
+    assert props["rating"] == 2 and props["followed"] == "mostly" and sent[0]["distinct_id"] == DEVICE
+
+
+def test_a_rating_outside_the_scale_is_refused(sent):
+    assert client.post("/app/feedback", json={"device": DEVICE, "rating": 9}).status_code == 422
+    assert client.post("/app/feedback", json={"device": DEVICE, "rating": 3, "followed": "always"}).status_code == 422
+    assert client.post("/app/feedback", json={"device": "../x", "rating": 3}).status_code == 400
+    assert sent == []
