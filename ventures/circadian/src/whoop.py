@@ -186,6 +186,33 @@ def _http(method: str, url: str, headers: Optional[dict] = None, form: Optional[
 _re_script = re.compile(r"<(script|style)\b.*?</\1>", re.S | re.I)
 
 
+def reachability() -> str:
+    """
+    One token request with a code WHOOP cannot know, made at startup. WHOOP's
+    OAuth server answers it with a JSON error (invalid_grant); anything else
+    answering is whatever stands between this server and WHOOP, and the same
+    check from Jarvis's Node process (server/circadian.js) says whether it is
+    this client or this server's address that is refused. Cloudflare blocked
+    the live token exchange three times with no rule named; this tells the
+    two causes apart without a traveller having to sign in each time.
+    """
+    if not is_configured():
+        return "CircadianAPI: WHOOP reachability not checked (not configured)."
+    status, body = _http("POST", TOKEN_URL, form={
+        "grant_type": "authorization_code",
+        "code": "reachability-check",
+        "redirect_uri": "https://example.invalid/whoop/callback",
+        "client_id": os.environ["WHOOP_CLIENT_ID"].strip(),
+        "client_secret": os.environ["WHOOP_CLIENT_SECRET"].strip(),
+    })
+    if isinstance(body, dict) and body.get("error"):
+        return f"CircadianAPI: WHOOP's OAuth server is reachable from Python (it answered HTTP {status} {body['error']} to a check)."
+    if status == 0:
+        return "CircadianAPI: WHOOP could not be reached from Python (network error); connecting WHOOP will fail until it can."
+    return (f"CircadianAPI: WHOOP is NOT reachable from Python: something in front of it answered HTTP {status} "
+            f"(details above). Connecting WHOOP fails until that block is lifted.")
+
+
 # --- tokens -----------------------------------------------------------------------------
 
 def _save_tokens(device: str, body: dict, now: float) -> None:
