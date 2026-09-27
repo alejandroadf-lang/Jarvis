@@ -29,7 +29,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from src import push, store, whoop
+from src import analytics, push, store, whoop
 from src.auth import RateLimiter, auth_and_rate_limit
 from src.ics import plan_to_ics
 from src.itinerary import plan_to_dict, plan_trip
@@ -95,6 +95,16 @@ class ErrorDetail(BaseModel):
 
 class ErrorResponse(BaseModel):
     error: ErrorDetail
+
+
+@app.exception_handler(Exception)
+def unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    # Counted so a bug on a traveller's trip shows up somewhere other than a
+    # log nobody reads. Starlette still re-raises it, so the traceback stays
+    # in the deploy log as before.
+    analytics.track("$exception", request.headers, analytics.exception_properties(exc, request.url.path))
+    return JSONResponse(status_code=500, content={"error": {
+        "code": "internal_error", "message": "Something went wrong making this plan. Try again in a minute."}})
 
 
 @app.exception_handler(ValueError)
@@ -205,8 +215,14 @@ def app_rate_limit(request: Request) -> None:
 
 
 @app.post("/app/plan", responses={400: {"model": ErrorResponse}})
-def app_plan(req: TripRequest, _limit=Depends(app_rate_limit)):
-    return plan_to_dict(_plan(req))
+def app_plan(req: TripRequest, request: Request, _limit=Depends(app_rate_limit)):
+    plan = plan_to_dict(_plan(req))
+    # The page re-plans the saved (or example) trip on every open; only the
+    # button is someone planning a trip.
+    submitted = request.headers.get("x-circadian-intent", "") == "submit"
+    analytics.track("plan_made" if submitted else "app_opened", request.headers,
+                    analytics.plan_properties(req, plan))
+    return plan
 
 
 @app.get("/app/plan.ics")
@@ -232,6 +248,7 @@ def app_plan_ics(request: Request, t: Optional[str] = None, _limit=Depends(app_r
     except Exception as err:  # malformed link: say so rather than 500
         raise ValueError(f"the calendar link is not valid: {err}") from err
     body = plan_to_ics(_plan(req))
+    analytics.track("calendar_added", request.headers, {"flights": len(req.legs) if req.legs else 1})
     return Response(
         content=body,
         media_type="text/calendar; charset=utf-8",
@@ -243,6 +260,15 @@ def app_plan_ics(request: Request, t: Optional[str] = None, _limit=Depends(app_r
 #
 # Both are keyed by an anonymous device id the phone makes for itself; there
 # are no accounts. See push.py and whoop.py for what is stored and why.
+
+
+def _as_device(request: Request, device: str) -> dict:
+    """The request's privacy signals, with the device id this route already has."""
+    return {
+        "x-circadian-device": device,
+        "sec-gpc": request.headers.get("sec-gpc", ""),
+        "dnt": request.headers.get("dnt", ""),
+    }
 
 
 class DeviceRequest(BaseModel):
@@ -263,6 +289,7 @@ class ProgressRequest(BaseModel):
 @app.on_event("startup")
 def _startup() -> None:
     print(store.describe_storage())
+    print(analytics.describe())
     print(whoop.describe())
     push.start_scheduler()
 
@@ -273,16 +300,19 @@ def push_key(_limit=Depends(app_rate_limit)):
 
 
 @app.post("/app/push/subscribe")
-def push_subscribe(req: PushSubscribeRequest, _limit=Depends(app_rate_limit)):
+def push_subscribe(req: PushSubscribeRequest, request: Request, _limit=Depends(app_rate_limit)):
     whoop.check_device(req.device)
     count = push.subscribe(req.device, req.subscription, _plan(req.trip))
+    analytics.track("reminders_on", _as_device(request, req.device), {"reminders": count})
     return {"subscribed": True, "reminders": count}
 
 
 @app.post("/app/push/unsubscribe")
-def push_unsubscribe(req: DeviceRequest, _limit=Depends(app_rate_limit)):
+def push_unsubscribe(req: DeviceRequest, request: Request, _limit=Depends(app_rate_limit)):
     whoop.check_device(req.device)
-    return {"subscribed": False, "removed": push.unsubscribe(req.device)}
+    removed = push.unsubscribe(req.device)
+    analytics.track("reminders_off", _as_device(request, req.device))
+    return {"subscribed": False, "removed": removed}
 
 
 @app.get("/app/push/status")
@@ -334,7 +364,9 @@ def whoop_callback(request: Request, code: Optional[str] = None, state: Optional
         device = whoop.verify_state(state)
         whoop.exchange_code(device, code, _redirect_uri(request))
     except ValueError:
+        analytics.track("whoop_connect_failed", request.headers)
         return RedirectResponse(f"{_prefix(request)}/?whoop=failed", status_code=302)
+    analytics.track("whoop_connected", _as_device(request, device))
     return RedirectResponse(f"{_prefix(request)}/?whoop=connected", status_code=302)
 
 
@@ -344,9 +376,15 @@ def whoop_status(device: str = Query(...), _limit=Depends(app_rate_limit)):
 
 
 @app.post("/app/whoop/progress")
-def whoop_progress(req: ProgressRequest, _limit=Depends(app_rate_limit)):
+def whoop_progress(req: ProgressRequest, request: Request, _limit=Depends(app_rate_limit)):
     try:
-        return whoop.progress(req.device, _plan(req.trip))
+        out = whoop.progress(req.device, _plan(req.trip))
+        tracked = [n for n in out.get("nights", []) if n.get("tracked")]
+        analytics.track("whoop_progress_viewed", _as_device(request, req.device), {
+            "nights_tracked": len(tracked),
+            "nights_on_track": len([n for n in tracked if n.get("on_track")]),
+        })
+        return out
     except whoop.NotConnected:
         return JSONResponse(status_code=409, content={"error": {
             "code": "whoop_not_connected", "message": "WHOOP is not connected on this phone. Tap Connect WHOOP."}})

@@ -172,9 +172,12 @@
   // its own host and under a path such as /circadian/ on a shared one.
   const APP_URL = new URL(".", location.href).href;
 
-  async function api(path, body) {
-    const res = await fetch(path, body === undefined ? {} : {
-      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+  // The anonymous device id rides along so usage can be counted per phone
+  // (see analytics.py); it is the same id reminders and WHOOP already use.
+  async function api(path, body, extraHeaders = {}) {
+    const headers = { "x-circadian-device": device(), ...extraHeaders };
+    const res = await fetch(path, body === undefined ? { headers } : {
+      method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -424,7 +427,7 @@
     const button = $("go"); button.disabled = true; button.textContent = "Making your plan…";
     try {
       const plans = [];
-      for (const r of reqs) plans.push({ title: r.title, req: r.req, plan: await api("app/plan", r.req) });
+      for (const r of reqs) plans.push({ title: r.title, req: r.req, plan: await api("app/plan", r.req, quiet ? {} : { "x-circadian-intent": "submit" }) });
       save("circadian.plans.v2", plans);
       show(plans, trip);
     } catch (err) {
