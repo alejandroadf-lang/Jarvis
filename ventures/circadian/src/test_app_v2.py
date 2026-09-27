@@ -239,3 +239,19 @@ def test_a_landing_time_is_estimated_from_the_distance():
     r = client.get("/app/estimate", params={"departure": "2026-10-06T19:00",
                                              "departure_tz": "UTC", "arrival_tz": "Europe/London"})
     assert r.status_code == 400 and "landing time from your ticket" in r.json()["error"]["message"]
+
+
+def test_the_privacy_page_is_served_and_its_contact_is_the_owners_choice(monkeypatch):
+    # WHOOP requires a Privacy Policy URL; this is it.
+    monkeypatch.delenv("CIRCADIAN_CONTACT_EMAIL", raising=False)
+    r = client.get("/privacy")
+    assert r.status_code == 200 and "Circadian privacy" in r.text
+    assert "{{" not in r.text and "mailto:" not in r.text
+
+    monkeypatch.setenv("CIRCADIAN_CONTACT_EMAIL", "owner@example.com")
+    assert 'href="mailto:owner@example.com"' in client.get("/privacy").text
+
+    # Anything that isn't a plain address is not written into the page.
+    monkeypatch.setenv("CIRCADIAN_CONTACT_EMAIL", '"><script>x</script>@a.b')
+    text = client.get("/privacy").text
+    assert "<script>" not in text and "mailto:" not in text
