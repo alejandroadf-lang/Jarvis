@@ -466,12 +466,20 @@ _NOT_CONNECTED = {"error": {"code": "whoop_not_connected", "message": "WHOOP is 
 
 
 @app.get("/app/whoop/baseline")
-def whoop_baseline(device: str = Query(...), _limit=Depends(app_rate_limit)):
-    """The traveller's usual nights from WHOOP, to start the plan from their real clock."""
+def whoop_baseline(device: str = Query(...), days_until: Optional[int] = Query(None, ge=-1, le=365),
+                   _limit=Depends(app_rate_limit)):
+    """
+    The traveller's usual nights from WHOOP, to start the plan from their real
+    clock; with days_until (to the plan's start), what the last week says to
+    do before flying.
+    """
     try:
-        return whoop.baseline(device)
+        out = whoop.baseline(device)
     except whoop.NotConnected:
         return JSONResponse(status_code=409, content=_NOT_CONNECTED)
+    if days_until is not None:
+        out["advice"] = whoop.pretrip_advice(out, days_until)
+    return out
 
 
 @app.post("/app/whoop/progress")
