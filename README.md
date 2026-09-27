@@ -184,55 +184,6 @@ separate turns — and it's submitted automatically, no click required. It
 runs a separate continuous `SpeechRecognition` session from the manual
 push-to-talk button, so the two are mutually exclusive while wake word is on.
 
-### OmniRoute, an AI gateway in front of every model
-
-When Claude's credit runs out, Jarvis falls back through OpenAI, Gemini,
-DeepSeek and OpenRouter, each with its own key and balance.
-[OmniRoute](https://github.com/diegosouzapw/OmniRoute) (MIT) is one gateway
-with its own fallback across many providers. Once connected it is the first
-backup, and any agent can run on it.
-
-**Read this before deploying it.** It is an active, widely used open-source
-project, but it was checked on 2026-09-27 and three things matter:
-
-- **Subscription logins get accounts banned.** Connecting a Claude Pro, Max
-  or Team login (or Copilot, or Google Antigravity) as a provider breaks
-  those providers' terms, and Anthropic has banned accounts for it (OmniRoute
-  issue #4118). Add only providers you pay for with an API key, or free tiers
-  whose terms allow API use. Everything Jarvis sends, including customer
-  emails and founder notes, goes to whichever provider you add.
-- **A supply-chain scanner flagged it.** Socket.dev flagged npm version 3.8.5
-  in May 2026 (issue #2863, still open). The flags point at features OmniRoute
-  ships on purpose for desktop use: a TLS-intercepting proxy that installs a
-  root certificate, keychain credential import, and HTTP routes that start
-  local processes. None is needed here. Pin a version rather than `latest`.
-- **Its secrets must be set.** Without its own secrets the dashboard, which
-  holds your provider keys, can be taken over.
-
-Steps, if you go ahead:
-
-1. **Add a service** to the same Railway project: *New → Docker Image →*
-   `diegosouzapw/omniroute`, pinned to a version tag from its Docker Hub page.
-2. **Give it a volume** mounted at `/app/data`, where it keeps its providers
-   and keys. Without one it forgets them on every redeploy.
-3. **Set its variables**, each a long random value of its own:
-   `JWT_SECRET` (at least 32 characters), `API_KEY_SECRET`,
-   `STORAGE_ENCRYPTION_KEY` and `OMNIROUTE_WS_BRIDGE_SECRET`. Also
-   `PORT=20128` and `NEXT_PUBLIC_BASE_URL` set to its domain from step 4.
-4. **Generate a domain**, open the dashboard, and set its password first. Add
-   API-key providers only, then create a client API key.
-5. **On the Jarvis service** set `OMNIROUTE_URL` and `OMNIROUTE_API_KEY`.
-   Prefer the private address, `http://<service name>.railway.internal:20128`,
-   so Jarvis's traffic never crosses the internet; you can then remove the
-   public domain and add it back only when you need the dashboard.
-6. **Check it:** `INTEGRATIONS` on WhatsApp has an *omniroute* line that
-   says whether the gateway answered and accepted the key.
-
-To run an agent on it rather than only falling back to it, add
-`<agentId>:router` to `AGENT_MODEL_TIERS`. It is metered at Claude's price
-until you set `OMNIROUTE_INPUT_PRICE_PER_MTOK` and
-`OMNIROUTE_OUTPUT_PRICE_PER_MTOK`, so the daily spend cap never undercounts it.
-
 ### A phone number for the help desk
 
 The travel help desk answers a real phone line through Twilio, on Railway as
