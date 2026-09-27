@@ -421,12 +421,73 @@ def baseline(device: str, now: Optional[datetime] = None) -> dict:
     recoveries = [r for r in _collection(device, "/recovery", start, now, t)
                   if r.get("score_state") == "SCORED" and (r.get("score") or {}).get("recovery_score") is not None]
     _remember_user_id(device, sleeps + recoveries)
-    out = {"days": BASELINE_DAYS, "nights": len(sleeps), "bed": None, "wake": None, "recovery": None}
+    out = {"days": BASELINE_DAYS, "nights": len(sleeps), "bed": None, "wake": None, "recovery": None,
+           "recovery_week": None, "asleep_hours": None, "debt_hours": None, "week": []}
     if recoveries:
         out["recovery"] = int(round(median(r["score"]["recovery_score"] for r in recoveries)))
     if len(sleeps) >= 3:
         out["bed"] = _hm(_clock_median([_clock_minutes(x["start"], x.get("timezone_offset")) for x in sleeps]))
         out["wake"] = _hm(_clock_median([_clock_minutes(x["end"], x.get("timezone_offset")) for x in sleeps]))
+    # The week before a trip, night by night: how long asleep, and the
+    # morning's recovery. WHOOP's own sleep-debt figure comes with the latest
+    # night; it is what "bank some sleep before you fly" is measured against.
+    week_start = now - timedelta(days=7)
+    by_day: Dict[str, dict] = {}
+    for x in sorted(sleeps, key=lambda x: x["end"]):
+        day = _parse(x["end"]).astimezone(_offset(x.get("timezone_offset"))).date().isoformat()
+        stages = (x.get("score") or {}).get("stage_summary") or {}
+        if stages.get("total_in_bed_time_milli") is not None:
+            asleep = (stages["total_in_bed_time_milli"] - stages.get("total_awake_time_milli", 0)
+                      - stages.get("total_no_data_time_milli", 0)) / 3.6e6
+            by_day.setdefault(day, {})["asleep_hours"] = round(asleep, 1)
+        need = (x.get("score") or {}).get("sleep_needed") or {}
+        if need.get("need_from_sleep_debt_milli") is not None:
+            out["debt_hours"] = round(need["need_from_sleep_debt_milli"] / 3.6e6, 1)   # the latest night's
+    for r in sorted(recoveries, key=lambda r: r.get("created_at") or ""):
+        if r.get("created_at"):
+            by_day.setdefault(_parse(r["created_at"]).date().isoformat(), {})["recovery"] = int(round(r["score"]["recovery_score"]))
+    week = [{"date": d, **v} for d, v in sorted(by_day.items()) if d >= week_start.date().isoformat()]
+    out["week"] = week
+    hours = [w["asleep_hours"] for w in week if "asleep_hours" in w]
+    recs = [w["recovery"] for w in week if "recovery" in w]
+    if hours:
+        out["asleep_hours"] = round(sum(hours) / len(hours), 1)
+    if recs:
+        out["recovery_week"] = int(round(median(recs)))
+    return out
+
+
+SHORT_SLEEP_HOURS = 6.5
+DEBT_WORTH_ACTING_ON = 1.0     # hours
+RECOVERY_DIP = 8               # points below the two-week median
+
+
+def pretrip_advice(b: dict, days_until: int) -> List[str]:
+    """
+    What WHOOP's last week says to do before flying. Sleep debt is the one
+    thing a traveller can fix in advance: jet lag symptoms are worse on a
+    debt, and sleep extended in the nights before a stressor holds
+    performance up through it (Rupp et al. 2009). Recovery trending down is
+    a reason to ease training, not to change the plan.
+    """
+    out: List[str] = []
+    if b.get("nights", 0) < 3:
+        return ["Not enough nights on WHOOP yet to judge how rested you are. Wear it the nights before you fly."]
+    debt, hours = b.get("debt_hours"), b.get("asleep_hours")
+    week, usual = b.get("recovery_week"), b.get("recovery")
+    if debt is not None and debt >= DEBT_WORTH_ACTING_ON and days_until >= 1:
+        out.append(f"You are carrying about {debt:g} h of sleep debt. Add 30-45 minutes a night until you fly: jet lag "
+                   f"lands harder on a debt, and sleep banked beforehand holds you up through the first days.")
+    if hours is not None and hours < SHORT_SLEEP_HOURS:
+        out.append(f"You have averaged {hours:g} h asleep this week. Protect a full night on the two nights before "
+                   f"the flight above anything else in this plan.")
+    if week is not None and usual is not None and week <= usual - RECOVERY_DIP:
+        out.append(f"Recovery is trending down: {week}% this week against your usual {usual}%. Go easy on training "
+                   f"in the last two days and arrive with something in reserve.")
+    if not out:
+        rested = f"recovery {week}% against your usual {usual}%" if week is not None and usual is not None else "recovery steady"
+        sleep = f", {hours:g} h asleep a night" if hours is not None else ""
+        out.append(f"You are going in rested: {rested}{sleep}. Keep your usual bedtime until the plan starts.")
     return out
 
 

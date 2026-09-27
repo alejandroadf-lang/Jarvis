@@ -309,7 +309,8 @@ def test_baseline_takes_the_usual_night_across_midnight_and_remembers_the_member
     fake.sleeps.append(dict(sleep_record(99, now - timedelta(hours=5), now - timedelta(hours=4, minutes=30), nap=True), user_id=10129))
     fake.recoveries = [{"score_state": "SCORED", "score": {"recovery_score": s}, "user_id": 10129} for s in (61, 70, 55, 66, 48)]
     out = whoop.baseline(DEVICE, now=now)
-    assert out == {"days": 14, "nights": 7, "bed": "00:10", "wake": "07:40", "recovery": 61}
+    assert {k: out[k] for k in ("days", "nights", "bed", "wake", "recovery")} == {
+        "days": 14, "nights": 7, "bed": "00:10", "wake": "07:40", "recovery": 61}
     assert whoop.device_for_user(10129) == DEVICE and whoop.device_for_user(1) is None
     # Two weeks of nights, not the whole history.
     assert all(f"start={whoop._iso(now - timedelta(days=14))}" in c[1].replace("%3A", ":") for c in fake.calls if "start=" in c[1])
@@ -385,3 +386,33 @@ def test_each_night_is_placed_on_the_body_clock_graph(fake):
     assert night["clock_planned"] < 0
     assert night["clock_measured"] == round(night["clock_planned"] + 1.0, 2)
     assert night["clock_at"].startswith("2026-10-11T")
+
+
+def test_the_week_before_a_trip_is_read_from_whoop_and_turned_into_advice(fake):
+    connect(fake)
+    now = datetime(2026, 10, 1, 12, tzinfo=UTC)
+    bkk = timezone(timedelta(hours=7))
+    for k in range(1, 11):
+        day = datetime(2026, 10, 1, tzinfo=bkk) - timedelta(days=k)
+        start = day.replace(hour=0, minute=30)
+        rec = sleep_record(k, start.astimezone(UTC), (start + timedelta(hours=6, minutes=30)).astimezone(UTC))
+        rec["timezone_offset"] = "+07:00"
+        rec["score"].update(stage_summary={"total_in_bed_time_milli": int(6.5 * 3.6e6), "total_awake_time_milli": int(0.5 * 3.6e6),
+                                           "total_no_data_time_milli": 0},
+                            sleep_needed={"baseline_milli": int(7.6 * 3.6e6), "need_from_sleep_debt_milli": int(1.4 * 3.6e6)})
+        fake.sleeps.append(rec)
+        fake.recoveries.append({"score_state": "SCORED", "score": {"recovery_score": 45 if k <= 4 else 62},
+                                "created_at": (start + timedelta(hours=7)).astimezone(UTC).isoformat(), "sleep_id": f"s{k}"})
+    b = whoop.baseline(DEVICE, now=now)
+    assert b["asleep_hours"] == 6.0 and b["debt_hours"] == 1.4
+    assert b["recovery"] == 62 and b["recovery_week"] == 45   # the last four mornings were low
+    assert len(b["week"]) == 7 and b["week"][-1] == {"date": "2026-09-30", "asleep_hours": 6.0, "recovery": 45}
+
+    advice = whoop.pretrip_advice(b, days_until=5)
+    assert any("1.4 h of sleep debt" in a for a in advice)
+    assert any("averaged 6 h asleep" in a for a in advice)
+    assert any("Recovery is trending down: 45% this week against your usual 62%" in a for a in advice)
+
+    rested = whoop.pretrip_advice({"nights": 10, "debt_hours": 0.2, "asleep_hours": 7.4, "recovery_week": 63, "recovery": 60}, 5)
+    assert rested == ["You are going in rested: recovery 63% against your usual 60%, 7.4 h asleep a night. Keep your usual bedtime until the plan starts."]
+    assert "Not enough nights" in whoop.pretrip_advice({"nights": 2}, 5)[0]

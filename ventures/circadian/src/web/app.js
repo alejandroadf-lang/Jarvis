@@ -937,6 +937,25 @@
     }
     card.appendChild(ln);
 
+    // Before the trip: how rested you are going in, from the last week on WHOOP.
+    if (t < t0 && $("whoop-button").classList.contains("connected")) {
+      const pre = el("div", "pretrip");
+      pre.appendChild(el("h3", "", "Before you fly"));
+      const body = el("p", "", "Reading your last week on WHOOP…");
+      pre.appendChild(body);
+      card.appendChild(pre);
+      getBaseline(Math.ceil((t0 - t) / DAY_MS)).then((b) => {
+        if (!b || b.nights === undefined) return;
+        const facts = [];
+        if (b.recovery_week != null) facts.push(`recovery ${b.recovery_week}% this week` + (b.recovery != null ? ` (usual ${b.recovery}%)` : ""));
+        if (b.asleep_hours != null) facts.push(`${b.asleep_hours} h asleep a night`);
+        if (b.debt_hours != null) facts.push(`sleep debt ${b.debt_hours} h`);
+        body.replaceChildren();
+        if (facts.length) pre.insertBefore(el("p", "facts", facts.join(" · ")), body);
+        for (const a of b.advice || []) body.appendChild(el("span", "advice", a));
+      }).catch(() => { body.textContent = "WHOOP did not answer just now."; });
+    }
+
     // How sharp do you feel: one tap a morning, next to WHOOP's number.
     if (t >= t0 && t <= t1 + 3 * DAY_MS) {
       const feels = load(FEEL, {});
@@ -1189,11 +1208,16 @@
   // the traveller has not typed into are changed: untouched defaults, or the
   // values this put there last time.
   const BASELINE = "circadian.baseline.v1";
+  const baselinePromises = {};
+  // One fetch per page and question: the form pre-fill (no advice needed) and
+  // Today's pre-trip block (advice for the days left) each reuse their own.
+  const getBaseline = (daysUntil) => (baselinePromises[daysUntil ?? "none"] ||= api(`app/whoop/baseline?device=${device()}`
+    + (daysUntil == null ? "" : `&days_until=${daysUntil}`)));
   async function applyBaseline(st) {
     const note = $("baseline-note");
     if (!st?.connected) { note.hidden = true; return; }
     let b;
-    try { b = await api(`app/whoop/baseline?device=${device()}`); } catch { return; }
+    try { b = await getBaseline(null); } catch { return; }
     if (!b.bed || !b.wake) return;
     const bed = $("sleep_start"), wake = $("sleep_end");
     const [defBed, defWake] = CHRONO[$("chronotype").value] || CHRONO.intermediate;
