@@ -32,7 +32,7 @@ from pydantic import BaseModel, Field
 from src import advice, analytics, push, store, whoop
 from src.auth import RateLimiter, auth_and_rate_limit
 from src.ics import plan_to_ics
-from src.itinerary import merge_plans, plan_itinerary, plan_to_dict, plan_trip
+from src.itinerary import estimate_landing, merge_plans, plan_itinerary, plan_to_dict, plan_trip
 from src.shift_logic import plan_shift
 from src.telemetry import get_call_count, record_call
 
@@ -257,6 +257,13 @@ def app_itinerary(req: TripRequest, request: Request, _limit=Depends(app_rate_li
     plans = [plan_to_dict(p) for p in raw]
     _count_plan(req, request, plans[0])
     return {"journeys": plans, "supplements": advice.supplements(raw)}
+
+
+@app.get("/app/estimate", responses={400: {"model": ErrorResponse}})
+def app_estimate(departure: datetime, departure_tz: str, arrival_tz: str, _limit=Depends(app_rate_limit)):
+    """When a direct flight lands, estimated from the distance; the page marks it as an estimate."""
+    landing, minutes = estimate_landing(departure, departure_tz, arrival_tz)
+    return {"arrival": landing.strftime("%Y-%m-%dT%H:%M"), "minutes": minutes}
 
 
 @app.get("/app/plan.ics")

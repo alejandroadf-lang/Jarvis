@@ -223,3 +223,19 @@ def test_calendar_link_carries_a_whole_trip_with_connections():
     r = client.get("/app/plan.ics", params={"t": tparam})
     assert r.status_code == 200 and r.text.count("SUMMARY:Flight") == 2
     assert client.get("/app/plan.ics", params={"t": "not-base64-json"}).status_code == 400
+
+
+def test_a_landing_time_is_estimated_from_the_distance():
+    # Out 6 Oct, back 9 Oct: the page turns that into a return trip and needs
+    # both flights' landing times. Bangkok-London is about 13 hours.
+    r = client.get("/app/estimate", params={"departure": "2026-10-06T19:00",
+                                             "departure_tz": "Asia/Bangkok", "arrival_tz": "Europe/London"})
+    assert r.status_code == 200
+    body = r.json()
+    assert 11 * 60 <= body["minutes"] <= 14 * 60
+    assert body["arrival"].startswith("2026-10-07T0")  # the next morning in London
+
+    # A zone with no known location is refused with what to do instead.
+    r = client.get("/app/estimate", params={"departure": "2026-10-06T19:00",
+                                             "departure_tz": "UTC", "arrival_tz": "Europe/London"})
+    assert r.status_code == 400 and "landing time from your ticket" in r.json()["error"]["message"]

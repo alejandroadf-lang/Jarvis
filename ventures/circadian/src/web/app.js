@@ -760,10 +760,51 @@
     out.appendChild(el("p", "disclaimer", plans[0].plan.disclaimer));
   }
 
-  $("trip").addEventListener("submit", (e) => {
+  // One way, direct, landing days after take-off: that is someone flying out on
+  // one day and back on another, which is how a business trip is booked and how
+  // people think of it. Read it that way instead of refusing it: out on the
+  // first date, back on the second, with both flights' times estimated from
+  // the distance until the ticket's times replace them.
+  const TRIP_NOT_FLIGHT_HOURS = 8; // later than the estimated landing by more than this
+  async function asReturnTrip(trip) {
+    if (mode() !== "oneway" || trip.journeys.length !== 1 || trip.journeys[0].legs.length !== 1) return null;
+    const [l] = trip.journeys[0].legs;
+    const dz = resolveZone(l.from), az = resolveZone(l.to);
+    if (!dz || !az || !l.departure || !l.arrival) return null;
+    const estimate = (departure, departure_tz, arrival_tz) =>
+      api(`app/estimate?${new URLSearchParams({ departure, departure_tz, arrival_tz })}`);
+    try {
+      const out = await estimate(l.departure, dz, az);
+      if ((asMinutes(l.arrival) - asMinutes(out.arrival)) / 60 <= TRIP_NOT_FLIGHT_HOURS) return null;
+      const back = await estimate(l.arrival, az, dz);
+      return {
+        trip: { ...trip, journeys: [
+          { legs: [{ ...l, arrival: out.arrival }] },
+          { legs: [{ from: l.to, to: l.from, departure: l.arrival, arrival: back.arrival }] },
+        ] },
+        backOn: l.arrival, minutes: out.minutes,
+      };
+    } catch { return null; } // no estimate: the plan's own check explains the dates
+  }
+
+  const whenText = (v) => new Date(v + "Z").toLocaleString(undefined,
+    { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "UTC" });
+
+  $("trip").addEventListener("submit", async (e) => {
     e.preventDefault();
-    const trip = read();
+    let trip = read();
     $("example-note").hidden = true;
+    const note = $("estimate-note"); note.hidden = true;
+    const converted = await asReturnTrip(trip);
+    if (converted) {
+      trip = converted.trip;
+      fill(trip);
+      const h = Math.floor(converted.minutes / 60), m = converted.minutes % 60;
+      note.textContent = `Made this a return trip: you fly back ${whenText(converted.backOn)}. `
+        + `Flight times are estimated from the distance (about ${h} h${m ? ` ${m} min` : ""} each way); `
+        + "put in the landing times from your ticket for an exact plan.";
+      note.hidden = false;
+    }
     remember(trip);
     makePlan(trip);
   });
