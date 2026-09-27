@@ -17,6 +17,7 @@ telemetry.py, keyed by the same key_hash auth.py already uses -- this
 is the only source of truth on whether the API is actually being used.
 """
 
+import html
 import os
 import re
 from dataclasses import asdict
@@ -481,6 +482,28 @@ def web_index(request: Request):
     """
     html = (WEB_DIR / "index.html").read_text(encoding="utf-8").replace("{{BASE_URL}}", _public_base(request))
     return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
+
+
+PRIVACY_PAGE = Path(__file__).resolve().parent / "privacy.html"
+_EMAIL_RE = re.compile(r"^[^@\s<>\"']+@[^@\s<>\"']+\.[^@\s<>\"']+$")
+
+
+@app.get("/privacy", include_in_schema=False)
+def privacy_page(request: Request):
+    """
+    The privacy policy WHOOP asks every app for, and any traveller can read.
+    The contact address comes from CIRCADIAN_CONTACT_EMAIL rather than the
+    file, so the owner's address is published only when they choose to.
+    """
+    email = os.environ.get("CIRCADIAN_CONTACT_EMAIL", "").strip()
+    if _EMAIL_RE.match(email):
+        contact = (f'<h2>Contact</h2><p>Questions, or a request to delete what the server holds for your device: '
+                   f'<a href="mailto:{html.escape(email)}">{html.escape(email)}</a>.</p>')
+    else:
+        contact = ("<h2>Contact</h2><p>Reminders and WHOOP can be removed in the app at any time, which deletes "
+                   "what the server holds for your device.</p>")
+    page = PRIVACY_PAGE.read_text(encoding="utf-8").replace("{{CONTACT}}", contact)
+    return HTMLResponse(page.replace("{{BASE_URL}}", _public_base(request)), headers={"Cache-Control": "no-cache"})
 
 
 # The consumer app itself. Mounted last so every route above wins.

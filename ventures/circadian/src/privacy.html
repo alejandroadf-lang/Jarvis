@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#10131F">
+<title>Circadian privacy</title>
+<!-- Served by app.py's /privacy route, which fills in {{BASE_URL}} and
+     {{CONTACT}}. Every statement here is what the code does: change the
+     code, change this page. -->
+<style>
+  :root { --night: #10131F; --surface: #1A1F33; --rule: #2B3150; --ink: #EEF0F7; --muted: #9AA3BF; --dawn: #F2A65A; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--night); color: var(--ink); font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding-inline: 16px; }
+  main { max-width: 640px; margin: 0 auto; padding-block: 32px 64px; }
+  h1 { font-size: 28px; line-height: 1.2; margin: 0 0 4px; text-wrap: balance; }
+  h2 { font-size: 18px; margin: 32px 0 8px; text-wrap: balance; }
+  p, li { color: var(--ink); }
+  .muted { color: var(--muted); font-size: 14px; }
+  ul { padding-left: 20px; }
+  li + li { margin-top: 6px; }
+  a { color: var(--dawn); }
+  a:focus-visible { outline: 2px solid var(--dawn); outline-offset: 2px; }
+  .card { background: var(--surface); border: 1px solid var(--rule); border-radius: 12px; padding: 4px 16px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Circadian privacy</h1>
+  <p class="muted">What the jet lag app keeps, where, and for how long. Last changed 27 September 2026.</p>
+
+  <div class="card">
+    <p><b>In short:</b> your trips stay on your phone. The server works out a plan and forgets it. It keeps
+    something only when you ask for reminders or connect WHOOP, and you can remove either with one tap.
+    Nothing is sold or used for advertising.</p>
+  </div>
+
+  <h2>On your phone</h2>
+  <ul>
+    <li>The trips you enter, your usual sleep times and your latest plan, in the browser's own storage.</li>
+    <li>A random device ID the app makes the first time you open it. It is not linked to your name, email or phone number.</li>
+  </ul>
+  <p>Clearing the site's data in your browser deletes all of it.</p>
+
+  <h2>Making a plan</h2>
+  <p>Your flight times, cities and sleep times are sent to the server to calculate the plan and sent back.
+  The server does not store them. The "Add to calendar" link carries the trip inside the link itself, so
+  nothing is stored for it either.</p>
+
+  <h2>Reminders</h2>
+  <p>If you turn on reminders, the server keeps your device ID, your browser's push address, and the times and
+  wording of that trip's reminders, so it can send them when they are due. They are deleted when you turn
+  reminders off, or when your browser tells the server the push address no longer works.</p>
+
+  <h2>WHOOP</h2>
+  <p>If you connect WHOOP, you sign in on WHOOP's own page; the app never sees your WHOOP password. The app
+  asks only to read your sleep and recovery. The server keeps the access keys WHOOP issues, against your
+  device ID. Each time you open your progress, it reads your sleep and recovery for the dates of the
+  trip to compare them with the plan, and does not store them.</p>
+  <p>Disconnecting WHOOP in the app revokes the app's access at WHOOP and deletes the keys from the server.
+  You can also remove the app from your WHOOP account settings.</p>
+
+  <h2>Usage counts</h2>
+  <p>To learn whether the app is useful, the server may send counts of what people do to PostHog: a plan was
+  made, reminders were turned on, WHOOP was connected, how bad jet lag was after a trip, and errors. These are
+  tied to the random device ID and include things like "8 hours east", never your cities, dates or times.
+  PostHog is not given your IP address. If your browser sends Global Privacy Control or Do Not Track, nothing
+  is counted.</p>
+
+  <h2>Who else gets data</h2>
+  <ul>
+    <li>WHOOP, when you connect it, as described above.</li>
+    <li>Your browser's push service (Apple, Google or Mozilla), which delivers reminders.</li>
+    <li>PostHog, for the usage counts above.</li>
+    <li>Railway, which hosts the server.</li>
+  </ul>
+  <p>Nothing is sold, shared for advertising, or used to build a profile of you.</p>
+
+  <h2>Not medical advice</h2>
+  <p>The plan is general guidance on sleep, light and caffeine. Talk to a doctor before taking melatonin or
+  other supplements, especially if you are pregnant, take other medication or have a health condition.</p>
+
+  {{CONTACT}}
+
+  <p><a href="{{BASE_URL}}">Back to Circadian</a></p>
+</main>
+</body>
+</html>
