@@ -200,7 +200,7 @@ def test_chronotype_sets_sleep_only_when_times_are_missing():
     (dict(preflight_days=5), "preflight_days"),
     (dict(chronotype="owl"), "chronotype"),
     (dict(sleep_start="23:00", sleep_end="01:00"), "between 4 and 12"),
-    (dict(arrival=datetime(2026, 10, 13, 7, 0)), "longer than"),
+    (dict(arrival=datetime(2026, 10, 13, 7, 0)), "check the landing date"),
 ])
 def test_bad_input_is_a_clear_error(kw, message):
     args = dict(departure=datetime(2026, 10, 10, 23, 55), departure_tz="Asia/Bangkok",
@@ -595,3 +595,27 @@ def test_the_calendar_names_the_new_windows():
     from src.ics import plan_to_ics
     text = plan_to_ics(lhr_to_hnd())
     assert "SUMMARY:Clearest thinking: demanding work" in text and "SUMMARY:Low focus: routine tasks only" in text
+
+
+def test_a_mistyped_landing_date_says_which_flight_and_what_to_check():
+    # Bangkok to London typed as landing on the 9th instead of the 7th: the
+    # message has to point at the date, not tell a direct flight to "plan each leg".
+    with pytest.raises(ValueError) as err:
+        plan_trip(datetime(2031, 10, 6, 19), "Asia/Bangkok", datetime(2031, 10, 9, 15), "Europe/London")
+    msg = str(err.value)
+    assert "This flight comes out at 3 days 2 hours" in msg
+    assert "Mon 6 Oct 19:00 to Thu 9 Oct 15:00" in msg and "check the landing date" in msg
+    # The same trip with the right date plans.
+    plan_trip(datetime(2031, 10, 6, 19), "Asia/Bangkok", datetime(2031, 10, 7, 15), "Europe/London")
+
+
+def test_a_long_journey_of_short_flights_points_at_the_dates():
+    legs = [
+        {"departure": "2031-10-06T19:00", "departure_tz": "Asia/Bangkok", "arrival": "2031-10-06T23:00", "arrival_tz": "Asia/Dubai"},
+        {"departure": "2031-10-09T08:00", "departure_tz": "Asia/Dubai", "arrival": "2031-10-09T12:00", "arrival_tz": "Europe/London"},
+    ]
+    with pytest.raises(ValueError, match="Check the dates of each flight.*Multi-city"):
+        plan_trip(legs=legs)
+    legs[1]["arrival"] = "2031-10-10T12:00"
+    with pytest.raises(ValueError, match="^Flight 2 comes out at 1 day 7 hours"):
+        plan_trip(legs=legs)
