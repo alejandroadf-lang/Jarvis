@@ -845,6 +845,7 @@
   const flag = new URLSearchParams(location.search).get("whoop");
   const why = new URLSearchParams(location.search).get("why");
   const werr = new URLSearchParams(location.search).get("error") || "";
+  const wstatus = Number(new URLSearchParams(location.search).get("status")) || 0;
   if (flag) {
     history.replaceState(null, "", location.pathname);
     // Why it failed, from the server (see whoop.ConnectFailed): each has a different fix.
@@ -859,6 +860,9 @@
         + (/scope/.test(werr) ? "The app asks for read:sleep, read:recovery and offline: tick those in the WHOOP developer dashboard."
           : /client/.test(werr) ? "Check WHOOP_CLIENT_ID in Railway matches the WHOOP developer dashboard."
           : "The details are in the server's logs."),
+      whoop: wstatus === 403
+        ? "WHOOP's firewall refused this server's request (HTTP 403), after you approved it. Nothing is wrong with your account or the keys; the server's logs name the firewall rule."
+        : `WHOOP refused the sign-in${wstatus ? ` (HTTP ${wstatus})` : ""}. Try again; if it keeps happening, the reason is in the server's logs.`,
     }[why] || "WHOOP refused the sign-in. Try again; if it keeps happening, the reason is in the server's logs.";
     const msg = { connected: "WHOOP is connected. Your progress appears below your plan.", failed, cancelled: "WHOOP was not connected." }[flag];
     if (msg) { const e = $("error"); e.textContent = msg; e.className = flag === "connected" ? "ok" : "error"; e.hidden = false; }

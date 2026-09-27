@@ -267,3 +267,16 @@ def test_whoop_stopping_the_sign_in_is_not_reported_as_the_traveller_saying_no(m
     # Whatever WHOOP sends, only a plain word goes back into the page's address.
     r = client.get("/whoop/callback", params={"error": "<b>x</b>&y=1"}, follow_redirects=False)
     assert r.headers["location"] == "/?whoop=failed&why=refused&error=bxby"
+
+
+def test_a_refused_token_exchange_carries_whoops_status_to_the_page(monkeypatch):
+    # The live failure: approved at WHOOP, then HTTP 403 swapping the code.
+    from src import whoop as whoop_module
+
+    def refuse(*a, **k):
+        raise whoop_module.ConnectFailed("whoop", "WHOOP did not accept the sign-in (HTTP 403)", 403)
+
+    monkeypatch.setattr(whoop_module, "verify_state", lambda state: DEVICE)
+    monkeypatch.setattr(whoop_module, "exchange_code", refuse)
+    r = client.get("/whoop/callback", params={"code": "c", "state": "s"}, follow_redirects=False)
+    assert r.headers["location"] == "/?whoop=failed&why=whoop&status=403"
