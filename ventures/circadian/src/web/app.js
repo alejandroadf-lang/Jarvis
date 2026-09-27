@@ -67,15 +67,34 @@
   const pad = (n) => String(n).padStart(2, "0");
   const localInput = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 
-  // A trip is journeys separated by stays; a journey is one flight or a chain
-  // of connections. The panel is laid out the way flight search sites are:
-  // Return, One way or Multi-city on top, From and To with a swap, then the
-  // times. Return keeps the second journey's cities mirrored from the first;
-  // an open jaw is Multi-city with a different city in the second row.
+  // A trip is journeys separated by stays. The panel is laid out the way
+  // flight search sites are: Return, One way or Multi-city on top, From and
+  // To with a swap, the times, and a Stops choice that is Direct until the
+  // traveller says otherwise. The plan needs each connection (a stopover has
+  // its own clock and light advice), but nobody is asked about stops they
+  // don't have. Return keeps the second journey's cities mirrored from the
+  // first; an open jaw is Multi-city with a different city in the second row.
+  const MAX_STOPS = 2;
   function journeyNodes() { return [...$("journeys").querySelectorAll(".journey")]; }
-  function legNodes(journey) { return [...journey.querySelectorAll(".leg")]; }
+  function stopNodes(journey) { return [...journey.querySelectorAll(".stop")]; }
   const firstFrom = () => journeyNodes()[0]?.querySelector(".from")?.value || "";
   const mode = () => document.querySelector('input[name="trip_type"]:checked')?.value || "oneway";
+  const val = (node, cls) => node.querySelector("." + cls).value;
+
+  // The form thinks in flights with stops; the plan thinks in legs between
+  // cities. Both directions, so a saved trip opens as it was entered.
+  function legsOf(journey) {
+    const stops = stopNodes(journey).map((n) => ({ city: val(n, "stop-city"), arrival: val(n, "stop-arrival"), departure: val(n, "stop-departure") }));
+    const points = [{ city: val(journey, "from"), departure: val(journey, "departure") }, ...stops, { city: val(journey, "to"), arrival: val(journey, "arrival") }];
+    return points.slice(1).map((to, i) => ({ from: points[i].city, to: to.city, departure: points[i].departure, arrival: to.arrival }));
+  }
+  function flightOf(legs = []) {
+    const first = legs[0] || {}, last = legs.at(-1) || {};
+    return {
+      from: first.from || "", to: last.to || "", departure: first.departure || "", arrival: last.arrival || "",
+      stops: legs.slice(1).map((l, i) => ({ city: l.from || legs[i].to || "", arrival: legs[i].arrival || "", departure: l.departure || "" })),
+    };
+  }
 
   // What kind of trip a saved one is, so the switch shows it the same way.
   function tripType(trip) {
@@ -91,44 +110,60 @@
     if (mode() !== "return") return;
     const [out, back] = journeyNodes();
     if (!out || !back) return;
-    const leg = legNodes(back)[0];
-    leg.querySelector(".from").value = legNodes(out).at(-1).querySelector(".to").value;
-    leg.querySelector(".to").value = legNodes(out)[0].querySelector(".from").value;
+    back.querySelector(".from").value = val(out, "to");
+    back.querySelector(".to").value = val(out, "from");
   }
 
   function renumber() {
     const m = mode();
     const journeys = journeyNodes();
     journeys.forEach((j, ji) => {
-      const head = j.querySelector(".journey-head");
-      head.hidden = m === "oneway";
+      j.querySelector(".journey-head").hidden = m === "oneway";
       j.querySelector(".journey-title").textContent = m === "return" ? (ji === 0 ? "Outbound" : "Return") : `Flight ${ji + 1}`;
       j.querySelector(".remove-journey").hidden = m !== "multi" || ji === 0;
-      j.classList.toggle("mirrored", m === "return" && ji === 1);
-      const legs = legNodes(j);
-      legs.forEach((n, i) => {
-        n.querySelector(".leg-title").textContent = `Connection ${i}`;
-        n.querySelector(".leg-head").hidden = i === 0;
-        n.querySelector(".remove-leg").hidden = i === 0;
-        n.querySelector(".swap").hidden = i > 0;
-        for (const f of ["from", "to"]) n.querySelector("." + f).readOnly = m === "return" && ji === 1 && i === 0;
-      });
+      const mirrored = m === "return" && ji === 1;
+      j.classList.toggle("mirrored", mirrored);
+      for (const f of ["from", "to"]) j.querySelector("." + f).readOnly = mirrored;
+      stopNodes(j).forEach((n, i) => { n.querySelector(".stop-head").textContent = `Stop ${i + 1}`; });
+      const count = stopNodes(j).length;
+      j.querySelectorAll(".stops-choice button").forEach((b) => b.setAttribute("aria-checked", String(Number(b.dataset.stops) === count)));
     });
     $("add-journey").hidden = m !== "multi";
     mirrorReturn();
   }
 
-  function addLeg(journey, values = {}) {
-    const node = $("leg-template").content.firstElementChild.cloneNode(true);
-    for (const k of ["from", "to", "departure", "arrival"]) if (values[k]) node.querySelector("." + k).value = values[k];
-    node.querySelector(".remove-leg").addEventListener("click", () => { node.remove(); renumber(); });
+  function addStop(journey, values = {}) {
+    const node = $("stop-template").content.firstElementChild.cloneNode(true);
+    if (values.city) node.querySelector(".stop-city").value = values.city;
+    if (values.arrival) node.querySelector(".stop-arrival").value = values.arrival;
+    if (values.departure) node.querySelector(".stop-departure").value = values.departure;
+    journey.querySelector(".stops").appendChild(node);
+    return node;
+  }
+
+  function setStops(journey, n) {
+    while (stopNodes(journey).length > n) stopNodes(journey).at(-1).remove();
+    while (stopNodes(journey).length < n) addStop(journey);
+    renumber();
+  }
+
+  function addJourney(values = {}) {
+    const node = $("journey-template").content.firstElementChild.cloneNode(true);
+    const flight = flightOf(values.legs);
+    for (const k of ["from", "to", "departure", "arrival"]) if (flight[k]) node.querySelector("." + k).value = flight[k];
+    for (const stop of flight.stops.slice(0, MAX_STOPS)) addStop(node, stop);
+    node.querySelector(".remove-journey").addEventListener("click", () => { node.remove(); renumber(); });
     node.querySelector(".swap").addEventListener("click", () => {
       const from = node.querySelector(".from"), to = node.querySelector(".to");
       [from.value, to.value] = [to.value, from.value];
       mirrorReturn();
     });
     for (const f of ["from", "to"]) node.querySelector("." + f).addEventListener("input", mirrorReturn);
-    journey.querySelector(".legs").appendChild(node);
+    node.querySelectorAll(".stops-choice button").forEach((b) => b.addEventListener("click", () => {
+      setStops(node, Number(b.dataset.stops));
+      if (Number(b.dataset.stops)) stopNodes(node).at(-1).querySelector(".stop-city").focus();
+    }));
+    $("journeys").appendChild(node);
     renumber();
     return node;
   }
@@ -142,35 +177,21 @@
     if (next === "oneway") journeys.slice(1).forEach((j) => j.remove());
     if (next === "return") {
       journeys.slice(2).forEach((j) => j.remove());
-      if (journeyNodes().length < 2) addJourney({ legs: [{}] });
+      if (journeyNodes().length < 2) addJourney();
     }
     if (next === "multi" && journeyNodes().length < 2) {
-      const last = legNodes(journeyNodes().at(-1)).at(-1);
-      addJourney({ legs: [{ from: last.querySelector(".to").value, to: firstFrom() }] });
+      const last = journeyNodes().at(-1);
+      addJourney({ legs: [{ from: val(last, "to"), to: firstFrom() }] });
     }
     renumber();
   }
 
   $("trip-type").addEventListener("change", () => setMode(mode()));
 
-  function addJourney(values = {}) {
-    const node = $("journey-template").content.firstElementChild.cloneNode(true);
-    node.querySelector(".remove-journey").addEventListener("click", () => { node.remove(); renumber(); });
-    node.querySelector(".add-leg").addEventListener("click", () => {
-      const last = legNodes(node).at(-1);
-      addLeg(node, { from: last ? last.querySelector(".to").value : "" }).querySelector(".to").focus();
-    });
-    $("journeys").appendChild(node);
-    for (const leg of values.legs || []) addLeg(node, leg);
-    if (!legNodes(node).length) addLeg(node);
-    return node;
-  }
-
   // The next flight starts where the last one landed and, by default, goes
   // home, so another city or an open jaw is one edit.
   $("add-journey").addEventListener("click", () => {
-    const last = legNodes(journeyNodes().at(-1)).at(-1);
-    const from = last ? last.querySelector(".to").value : "";
+    const from = val(journeyNodes().at(-1), "to");
     const node = addJourney({ legs: [{ from, to: firstFrom() === from ? "" : firstFrom() }] });
     node.querySelector(".departure").focus();
     node.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -227,25 +248,22 @@
 
   function read() {
     return {
-      journeys: journeyNodes().map((j) => ({
-        legs: legNodes(j).map((n) => ({
-          from: n.querySelector(".from").value, to: n.querySelector(".to").value,
-          departure: n.querySelector(".departure").value, arrival: n.querySelector(".arrival").value,
-        })),
-      })),
+      journeys: journeyNodes().map((j) => ({ legs: legsOf(j) })),
       sleep_start: $("sleep_start").value, sleep_end: $("sleep_end").value, chronotype: $("chronotype").value,
       preflight_days: $("preflight_days").value, melatonin: $("melatonin").checked, caffeine: $("caffeine").checked,
     };
   }
 
   function toLegs(legs, journeyNo) {
+    const on = journeyNo ? ` on flight ${journeyNo}` : "";
+    const pick = " Start typing a city and pick it from the list.";
     return legs.map((l, i) => {
       const dz = resolveZone(l.from), az = resolveZone(l.to);
-      const where = journeyNo ? `flight ${journeyNo}` : "flight";
-      const n = legs.length > 1 ? ` on ${where}, leg ${i + 1}` : (journeyNo ? ` on ${where}` : "");
-      if (!dz) throw new Error(`We could not find "${l.from}"${n}. Start typing a city and pick it from the list.`);
-      if (!az) throw new Error(`We could not find "${l.to}"${n}. Start typing a city and pick it from the list.`);
-      if (!l.departure || !l.arrival) throw new Error(`Add the departure and landing times${n} from your ticket.`);
+      const last = i === legs.length - 1;
+      if (!dz) throw new Error(i === 0 ? `We could not find "${l.from}"${on}.${pick}` : `We could not find the city of stop ${i}${on}.${pick}`);
+      if (!az) throw new Error(last ? `We could not find "${l.to}"${on}.${pick}` : `We could not find the city of stop ${i + 1}${on}.${pick}`);
+      if (!l.departure) throw new Error(i === 0 ? `Add the departure time${on} from your ticket.` : `Add when you leave stop ${i}${on}.`);
+      if (!l.arrival) throw new Error(last ? `Add the landing time${on} from your ticket.` : `Add when you arrive at stop ${i + 1}${on}.`);
       return { departure: l.departure, departure_tz: dz, arrival: l.arrival, arrival_tz: az };
     });
   }
