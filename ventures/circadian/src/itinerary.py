@@ -252,6 +252,32 @@ def _check_lengths(flights) -> None:
         )
 
 
+# A long-haul jet averages about 800 km/h gate to gate once climb, descent and
+# routing are counted, plus taxiing at both ends. Good to within an hour or so
+# on long flights, which is what an estimate is for: the ticket's times replace it.
+BLOCK_SPEED_KMH = 800
+TAXI_MINUTES = 30
+
+
+def estimate_landing(departure: datetime, departure_tz: str, arrival_tz: str) -> Tuple[datetime, int]:
+    """
+    (local landing time, minutes in the air) for a direct flight, from the
+    distance between the two time zones' reference cities. Used when a
+    traveller gave the day they fly out and the day they fly back, but not the
+    times on the ticket.
+    """
+    dz, az = zone(departure_tz), zone(arrival_tz)
+    a, b = advice.coordinates(dz.key), advice.coordinates(az.key)
+    if not a or not b:
+        raise ValueError(f"no location is known for {departure_tz if not a else arrival_tz}; add the landing time from your ticket")
+    lat1, lon1, lat2, lon2 = map(math.radians, (*a, *b))
+    km = 2 * 6371 * math.asin(math.sqrt(
+        math.sin((lat2 - lat1) / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin((lon2 - lon1) / 2) ** 2))
+    minutes = int(round((km / BLOCK_SPEED_KMH * 60 + TAXI_MINUTES) / 5) * 5)
+    landing = (local(departure, dz) + timedelta(minutes=minutes)).astimezone(az)
+    return landing.replace(tzinfo=None), minutes
+
+
 def _parse_legs(legs) -> List[Tuple[datetime, datetime, ZoneInfo, ZoneInfo]]:
     """[(dep_utc, arr_utc, dep_zone, arr_zone)], validated as one journey."""
     parsed = []
