@@ -394,6 +394,8 @@ def whoop_connect(request: Request, device: str = Query(...), _limit=Depends(app
         return HTMLResponse(
             "<p>WHOOP is not connected to this app yet. The owner needs to add WHOOP_CLIENT_ID and "
             f"WHOOP_CLIENT_SECRET.</p><p><a href=\"{_prefix(request)}/\">Back to your plan</a></p>", status_code=503)
+    # Each step is logged so a sign-in that never comes back is visible too.
+    print(f"CircadianAPI: WHOOP sign-in started; WHOOP will return to {_redirect_uri(request)}")
     return RedirectResponse(whoop.authorize_url(device, _redirect_uri(request)), status_code=302)
 
 
@@ -421,6 +423,7 @@ def whoop_callback(request: Request, code: Optional[str] = None, state: Optional
         print(f"CircadianAPI: connecting WHOOP failed ({why}): {err}")
         analytics.track("whoop_connect_failed", request.headers, {"reason": why})
         return RedirectResponse(f"{_prefix(request)}/?whoop=failed&why={why}", status_code=302)
+    print("CircadianAPI: WHOOP connected.")
     analytics.track("whoop_connected", _as_device(request, device))
     return RedirectResponse(f"{_prefix(request)}/?whoop=connected", status_code=302)
 
