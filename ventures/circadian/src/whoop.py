@@ -515,18 +515,20 @@ def progress(device: str, plan: TripPlan, now: Optional[datetime] = None) -> dic
     # median is what "recovered" is measured against after arrival.
     recoveries = _collection(device, "/recovery", start - timedelta(days=BASELINE_DAYS), end + timedelta(hours=12), t)
     _remember_user_id(device, sleeps + recoveries)
-    recovery_by_sleep: Dict[str, int] = {}
-    before_trip = []
+    recovery_by_sleep: Dict[str, dict] = {}
+    before_trip: List[dict] = []
     for r in recoveries:
-        score = (r.get("score") or {}).get("recovery_score")
-        if r.get("score_state") != "SCORED" or score is None:
+        score = r.get("score") or {}
+        if r.get("score_state") != "SCORED" or score.get("recovery_score") is None:
             continue
         if r.get("sleep_id"):
-            recovery_by_sleep[str(r["sleep_id"])] = int(round(score))
+            recovery_by_sleep[str(r["sleep_id"])] = score
         created = r.get("created_at")
         if created and _parse(created) < start:
             before_trip.append(score)
-    baseline_recovery = int(round(median(before_trip))) if before_trip else None
+    # The traveller's own two weeks before the trip: what "usual" means for them.
+    baseline = _baseline_of(before_trip)
+    baseline_recovery = baseline.get("recovery")
 
     nights = []
     onsets = []
@@ -552,6 +554,7 @@ def progress(device: str, plan: TripPlan, now: Optional[datetime] = None) -> dic
             onset = round((a0 - e.start).total_seconds() / 60)
             wake = round((a1 - e.end).total_seconds() / 60)
             score = best.get("score") or {}
+            rec = recovery_by_sleep.get(str(best.get("id")))
             # Where the body clock was that night, against the local clock: the
             # plan's expectation, and it corrected by the same rule as the
             # day's plan (half the night's lateness). What the graph plots.
@@ -568,7 +571,8 @@ def progress(device: str, plan: TripPlan, now: Optional[datetime] = None) -> dic
                 clock_measured=round(planned_hours + ADJUST_FRACTION * ((onset + wake) / 2) / 60, 2),
                 on_track=abs(onset) <= ON_TRACK_MINUTES and abs(wake) <= ON_TRACK_MINUTES,
                 sleep_performance=score.get("sleep_performance_percentage") if best.get("score_state") == "SCORED" else None,
-                recovery=recovery_by_sleep.get(str(best.get("id"))),
+                recovery=int(round(rec["recovery_score"])) if rec else None,
+                whoop=_night_details(best, rec),
             )
             onsets.append(onset)
         nights.append(row)
@@ -598,8 +602,142 @@ def progress(device: str, plan: TripPlan, now: Optional[datetime] = None) -> dic
     latest_is_last = bool(tracked) and nights[-1]["tracked"]
     adjustment = _adjustment(nights[-1]) if still_to_come and latest_is_last else _no_adjustment()
 
+    last = nights[-1] if latest_is_last else None
     return {"nights": nights, "summary": summary, "advice": advice, "latest_recovery": latest_recovery,
-            "adjustment": adjustment, "adaptation": _adaptation(plan, nights, baseline_recovery)}
+            "adjustment": adjustment, "adaptation": _adaptation(plan, nights, baseline_recovery),
+            "baseline": baseline,
+            "insight": _insight(last, baseline) if last else None,
+            "tonight": _tonight(plan, now, last, adjustment["minutes"])}
+
+
+def _baseline_of(scores: List[dict]) -> dict:
+    """Medians of the recovery scores WHOOP gave before the trip."""
+    out: dict = {}
+    for key, field, digits in (("recovery", "recovery_score", 0), ("hrv", "hrv_rmssd_milli", 0),
+                               ("rhr", "resting_heart_rate", 0), ("skin_temp", "skin_temp_celsius", 1)):
+        values = [x[field] for x in scores if x.get(field) is not None]
+        if values:
+            out[key] = round(median(values), digits) if digits else int(round(median(values)))
+    return out
+
+
+def _night_details(sleep: dict, rec: Optional[dict]) -> dict:
+    """
+    Everything WHOOP measured about one night that a traveller can act on:
+    how long asleep against the need, the debt, REM and deep sleep, and the
+    morning's HRV, resting heart rate, SpO2 and skin temperature.
+    """
+    out: dict = {}
+    sc = sleep.get("score") or {}
+    st = sc.get("stage_summary") or {}
+    need = sc.get("sleep_needed") or {}
+    if st.get("total_in_bed_time_milli") is not None:
+        out["asleep_hours"] = round((st["total_in_bed_time_milli"] - st.get("total_awake_time_milli", 0)
+                                     - st.get("total_no_data_time_milli", 0)) / 3.6e6, 1)
+        out["rem_hours"] = round(st.get("total_rem_sleep_time_milli", 0) / 3.6e6, 1)
+        out["deep_hours"] = round(st.get("total_slow_wave_sleep_time_milli", 0) / 3.6e6, 1)
+        if st.get("disturbance_count") is not None:
+            out["disturbances"] = st["disturbance_count"]
+    if need.get("baseline_milli") is not None:
+        out["need_hours"] = round(need["baseline_milli"] / 3.6e6, 1)
+        out["debt_hours"] = round(need.get("need_from_sleep_debt_milli", 0) / 3.6e6, 1)
+        out["need_total_hours"] = round(sum(v for v in need.values() if isinstance(v, (int, float))) / 3.6e6, 1)
+    for src, key in (("sleep_consistency_percentage", "consistency"), ("sleep_efficiency_percentage", "efficiency")):
+        if sc.get(src) is not None:
+            out[key] = int(round(sc[src]))
+    if sc.get("respiratory_rate") is not None:
+        out["resp_rate"] = round(sc["respiratory_rate"], 1)
+    if rec:
+        for src, key, digits in (("hrv_rmssd_milli", "hrv", 0), ("resting_heart_rate", "rhr", 0),
+                                 ("spo2_percentage", "spo2", 1), ("skin_temp_celsius", "skin_temp", 1)):
+            if rec.get(src) is not None:
+                out[key] = round(rec[src], digits) if digits else int(round(rec[src]))
+    return out
+
+
+MAX_DEBT_REPAY_HOURS = 1.0  # extra sleep asked for in one night, at most
+HRV_LOW_FRACTION = 0.85    # HRV this far under the usual reads as a body under strain
+RHR_HIGH_BPM = 5
+FEVERISH_BPM = 8
+FEVERISH_TEMP = 0.5
+
+
+def _insight(night: dict, baseline: dict) -> str:
+    """
+    Two sentences at most: what this morning's WHOOP numbers say about how
+    the body is taking the shift, and what that changes today. Recovery is
+    read in WHOOP's own bands (green from 67, red under 34); HRV and resting
+    heart rate against the traveller's own two-week medians, since the
+    absolute numbers mean nothing across people.
+    """
+    w = night.get("whoop") or {}
+    rec = night.get("recovery")
+    if rec is None and not w:
+        return ""
+    signals = []
+    if w.get("hrv") is not None and baseline.get("hrv") and w["hrv"] < HRV_LOW_FRACTION * baseline["hrv"]:
+        signals.append(f"HRV {w['hrv']} ms against your usual {baseline['hrv']}")
+    if w.get("rhr") is not None and baseline.get("rhr") and w["rhr"] >= baseline["rhr"] + RHR_HIGH_BPM:
+        signals.append(f"resting heart rate {w['rhr']} against your usual {baseline['rhr']}")
+    short = (w.get("asleep_hours") is not None and w.get("need_total_hours") is not None
+             and w["asleep_hours"] < w["need_total_hours"] - 1)
+    parts = []
+    band = None if rec is None else ("green" if rec >= 67 else "red" if rec < LOW_RECOVERY else "yellow")
+    head = f"Recovery {rec}%" if rec is not None else "This morning"
+    if signals:
+        head += ", " + " and ".join(signals)
+    if band == "green" and not signals:
+        parts.append(f"{head}: your body is taking the shift well. Keep to the plan.")
+    elif band == "red":
+        parts.append(f"{head}: your body is struggling with the shift. Take the nap, skip training, and get the light "
+                     f"window; those three move the clock without costing you.")
+    else:
+        parts.append(f"{head}: your body is still working through the shift. Today the light window and the nap matter "
+                     f"more than usual; keep training easy.")
+    if short:
+        parts.append(f"You slept {w['asleep_hours']:g} h of the {w['need_total_hours']:g} h WHOOP says you needed.")
+    feverish = ((w.get("skin_temp") is not None and baseline.get("skin_temp") and w["skin_temp"] >= baseline["skin_temp"] + FEVERISH_TEMP)
+                or (w.get("rhr") is not None and baseline.get("rhr") and w["rhr"] >= baseline["rhr"] + FEVERISH_BPM))
+    if feverish:
+        parts.append("A raised temperature or heart rate can also be a cold coming on; if you feel off, that is not the jet lag.")
+    return " ".join(parts)
+
+
+def _tonight(plan: TripPlan, now: datetime, night: Optional[dict], shift_minutes: int) -> Optional[dict]:
+    """
+    Tonight's sleep, sized by WHOOP's need rather than the usual duration:
+    the plan's wake time stays (it anchors the morning light), so a bigger
+    need means lights out earlier. The need is WHOOP's baseline plus what is
+    left of the debt after last night.
+    """
+    nxt = next((e for e in plan.events if e.type == "sleep" and e.where in ("home", "destination") and e.start > now), None)
+    if nxt is None:
+        return None
+    delta = timedelta(minutes=shift_minutes)
+    bed, wake = nxt.start + delta, nxt.end + delta
+    tz = ZoneInfo(nxt.tz or (plan.home_tz if nxt.where == "home" else plan.destination_tz))
+    planned_hours = round((wake - bed).total_seconds() / 3600, 1)
+    out = {"bed": bed.astimezone(tz).strftime("%H:%M"), "wake": wake.astimezone(tz).strftime("%H:%M"),
+           "planned_hours": planned_hours, "local_tz": tz.key, "need_hours": None, "bed_by": None, "note": None}
+    w = (night or {}).get("whoop") or {}
+    if w.get("need_hours") is None:
+        out["note"] = f"Bed {out['bed']}, up {out['wake']} ({planned_hours:g} h)."
+        return out
+    # Debt is paid back a little a night, as WHOOP itself advises: asking for
+    # three hours extra tonight is not advice anyone can take.
+    debt_left = round(max(0.0, w.get("debt_hours", 0) + w["need_hours"] - w.get("asleep_hours", w["need_hours"])), 1)
+    extra = min(debt_left, MAX_DEBT_REPAY_HOURS)
+    need = round(w["need_hours"] + extra, 1)
+    out["need_hours"] = need
+    out["debt_left_hours"] = debt_left
+    if need > planned_hours + 0.25:
+        bed_by = wake - timedelta(hours=need)
+        out["bed_by"] = bed_by.astimezone(tz).strftime("%H:%M")
+        out["note"] = (f"Lights out by {out['bed_by']} to be up at {out['wake']}: the {w['need_hours']:g} h WHOOP says you need"
+                       + (f", plus {extra:g} h toward {debt_left:g} h of sleep debt" if extra >= 0.25 else "") + ".")
+    else:
+        out["note"] = f"Bed {out['bed']}, up {out['wake']} ({planned_hours:g} h, which covers WHOOP's need of {need:g} h)."
+    return out
 
 
 def _no_adjustment() -> dict:
