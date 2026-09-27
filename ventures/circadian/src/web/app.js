@@ -376,11 +376,14 @@
 
   const signed = (h) => `${h > 0 ? "+" : ""}${h}`;
 
-  function renderPlan(container, title, plan) {
+  function renderPlan(container, title, plan, adjustMinutes = 0) {
     const now = new Date();
     const head = el("div", "card summary");
     head.appendChild(el("h2", "", title));
     head.appendChild(el("p", "", plan.summary));
+    if (adjustMinutes) {
+      head.appendChild(el("p", "adjusted", `Times from now on are ${Math.abs(adjustMinutes)} min ${adjustMinutes > 0 ? "later" : "earlier"} than first planned, to match last night's sleep from WHOOP.`));
+    }
     const stats = el("div", "stats");
     const diff = plan.time_difference_hours, local = plan.local_time_difference_hours;
     // After a stay the body is not on the local clock, so the hours to shift
@@ -535,7 +538,7 @@
     return st;
   }
 
-  async function renderWhoop(container, tripReq, example = false) {
+  async function renderWhoop(container, tripReq, example = false, { progress = null, rerender = null } = {}) {
     const card = el("div", "card");
     card.id = "whoop-card";
     card.appendChild(el("h2", "", "Progress from WHOOP"));
@@ -568,7 +571,10 @@
     if (example) { text.textContent = "WHOOP is connected. Plan your own trip and your real nights show up here next to the plan."; return; }
     text.textContent = "Checking your sleep…";
     try {
-      const p = await api("app/whoop/progress", { device: device(), trip: tripReq });
+      const p = progress || await api("app/whoop/progress", { device: device(), trip: tripReq });
+      // Last night says the clock is off the plan: draw the whole page again
+      // with the plan moved, once, rather than patching times in place.
+      if (!progress && p.adjustment?.minutes && rerender) { rerender(p); return; }
       text.textContent = p.summary;
       for (const n of p.nights) {
         const row = el("div", "night");
@@ -585,6 +591,13 @@
         body.appendChild(row);
       }
       for (const a of p.advice) body.appendChild(el("p", "", a));
+      if (p.adjustment?.note) body.appendChild(el("p", p.adjustment.minutes ? "adjusted" : "", p.adjustment.note));
+      if (p.adaptation?.verdict) {
+        const v = el("p", "verdict");
+        v.appendChild(el("b", "", p.adaptation.adapted_after_nights ? "Adapted. " : "Adapting. "));
+        v.appendChild(document.createTextNode(p.adaptation.verdict));
+        body.appendChild(v);
+      }
     } catch (err) {
       text.textContent = err.code === "whoop_not_connected" ? "WHOOP was disconnected. Connect it again to see progress." : err.message;
       if (err.code === "whoop_not_connected") { button.textContent = "Connect WHOOP"; button.href = `whoop/connect?device=${device()}`; }
@@ -771,19 +784,34 @@
     container.appendChild(card);
   }
 
-  function show(plans, trip, req, supplements) {
+  // The plan with everything still to come moved by `minutes`: what WHOOP
+  // says last night did to the body clock (whoop.py, _adjustment). Past
+  // events, flights and stopovers stay where they were.
+  function shiftPlans(plans, minutes) {
+    const now = Date.now();
+    const move = (iso) => (iso ? new Date(new Date(iso).getTime() + minutes * 60000).toISOString() : iso);
+    const moveLocal = (local) => (local ? fromMinutes(asMinutes(local) + minutes) : local);
+    return plans.map((p) => ({ ...p, plan: { ...p.plan, events: p.plan.events.map((e) => {
+      if (e.type === "flight" || e.type === "stopover" || new Date(e.start).getTime() <= now) return e;
+      return { ...e, start: move(e.start), end: move(e.end), start_local: moveLocal(e.start_local), end_local: moveLocal(e.end_local) };
+    }) } }));
+  }
+
+  function show(plans, trip, req, supplements, progress = null) {
+    const minutes = progress?.adjustment?.minutes || 0;
+    const shown = minutes ? shiftPlans(plans, minutes) : plans;
     const out = $("result"); out.replaceChildren();
-    renderRating(out, plans, trip);
-    renderNow(out, plans);
-    renderActions(out, req, plans);
+    renderRating(out, shown, trip);
+    renderNow(out, shown);
+    renderActions(out, req, shown);
     // Reminders and WHOOP take the whole trip, so a return or a second city
     // gets its reminders and its nights too.
     if (!trip.example) renderReminders(out, req);
     // WHOOP shows on the example too: connecting is per phone, not per trip.
-    renderWhoop(out, req, !!trip.example);
+    renderWhoop(out, req, !!trip.example, { progress, rerender: (p) => show(plans, trip, req, supplements, p) });
     renderSupplements(out, supplements);
-    for (const p of plans) renderPlan(out, p.title, p.plan);
-    out.appendChild(el("p", "disclaimer", plans[0].plan.disclaimer));
+    for (const p of shown) renderPlan(out, p.title, p.plan, minutes);
+    out.appendChild(el("p", "disclaimer", shown[0].plan.disclaimer));
   }
 
   // One way, direct, landing days after take-off: that is someone flying out on
@@ -868,7 +896,36 @@
     if (msg) { const e = $("error"); e.textContent = msg; e.className = flag === "connected" ? "ok" : "error"; e.hidden = false; }
   }
 
-  refreshWhoopButton();
+  // With WHOOP connected, the usual bedtime and wake time come from the last
+  // two weeks of real nights instead of the chronotype's guess. Only fields
+  // the traveller has not typed into are changed: untouched defaults, or the
+  // values this put there last time.
+  const BASELINE = "circadian.baseline.v1";
+  async function applyBaseline(st) {
+    const note = $("baseline-note");
+    if (!st?.connected) { note.hidden = true; return; }
+    let b;
+    try { b = await api(`app/whoop/baseline?device=${device()}`); } catch { return; }
+    if (!b.bed || !b.wake) return;
+    const bed = $("sleep_start"), wake = $("sleep_end");
+    const [defBed, defWake] = CHRONO[$("chronotype").value] || CHRONO.intermediate;
+    const before = load(BASELINE, null);
+    const untouched = (bed.value === defBed && wake.value === defWake)
+      || (before && bed.value === before.bed && wake.value === before.wake);
+    if (untouched && (bed.value !== b.bed || wake.value !== b.wake)) {
+      bed.value = b.bed; wake.value = b.wake;
+      save(BASELINE, { bed: b.bed, wake: b.wake });
+      const trip = read();
+      save(K.current, trip);
+      makePlan(trip, { quiet: true });
+    }
+    if (bed.value === b.bed && wake.value === b.wake) {
+      note.textContent = `From your WHOOP, last ${b.days} nights: bed ${b.bed}, up ${b.wake}. Change them if this trip is different.`;
+      note.hidden = false;
+    }
+  }
+
+  refreshWhoopButton().then(applyBaseline);
   // From the Home Screen app, iPhone runs the WHOOP sign-in in a separate
   // browser sheet; the app underneath never reloads, so it kept saying
   // "Connect WHOOP" after connecting. Look again whenever it comes back.
@@ -878,6 +935,7 @@
     const st = await refreshWhoopButton();
     if (st?.connected && !wasConnected) {
       const e = $("error"); e.textContent = "WHOOP is connected. Your progress appears below your plan."; e.className = "ok"; e.hidden = false;
+      applyBaseline(st);
     }
   });
 

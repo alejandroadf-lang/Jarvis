@@ -288,3 +288,87 @@ def test_the_startup_check_tells_whoop_apart_from_whatever_is_in_front_of_it(mon
     assert "NOT reachable from Python" in whoop.reachability()
     monkeypatch.delenv("WHOOP_CLIENT_ID")
     assert "not checked" in whoop.reachability()
+
+
+# --- baseline, correction, adaptation ------------------------------------------------------
+
+def test_baseline_takes_the_usual_night_across_midnight_and_remembers_the_member(fake):
+    connect(fake)
+    now = datetime(2026, 10, 1, 12, tzinfo=UTC)
+    # Bangkok nights (+07:00): to bed around midnight, some before and some after it.
+    beds = ["23:30", "00:20", "00:40", "23:50", "00:10", "01:00", "23:40"]
+    fake.sleeps = []
+    for i, bed in enumerate(beds):
+        h, m = map(int, bed.split(":"))
+        start = datetime(2026, 9, 20 + i, h, m, tzinfo=timezone(timedelta(hours=7)))
+        if h < 12:
+            start += timedelta(days=1)
+        rec = sleep_record(i, start.astimezone(UTC), (start + timedelta(hours=7, minutes=30)).astimezone(UTC))
+        rec.update(timezone_offset="+07:00", user_id=10129)
+        fake.sleeps.append(rec)
+    fake.sleeps.append(dict(sleep_record(99, now - timedelta(hours=5), now - timedelta(hours=4, minutes=30), nap=True), user_id=10129))
+    fake.recoveries = [{"score_state": "SCORED", "score": {"recovery_score": s}, "user_id": 10129} for s in (61, 70, 55, 66, 48)]
+    out = whoop.baseline(DEVICE, now=now)
+    assert out == {"days": 14, "nights": 7, "bed": "00:10", "wake": "07:40", "recovery": 61}
+    assert whoop.device_for_user(10129) == DEVICE and whoop.device_for_user(1) is None
+    # Two weeks of nights, not the whole history.
+    assert all(f"start={whoop._iso(now - timedelta(days=14))}" in c[1].replace("%3A", ":") for c in fake.calls if "start=" in c[1])
+
+
+def test_baseline_with_too_few_nights_gives_no_times(fake):
+    connect(fake)
+    now = datetime(2026, 10, 1, 12, tzinfo=UTC)
+    fake.sleeps = [sleep_record(1, now - timedelta(hours=30), now - timedelta(hours=22))]
+    out = whoop.baseline(DEVICE, now=now)
+    assert out["nights"] == 1 and out["bed"] is None and out["wake"] is None
+
+
+def test_a_late_night_moves_the_rest_of_the_plan_by_half_the_lateness(fake):
+    plan = trip()
+    connect(fake)
+    n0 = [e for e in plan.events if e.type == "sleep" and e.where == "destination"][0]
+    fake.sleeps = [sleep_record(1, n0.start + timedelta(minutes=100), n0.end + timedelta(minutes=60))]
+    out = whoop.progress(DEVICE, plan, now=n0.end + timedelta(hours=2))
+    adj = out["adjustment"]
+    assert adj["minutes"] == 40 and adj["night_of"] == out["nights"][-1]["night_of"]   # (100+60)/2 = 80, half, to 5 min
+    assert "80 min later than planned" in adj["note"] and "moved 40 min later" in adj["note"]
+
+
+def test_a_night_close_to_the_plan_and_a_finished_plan_move_nothing(fake):
+    plan = trip()
+    connect(fake)
+    nights = [e for e in plan.events if e.type == "sleep" and e.where == "destination"]
+    fake.sleeps = [sleep_record(1, nights[0].start + timedelta(minutes=20), nights[0].end + timedelta(minutes=10))]
+    out = whoop.progress(DEVICE, plan, now=nights[0].end + timedelta(hours=2))
+    assert out["adjustment"]["minutes"] == 0 and "close enough" in out["adjustment"]["note"]
+    # After the last event there is nothing left to move, however late the night was.
+    fake.sleeps = [sleep_record(i, n.start + timedelta(hours=2), n.end + timedelta(hours=2)) for i, n in enumerate(nights)]
+    after = max(e.end or e.start for e in plan.events) + timedelta(days=1)
+    assert whoop.progress(DEVICE, plan, now=after)["adjustment"]["minutes"] == 0
+
+
+def test_adaptation_is_two_good_nights_running_with_recovery_back_to_usual(fake):
+    plan = trip()
+    connect(fake)
+    nights = [e for e in plan.events if e.type == "sleep" and e.where == "destination"]
+    assert len(nights) >= 4
+    first = nights[0].start
+    # Before the trip: usual recovery around 60. Nights: 1 late, 2 on track but drained, 3 and 4 on track and recovered.
+    fake.recoveries = [{"score_state": "SCORED", "score": {"recovery_score": r}, "sleep_id": None,
+                        "created_at": (first - timedelta(days=d)).isoformat()} for d, r in ((3, 58), (5, 62), (8, 60))]
+    plan_nights = [(120, 30, 40), (10, 10, 30), (15, 20, 64), (5, 0, 71)]
+    for i, (late_bed, late_wake, rec) in enumerate(plan_nights):
+        n = nights[i]
+        fake.sleeps.append(sleep_record(i, n.start + timedelta(minutes=late_bed), n.end + timedelta(minutes=late_wake)))
+        fake.recoveries.append({"sleep_id": f"s{i}", "score_state": "SCORED", "score": {"recovery_score": rec},
+                                "created_at": (n.end + timedelta(minutes=5)).isoformat()})
+    out = whoop.progress(DEVICE, plan, now=nights[3].end + timedelta(hours=2))
+    a = out["adaptation"]
+    assert a["baseline_recovery"] == 60 and a["nights_at_destination"] == 4
+    assert a["adapted_after_nights"] == 3 and a["predicted_nights"] == plan.days_to_adapt_after_arrival
+    assert a["verdict"].startswith("Back on local time after 3 nights; the plan expected")
+
+    # Two nights in: on track once, not yet.
+    out = whoop.progress(DEVICE, plan, now=nights[1].end + timedelta(hours=2))
+    assert out["adaptation"]["adapted_after_nights"] is None
+    assert out["adaptation"]["verdict"].startswith("Not yet on local time after 2 nights there")

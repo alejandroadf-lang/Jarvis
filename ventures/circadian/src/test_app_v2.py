@@ -280,3 +280,8 @@ def test_a_refused_token_exchange_carries_whoops_status_to_the_page(monkeypatch)
     monkeypatch.setattr(whoop_module, "exchange_code", refuse)
     r = client.get("/whoop/callback", params={"code": "c", "state": "s"}, follow_redirects=False)
     assert r.headers["location"] == "/?whoop=failed&why=whoop&status=403"
+
+
+def test_whoop_baseline_without_a_connection_is_a_clear_409():
+    r = client.get("/app/whoop/baseline", params={"device": DEVICE})
+    assert r.status_code == 409 and r.json()["error"]["code"] == "whoop_not_connected"

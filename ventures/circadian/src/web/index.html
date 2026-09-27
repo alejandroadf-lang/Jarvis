@@ -168,6 +168,9 @@
   .night { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; padding-block: 8px; border-top: 1px solid var(--rule); font-size: 14px; }
   .night:first-child { border-top: 0; }
   .night small { color: var(--muted); grid-column: 1 / -1; }
+  .adjusted { color: var(--dawn); font-size: 14px; }
+  .verdict { font-size: 14px; }
+  .verdict b { color: var(--sage); }
   .pill { font-size: 12px; font-weight: 600; border-radius: 999px; padding: 2px 10px; align-self: start; }
   .pill.good { background: #1F3A2C; color: var(--sage); }
   .pill.off { background: #3A2A1F; color: var(--dawn); }
@@ -231,6 +234,7 @@
         <label for="sleep_start">Usual bedtime<input id="sleep_start" type="time" value="23:00"></label>
         <label for="sleep_end">Usual wake time<input id="sleep_end" type="time" value="07:00"></label>
       </div>
+      <p class="example" id="baseline-note" hidden></p>
       <details>
         <summary>More options</summary>
         <div class="more">
