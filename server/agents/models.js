@@ -1,5 +1,4 @@
 import { hasSecret } from '../env.js';
-import { isOmniRouteConfigured } from './omniroute.js';
 // Which model each agent actually runs on, and what that model costs.
 //
 // Every agent used to run on claude-sonnet-5, which was the right default
@@ -27,8 +26,6 @@ export const CHEAP_TIER = 'specialist';
 export const OPENAI_TIER = 'assistant';
 export const GEMINI_TIER = 'analyst';
 export const DEEPSEEK_TIER = 'reasoner';
-// OmniRoute, the self-hosted gateway. See agents/omniroute.js.
-export const OMNIROUTE_TIER = 'router';
 
 // Prices are per million tokens and are pinned by hand — same convention as
 // the rest of this app. Anthropic's published pricing for claude-sonnet-5
@@ -87,24 +84,6 @@ export const MODELS = {
     },
     get outputPricePerMTok() {
       return numberFromEnv('DEEPSEEK_OUTPUT_PRICE_PER_MTOK', 0.42);
-    },
-  },
-  // OmniRoute decides which provider answers, so the real price is not known
-  // here. The default is the frontier model's, on purpose: metering a free
-  // provider as expensive only makes the daily cap trip early, while metering
-  // an expensive one as free makes the cap stop protecting anything. Lower it
-  // with the two variables once OmniRoute's own dashboard shows what "auto"
-  // actually routes to.
-  [OMNIROUTE_TIER]: {
-    provider: 'omniroute',
-    get model() {
-      return (process.env.OMNIROUTE_MODEL || '').trim() || 'auto';
-    },
-    get inputPricePerMTok() {
-      return numberFromEnv('OMNIROUTE_INPUT_PRICE_PER_MTOK', 2.0);
-    },
-    get outputPricePerMTok() {
-      return numberFromEnv('OMNIROUTE_OUTPUT_PRICE_PER_MTOK', 10.0);
     },
   },
   // Read at call time for the same reason as the OpenAI tier above.
@@ -267,8 +246,5 @@ function isProviderAvailable(provider, openRouterAvailable) {
   if (provider === 'openai') return hasSecret('OPENAI_API_KEY');
   if (provider === 'gemini') return hasSecret('GEMINI_API_KEY');
   if (provider === 'deepseek') return hasSecret('DEEPSEEK_API_KEY');
-  // Without this line an agent assigned to OmniRoute would be judged by
-  // whether OpenRouter is configured, the fallthrough below.
-  if (provider === 'omniroute') return isOmniRouteConfigured();
   return openRouterAvailable;
 }
