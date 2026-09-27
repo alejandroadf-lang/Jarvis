@@ -160,6 +160,21 @@
   .pill.good { background: #1F3A2C; color: var(--sage); }
   .pill.off { background: #3A2A1F; color: var(--dawn); }
   .pill.none { background: var(--surface-2); color: var(--muted); }
+  /* The plan in brief and the supplements card. */
+  .brief-list { display: grid; gap: 12px; }
+  .brief-item { display: grid; gap: 2px; padding-left: 12px; border-left: 3px solid var(--dawn); }
+  .brief-item b { font-size: 15px; }
+  .brief-item p { margin: 0; color: var(--muted); font-size: 14px; }
+  .supp { display: grid; gap: 4px; padding-top: 12px; border-top: 1px solid var(--rule); }
+  .supp-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+  .supp-head .pill { white-space: nowrap; flex-shrink: 0; }
+  .supp p { margin: 0; color: var(--muted); font-size: 14px; }
+  .supp .supp-when { color: var(--ink); }
+  .supp .supp-caution { font-size: 13px; color: var(--rose); }
+  .pill.grade-good { background: #1F3A2C; color: var(--sage); }
+  .pill.grade-some { background: #3A2A1F; color: var(--dawn); }
+  .pill.grade-weak { background: var(--surface-2); color: var(--muted); }
+  .pill.grade-none { background: #3A1F28; color: var(--rose); }
   .disclaimer { font-size: 12px; color: var(--muted); margin: 0; }
   @media (max-width: 380px) { .row:not(.cities), .actions { grid-template-columns: 1fr; } }
 </style>

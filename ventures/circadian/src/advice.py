@@ -305,3 +305,169 @@ def describe(plan) -> None:
             e.note = _melatonin(plan, e, zone, n)
         elif e.type == "nap":
             e.note = _nap(plan, e, zone)
+
+
+# --- the plan in brief ----------------------------------------------------------------------
+#
+# The events are the schedule; this is what a traveller should take from it if
+# they read nothing else: how hard this shift is, what to do before and on the
+# flight, the one light window that matters most, when exercise helps, and what
+# undoes the work. Every line comes from this plan's own events.
+#
+# Exercise timing follows the human phase-response curve for exercise
+# (Youngstedt et al., J Physiol 2019): exercise at 07:00 or between 13:00 and
+# 16:00 advances the clock; exercise between 19:00 and 22:00 delays it.
+
+def _day(at: datetime, zone: str) -> str:
+    local = at.astimezone(ZoneInfo(zone))
+    return f"{local.strftime('%a')} {local.day} {local.strftime('%b')}"
+
+
+def briefing(plan) -> List[Dict[str, str]]:
+    there, home = city(plan.destination_tz), city(plan.home_tz)
+    if plan.mode == "no_shift":
+        return [{"title": "No jet lag to fix", "text": f"{home} and {there} are within an hour. Keep your usual schedule."}]
+
+    events = sorted(plan.events, key=lambda e: e.start)
+    items: List[Dict[str, str]] = []
+
+    if plan.mode == "stay_on_home_time":
+        night = next((e for e in events if e.type == "sleep" and e.where == "destination"), None)
+        text = f"You're not in {there} long enough to adapt, so stay on {home} time."
+        if night:
+            text += (f" That means bed at {_hm(night.start, plan.destination_tz)} {there} time: "
+                     f"book a room with blackout curtains, and plan meetings for when it's daytime in {home}.")
+        items.append({"title": "Stay on home time", "text": text})
+    else:
+        east = plan.strategy == "advance"
+        hard = ("the harder direction: your body clock has to move earlier" if east
+                else "the easier direction: your body clock only has to stay up later")
+        by = plan.adapted_by.strftime("%a %-d %b") if plan.adapted_by else ""
+        items.append({"title": f"{plan.shift_hours:g} hours {'earlier' if east else 'later'}",
+                      "text": f"This is {hard}. Expect about {plan.days_to_adapt_after_arrival} days; "
+                              f"you should feel on {there} time by {by}."})
+
+        home_nights = [e for e in events if e.type == "sleep" and e.where == "home"]
+        if home_nights:
+            beds = ", then ".join(_hm(e.start, plan.home_tz) for e in home_nights)
+            items.append({"title": "Before you fly",
+                          "text": f"From {_day(home_nights[0].start, plan.home_tz)}: bed at {beds}. "
+                                  f"Get light as soon as you're up; it does half the work."})
+
+    flight = next((e for e in events if e.type == "flight"), None)
+    if flight:
+        plane_sleep = [e for e in events if e.type == "sleep" and e.where in ("flight", "stopover")]
+        if plane_sleep:
+            s = plane_sleep[0]
+            zone = s.tz or plan.destination_tz
+            text = f"Sleep {_hm(s.start, zone)} to {_hm(s.end, zone)} {city(zone)} time, and eat on {there} time from boarding: skip any meal served in that window."
+        elif plan.mode == "adapt":
+            text = f"Stay awake on this flight: it's daytime in {there}. Eat on {there} time from boarding."
+        else:
+            text = "Sleep when it's night at home, whatever the cabin lights are doing."
+        items.append({"title": "On the plane", "text": text + " Water, not alcohol: alcohol makes plane sleep shorter and worse."})
+
+    if plan.mode == "adapt":
+        seek = next((e for e in events if e.type == "light_seek" and e.where == "destination"), None)
+        if seek:
+            avoid = next((e for e in events if e.type == "light_avoid" and e.where == "destination"
+                          and e.start.astimezone(ZoneInfo(plan.destination_tz)).date()
+                          == seek.start.astimezone(ZoneInfo(plan.destination_tz)).date()), None)
+            text = f"{_day(seek.start, plan.destination_tz)}: bright light {_hm(seek.start, plan.destination_tz)} to {_hm(seek.end, plan.destination_tz)}"
+            if avoid:
+                text += f", and sunglasses {_hm(avoid.start, plan.destination_tz)} to {_hm(avoid.end, plan.destination_tz)}"
+            text += ". Get this one right and the rest of the week is easier."
+            items.append({"title": "Your most important light", "text": text})
+
+        east = plan.strategy == "advance"
+        items.append({"title": "Exercise",
+                      "text": ("A workout at 07:00 or between 13:00 and 16:00 local time helps move your clock earlier. "
+                               "Avoid exercising between 19:00 and 22:00 for the first days: it pushes the wrong way.")
+                      if east else
+                              ("A workout between 19:00 and 22:00 local time helps move your clock later. "
+                               "Skip early-morning workouts for the first days.")})
+        items.append({"title": "What undoes it",
+                      "text": "A nap longer than 30 minutes or after 15:00, a drink to help you sleep (it breaks up the second half of the night), "
+                              "and screens in bed. Keep your bedtime the same every night, even after a bad one."})
+    return items
+
+
+# --- supplements ------------------------------------------------------------------------------
+#
+# Graded by the evidence for this use, not by how often they are sold for it.
+# Only melatonin has good evidence for jet lag itself (Cochrane review,
+# Herxheimer & Petrie 2002: effective for flights across five or more time
+# zones, especially eastward; 0.5 to 5 mg similarly effective). Caffeine helps
+# alertness and is already timed in the plan. Vitamin C taken regularly
+# slightly shortens colds and helps more under physical stress (Cochrane,
+# Hemilä & Chalker 2013), but starting it once ill does not help. Zinc lozenges
+# started within a day of symptoms may shorten a cold, on low-certainty
+# evidence. Nothing here is a prescription: every entry carries its own caution.
+
+GENERAL_CAUTION = ("Not medical advice. Check with a doctor or pharmacist first if you take other medicines, "
+                   "are pregnant or breastfeeding, or have a health condition.")
+
+
+def supplements(plans) -> Dict[str, object]:
+    if not plans:
+        return {"items": [], "caution": GENERAL_CAUTION}
+    first, last = plans[0], plans[-1]
+    flights = sorted((e for p in plans for e in p.events if e.type == "flight"), key=lambda e: e.start)
+    depart = flights[0].start if flights else None
+    home = first.home_tz
+    items: List[Dict[str, str]] = []
+
+    advancing = [p for p in plans if p.mode == "adapt" and p.strategy == "advance"]
+    mel = [e for p in advancing for e in p.events if e.type == "melatonin"]
+    if mel:
+        zone = lambda e: e.tz or (first.home_tz if e.where == "home" else next(p for p in plans if e in p.events).destination_tz)
+        first_mel = min(mel, key=lambda e: e.start)
+        last_mel = max(mel, key=lambda e: e.start)
+        items.append({
+            "name": "Melatonin", "evidence": "Good evidence",
+            "when": f"30 minutes before bed, from {_day(first_mel.start, zone(first_mel))} to {_day(last_mel.start, zone(last_mel))}; "
+                    f"each night's time is in your plan.",
+            "why": "The best-studied aid for jet lag after flying east across five or more time zones. "
+                   "Studies used 0.5 to 5 mg; more is not better.",
+            "caution": "Prescription-only in some countries, including the UK. Avoid with blood thinners, sleeping pills, epilepsy, "
+                       "pregnancy or breastfeeding, and don't drive for a few hours after.",
+        })
+    elif any(p.mode == "adapt" and p.strategy == "delay" for p in plans):
+        items.append({
+            "name": "Melatonin", "evidence": "Not for this trip",
+            "when": "Skip it.",
+            "why": "You're shifting later, and for that direction the evidence is weak; a morning dose would also make you drowsy.",
+            "caution": "",
+        })
+
+    items.append({
+        "name": "Caffeine", "evidence": "Good evidence for alertness",
+        "when": "Already timed in your plan: coffee or tea each morning, none in the 6 hours before bed.",
+        "why": "Keeps you alert through the first days without stealing the sleep that resets your clock.",
+        "caution": "",
+    })
+
+    if depart is not None:
+        start = depart - timedelta(days=7)
+        end = max(e.end or e.start for p in plans for e in p.events)
+        items.append({
+            "name": "Vitamin C", "evidence": "Some evidence",
+            "when": f"Daily from {_day(start, home)} (a week before you fly) until {_day(end, last.destination_tz)}.",
+            "why": "Taken regularly, it slightly shortens colds, and helps more when you're run down, as long flights and short "
+                   "nights make you. Starting once you're already ill doesn't help. Studies used 200 mg to 1 g a day.",
+            "caution": "High doses can upset your stomach. Avoid large doses if you've had kidney stones.",
+        })
+        items.append({
+            "name": "Zinc lozenges", "evidence": "Weak or mixed",
+            "when": "Only if you catch a cold: start within 24 hours of the first symptoms, for a few days at most.",
+            "why": "May shorten a cold by a day or two, but the evidence is low-certainty.",
+            "caution": "Can cause nausea or a bad taste. Never use zinc nasal sprays: they have caused lasting loss of smell.",
+        })
+
+    items.append({
+        "name": "Vitamin D, B12, magnesium, 'jet lag' blends", "evidence": "No evidence for jet lag",
+        "when": "Skip them for this trip.",
+        "why": "None has good evidence of helping jet lag. Take them only if a doctor has told you you're low.",
+        "caution": "",
+    })
+    return {"items": items, "caution": GENERAL_CAUTION}
