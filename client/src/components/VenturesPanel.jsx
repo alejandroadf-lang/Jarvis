@@ -35,6 +35,7 @@ const INTEGRATION_LABELS = {
   openrouter: 'OpenRouter (specialist agents)',
   openai: 'OpenAI (voice notes, fallback)',
   gemini: 'Gemini (fallback)',
+  omniroute: 'OmniRoute (AI gateway, first backup)',
   honcho: 'Honcho (founder memory)',
   email: 'Email',
   github: 'GitHub',

@@ -33,6 +33,7 @@ import {
   OPENAI_TIER,
   GEMINI_TIER,
   DEEPSEEK_TIER,
+  OMNIROUTE_TIER,
   DEFAULT_TIER,
   CHEAP_TIER,
 } from './models.js';
@@ -41,6 +42,11 @@ import { recordContribution } from '../finance/profitShare.js';
 import { skillsFor, getSkill, describeSkillsForAgent } from '../skills/registry.js';
 import { mcpRequestFields, describeMcpForAgent } from './mcp.js';
 import { isOpenRouterConfigured, createCompletion, openRouterFallbackModel } from './openrouter.js';
+import {
+  isOmniRouteConfigured,
+  omniRouteModel,
+  createCompletion as omniRouteCompletion,
+} from './omniroute.js';
 import {
   isDeepSeekConfigured,
   createCompletion as deepSeekCompletion,
@@ -222,6 +228,17 @@ function isProviderOutage(err) {
 // the company keeps answering.
 function backupProviders() {
   return [
+    // First when it is set up: it is a gateway with its own fallback across
+    // many providers, including free ones, so one call here is several of the
+    // backups below tried in turn by something that knows their quotas.
+    {
+      name: 'OmniRoute',
+      provider: 'omniroute',
+      available: isOmniRouteConfigured,
+      model: omniRouteModel,
+      send: omniRouteCompletion,
+      tier: OMNIROUTE_TIER,
+    },
     {
       name: 'OpenAI',
       available: isOpenAIConfigured,
@@ -402,6 +419,7 @@ export async function createMessage(anthropic, modelSpec, params) {
     openai: createOpenAiCompletion,
     gemini: createGeminiCompletion,
     deepseek: deepSeekCompletion,
+    omniroute: omniRouteCompletion,
   };
 
   const send = () => {
