@@ -13,6 +13,7 @@ import { loadSessions, saveSession, deleteSession,
   trimHistory,
 } from './sessionStore.js';
 import { getLedger } from './finance/ledger.js';
+import { CIRCADIAN_PREFIX, circadianProxy, startCircadian } from './circadian.js';
 import {
   listVentures,
   getVenture,
@@ -164,6 +165,10 @@ const deskSessions = loadSessions('desk'); // sessionId -> [{ role, content }], 
 const studioSessions = loadSessions('studio'); // sessionId -> [{ role, content }], Venture Partner-level only
 
 const app = express();
+// First, ahead of the JSON parser (it would consume the body before it could be
+// forwarded) and ahead of requireAccess (travellers never have the Jarvis
+// token). See circadian.js.
+app.use(CIRCADIAN_PREFIX, circadianProxy());
 app.use(cors());
 // The raw body is kept because Meta signs WhatsApp webhooks with an HMAC
 // over exactly the bytes it sent; json() would parse and discard them, and
@@ -1693,4 +1698,5 @@ httpServer.listen(PORT, () => {
   startDailyMeetingScheduler({ anthropic });
   startWeeklyReflectionScheduler({ anthropic });
   startInboxWatcher({ anthropic });
+  startCircadian();
 });

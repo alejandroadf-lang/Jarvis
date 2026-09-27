@@ -49,3 +49,19 @@ jobs:
         working-directory: client
       - run: npm run build
         working-directory: client
+
+  # Circadian (ventures/circadian) ships inside the same image. 3.11 because
+  # that is the Python the image's Debian base installs.
+  circadian-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r src/requirements.txt pytest httpx
+        working-directory: ventures/circadian
+      - run: python -m pytest -q src
+        working-directory: ventures/circadian
+        env:
+          CIRCADIAN_SCHEDULER: 'off'

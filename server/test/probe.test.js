@@ -95,6 +95,31 @@ test('traversal resolves inside the origin rather than escaping it', async () =>
   assert.ok(requested.startsWith(`${APPROVED}/`), `stayed on the origin: ${requested}`);
 });
 
+// A venture served below a shared host: the grant is the host *and* the path.
+const MOUNTED = 'https://jarvis-production-3d47.up.railway.app/circadian';
+
+test('under a base path, a path from the root means the root of the service', async () => {
+  const requested = [];
+  global.fetch = async (url) => {
+    requested.push(String(url));
+    return { status: 200, headers: new Map(), text: async () => 'ok' };
+  };
+  await probeEndpoint({ origin: MOUNTED, path: '/health' });
+  await probeEndpoint({ origin: MOUNTED, path: 'health' });
+  await probeEndpoint({ origin: MOUNTED });
+  assert.deepEqual(requested, [`${MOUNTED}/health`, `${MOUNTED}/health`, `${MOUNTED}/`]);
+});
+
+test('a path cannot climb out of the base path to the rest of the shared host', async () => {
+  for (const path of ['../api/health', '/../api/health', '//evil.com/', '/\\/evil.com', 'https://evil.com/']) {
+    await assert.rejects(
+      () => probeEndpoint({ origin: MOUNTED, path }),
+      /points outside|not a URL/,
+      `"${path}" must stay under ${MOUNTED}`
+    );
+  }
+});
+
 function response({ status, body = '', headers = {} }) {
   return async () => ({
     status,

@@ -1,0 +1,527 @@
+"""
+Trip-based jet-lag planning: the engine behind the consumer app and /v2.
+
+shift_logic.py (v1) answers "N zones, which way" with a schedule on the home
+clock, starting after arrival. That is not something a traveller can follow:
+they know their flight, not a zone count; they live on local time once they
+land; and the best-supported approach starts shifting before departure. This
+module takes the flight and returns dated events on the clock of wherever the
+traveller is at the time.
+
+The model, in one paragraph. The body clock is tracked by its core-body-
+temperature minimum (CBTmin), taken as two hours before habitual wake. Light
+after CBTmin advances the clock and light before it delays it, so light-seek
+and light-avoid windows are placed on either side of each day's CBTmin (the
+phase-response curve, e.g. Khalsa et al. 2003). The clock moves at most
+1.0 h/day earlier or 1.5 h/day later after arrival (Eastman & Burgess 2009),
+and 1.0 h/day before departure by moving sleep earlier or later at home
+(Burgess et al. 2003, three pre-flight days). Sleep before departure follows
+the shifting body clock; from arrival, sleep is on the local clock, because
+that is the day the traveller actually has to live, and light does the
+shifting. Light windows that fall inside planned sleep are trimmed away: a
+window you would sleep through is not advice.
+
+Everything is computed in UTC and rendered per event in the traveller's
+current zone (home before departure, destination from boarding on, since that
+is when to change your watch). Daylight-saving is handled by zoneinfo; the time
+difference is the one in force at the moment of arrival.
+
+Not medical advice. Melatonin is given as timing only, never a dose, and only
+for advancing: morning melatonin for delays is sedating and the evidence for
+it is weaker. It is prescription-only in parts of Europe and the UK.
+"""
+
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass, field
+from datetime import date, datetime, time, timedelta, timezone
+from typing import List, Optional, Tuple
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from src.shift_logic import DISCLAIMER
+
+UTC = timezone.utc
+
+ADVANCE_RATE = 1.0          # h/day after arrival, clock earlier (eastward)
+DELAY_RATE = 1.5            # h/day after arrival, clock later (westward)
+PREFLIGHT_RATE = 1.0        # h/day at home before departure, either way
+MAX_PREFLIGHT_DAYS = 3
+CBT_BEFORE_WAKE = 2.0       # CBTmin ~2h before habitual wake
+LIGHT_WINDOW = 3.0          # hours either side of CBTmin
+MIN_WINDOW_MINUTES = 30     # shorter trimmed windows are dropped
+CAFFEINE_CUTOFF = 6.0       # no caffeine within this many hours of bedtime
+NAP_MINUTES = 30
+SHORT_TRIP_HOURS = 72       # at the destination for less: stay on home time
+MAX_FLIGHT_HOURS = 48       # first departure to final arrival, stopovers included
+LAYOVER_SLEEP_HOURS = 4     # a stopover this long can hold real sleep
+READY_BEFORE_DEPARTURE = timedelta(hours=3)
+
+# Used only when the traveller gives no sleep times.
+CHRONOTYPE_SLEEP = {
+    "early": (22.0, 6.0),
+    "intermediate": (23.0, 7.0),
+    "late": (0.5, 8.5),
+}
+
+
+@dataclass
+class Event:
+    type: str                 # sleep | light_seek | light_avoid | melatonin | caffeine_ok | nap | flight | stopover
+    start: datetime           # UTC
+    end: Optional[datetime]   # UTC, None for point events
+    where: str                # home | flight | stopover | destination
+    note: str = ""
+    tz: Optional[str] = None  # the clock to show it on, when not simply home or destination
+
+
+@dataclass
+class TripPlan:
+    mode: str                         # adapt | stay_on_home_time | no_shift
+    home_tz: str
+    destination_tz: str
+    time_difference_hours: float      # destination minus home, at arrival
+    strategy: Optional[str]           # advance | delay
+    shift_hours: float
+    preflight_days: int
+    days_to_adapt_after_arrival: int
+    adapted_by: Optional[date]        # destination date the body clock is expected to be local
+    events: List[Event] = field(default_factory=list)
+    summary: str = ""
+    disclaimer: str = DISCLAIMER
+
+
+# --- small helpers ---------------------------------------------------------------------
+
+def zone(name: str) -> ZoneInfo:
+    try:
+        return ZoneInfo(str(name).strip())
+    except (ZoneInfoNotFoundError, ValueError) as err:
+        raise ValueError(f"unknown time zone: {name}") from err
+
+
+def parse_hour(value) -> float:
+    """'23:30' or 23.5 -> 23.5, in [0, 24)."""
+    if isinstance(value, (int, float)):
+        hour = float(value)
+    else:
+        text = str(value).strip()
+        try:
+            hh, mm = (text.split(":") + ["0"])[:2]
+            hour = int(hh) + int(mm) / 60.0
+        except ValueError as err:
+            raise ValueError(f"not a clock time: {value}") from err
+    if not 0 <= hour < 24:
+        raise ValueError(f"clock time out of range: {value}")
+    return hour
+
+
+def local(dt_naive: datetime, tz: ZoneInfo) -> datetime:
+    """A wall-clock time in tz, as UTC."""
+    if dt_naive.tzinfo is not None:
+        return dt_naive.astimezone(UTC)
+    return dt_naive.replace(tzinfo=tz).astimezone(UTC)
+
+
+def night_start(d: date, sleep_start: float, tz: ZoneInfo) -> datetime:
+    """
+    The bedtime of 'the night of date d', in UTC. A bedtime after midnight
+    (a late type's 00:30) belongs to the evening before, so it is placed on
+    d + 1. Wall-clock arithmetic, then UTC, so DST nights are right.
+    """
+    hour = sleep_start if sleep_start >= 12 else sleep_start + 24
+    wall = datetime.combine(d, time(0, 0)) + timedelta(hours=hour)
+    return wall.replace(tzinfo=tz).astimezone(UTC)
+
+
+def _offset_hours(tz: ZoneInfo, at: datetime) -> float:
+    return at.astimezone(tz).utcoffset().total_seconds() / 3600.0
+
+
+def _subtract(window: Tuple[datetime, datetime], blocks: List[Tuple[datetime, datetime]]):
+    """Parts of window not covered by any block, dropping slivers."""
+    pieces = [window]
+    for b0, b1 in blocks:
+        nxt = []
+        for p0, p1 in pieces:
+            if b1 <= p0 or b0 >= p1:
+                nxt.append((p0, p1))
+                continue
+            if b0 > p0:
+                nxt.append((p0, b0))
+            if b1 < p1:
+                nxt.append((b1, p1))
+        pieces = nxt
+    return [(a, b) for a, b in pieces if (b - a) >= timedelta(minutes=MIN_WINDOW_MINUTES)]
+
+
+# --- the plan --------------------------------------------------------------------------
+
+def choose_strategy(difference: float, preflight_days: int, requested: str = "auto") -> Tuple[str, float, float]:
+    """
+    (strategy, hours to shift, post-arrival rate).
+
+    Past about nine zones east, going the long way round (delaying) is often
+    quicker, because the clock delays half again as fast as it advances. So
+    'auto' compares the days each way, after pre-flight days, and takes the
+    fewer; a tie goes to the shorter way round.
+    """
+    advance_need = difference % 24
+    delay_need = (24 - advance_need) % 24
+    pre = min(preflight_days, MAX_PREFLIGHT_DAYS) * PREFLIGHT_RATE
+
+    def days(need, rate):
+        return math.ceil(max(0.0, need - pre) / rate - 1e-9)
+
+    if requested == "advance":
+        return "advance", advance_need, ADVANCE_RATE
+    if requested == "delay":
+        return "delay", delay_need, DELAY_RATE
+    if requested != "auto":
+        raise ValueError(f"unknown strategy: {requested}")
+    da, dd = days(advance_need, ADVANCE_RATE), days(delay_need, DELAY_RATE)
+    if da < dd or (da == dd and advance_need <= 12):
+        return "advance", advance_need, ADVANCE_RATE
+    return "delay", delay_need, DELAY_RATE
+
+
+def _parse_legs(legs) -> List[Tuple[datetime, datetime, ZoneInfo, ZoneInfo]]:
+    """[(dep_utc, arr_utc, dep_zone, arr_zone)], validated as one journey."""
+    parsed = []
+    for i, leg in enumerate(legs, start=1):
+        get = leg.get if isinstance(leg, dict) else (lambda k, _l=leg: getattr(_l, k))
+        dz, az = zone(get("departure_tz")), zone(get("arrival_tz"))
+        d0, a0 = get("departure"), get("arrival")
+        if isinstance(d0, str):
+            d0 = datetime.fromisoformat(d0)
+        if isinstance(a0, str):
+            a0 = datetime.fromisoformat(a0)
+        d, a = local(d0, dz), local(a0, az)
+        if a <= d:
+            raise ValueError(f"flight {i}: arrival must be after departure")
+        if parsed and d < parsed[-1][1]:
+            raise ValueError(f"flight {i} departs before flight {i - 1} lands")
+        parsed.append((d, a, dz, az))
+    if not parsed:
+        raise ValueError("a trip needs at least one flight")
+    return parsed
+
+
+def plan_trip(
+    departure: Optional[datetime] = None,
+    departure_tz: Optional[str] = None,
+    arrival: Optional[datetime] = None,
+    arrival_tz: Optional[str] = None,
+    sleep_start=None,
+    sleep_end=None,
+    chronotype: str = "intermediate",
+    preflight_days: int = 2,
+    return_departure: Optional[datetime] = None,
+    melatonin: bool = True,
+    caffeine: bool = True,
+    strategy: str = "auto",
+    legs=None,
+) -> TripPlan:
+    """
+    departure / arrival: wall-clock times at the origin and the final
+    destination (naive datetimes, or aware ones). return_departure, if given,
+    is the wall-clock time the traveller leaves the destination again.
+
+    legs: for connections, a list of flights, each with departure,
+    departure_tz, arrival and arrival_tz; it replaces the four single-flight
+    arguments. Stopovers get their own clock, and sleep is only advised on
+    board or at a stopover long enough to hold it.
+    """
+    if legs:
+        flights = _parse_legs(legs)
+    else:
+        if None in (departure, departure_tz, arrival, arrival_tz):
+            raise ValueError("give departure, departure_tz, arrival and arrival_tz, or legs")
+        d_zone, a_zone = zone(departure_tz), zone(arrival_tz)
+        flights = [(local(departure, d_zone), local(arrival, a_zone), d_zone, a_zone)]
+        if flights[0][1] <= flights[0][0]:
+            raise ValueError("arrival must be after departure")
+    home, dest = flights[0][2], flights[-1][3]
+    dep, arr = flights[0][0], flights[-1][1]
+    stopovers = [(flights[i][1], flights[i + 1][0], flights[i][3]) for i in range(len(flights) - 1)]
+    if arr - dep > timedelta(hours=MAX_FLIGHT_HOURS):
+        raise ValueError(f"a journey longer than {MAX_FLIGHT_HOURS} hours is not supported; plan each leg")
+    if not 0 <= int(preflight_days) <= MAX_PREFLIGHT_DAYS:
+        raise ValueError(f"preflight_days must be 0 to {MAX_PREFLIGHT_DAYS}")
+    preflight_days = int(preflight_days)
+    if chronotype not in CHRONOTYPE_SLEEP:
+        raise ValueError(f"unknown chronotype: {chronotype}")
+
+    default_start, default_end = CHRONOTYPE_SLEEP[chronotype]
+    ss = parse_hour(sleep_start) if sleep_start is not None else default_start
+    se = parse_hour(sleep_end) if sleep_end is not None else default_end
+    sleep_len = (se - ss) % 24
+    if not 4 <= sleep_len <= 12:
+        raise ValueError("usual sleep must be between 4 and 12 hours")
+    sleep_td = timedelta(hours=sleep_len)
+
+    difference = _offset_hours(dest, arr) - _offset_hours(home, arr)
+    difference = ((difference + 12) % 24) - 12   # into [-12, 12)
+    if difference == -12:
+        difference = 12.0
+
+    events: List[Event] = []
+    for i, (d, a, _dz, _az) in enumerate(flights):
+        parts = [f"Flight {i + 1} of {len(flights)}."] if len(flights) > 1 else []
+        if i == 0:
+            parts.append("Change your watch to your destination's time when you board.")
+        events.append(Event("flight", d, a, "flight", " ".join(parts), tz=dest.key))
+    for s0, s1, sz in stopovers:
+        events.append(Event("stopover", s0, s1, "stopover",
+                            f"Stopover in {sz.key.split('/')[-1].replace('_', ' ')}. Follow the plan's light advice here too.",
+                            tz=sz.key))
+    base = dict(home_tz=home.key, destination_tz=dest.key, time_difference_hours=difference)
+
+    # --- no shift -----------------------------------------------------------------------
+    if abs(difference) < 1:
+        return TripPlan(mode="no_shift", strategy=None, shift_hours=0.0, preflight_days=0,
+                        days_to_adapt_after_arrival=0, adapted_by=arr.astimezone(dest).date(),
+                        events=events, summary="Less than an hour of time difference: keep your usual schedule.",
+                        **base)
+
+    # --- short trip: stay on home time ----------------------------------------------------
+    if return_departure is not None:
+        ret = local(return_departure, dest)
+        if ret <= arr:
+            raise ValueError("return_departure must be after arrival")
+        if ret - arr < timedelta(hours=SHORT_TRIP_HOURS):
+            d = arr.astimezone(home).date() - timedelta(days=1)
+            while True:
+                s0 = night_start(d, ss, home)
+                if s0 >= ret:
+                    break
+                s1 = s0 + sleep_td
+                if s1 > arr + timedelta(hours=1):
+                    start = max(s0, arr + timedelta(hours=1))
+                    if s1 - start >= timedelta(hours=1):
+                        events.append(Event("sleep", start, s1, "destination",
+                                            "Your home-time night. Keep to it: the trip is too short to adapt."))
+                d += timedelta(days=1)
+            events.sort(key=lambda e: e.start)
+            return TripPlan(mode="stay_on_home_time", strategy=None, shift_hours=0.0, preflight_days=0,
+                            days_to_adapt_after_arrival=0, adapted_by=None, events=events,
+                            summary=(f"You are there under {SHORT_TRIP_HOURS} hours: stay on home time. "
+                                     "Sleep and get daylight as you would at home."),
+                            **base)
+
+    # --- adapt ----------------------------------------------------------------------------
+    strat, need, rate = choose_strategy(difference, preflight_days, strategy)
+    sign = 1 if strat == "advance" else -1   # +1: the body clock moves earlier
+    pre_days = min(preflight_days, math.ceil(need / PREFLIGHT_RATE - 1e-9))
+    pre_shift = min(need, pre_days * PREFLIGHT_RATE)
+    post_days = math.ceil(max(0.0, need - pre_shift) / rate - 1e-9)
+
+    sleeps: List[Tuple[datetime, datetime]] = []
+
+    # Pre-flight nights, at home, on the shifting body clock.
+    dep_home_date = dep.astimezone(home).date()
+    first_home_night = dep_home_date - timedelta(days=pre_days)
+    for i in range(pre_days):
+        shift = min(need, (i + 1) * PREFLIGHT_RATE)
+        s0 = night_start(first_home_night + timedelta(days=i), ss, home) - sign * timedelta(hours=shift)
+        s1 = s0 + sleep_td
+        if s1 > dep - READY_BEFORE_DEPARTURE:
+            continue
+        sleeps.append((s0, s1))
+        events.append(Event("sleep", s0, s1, "home",
+                            f"Bedtime {'earlier' if sign > 0 else 'later'} by {shift:g} h than usual."))
+
+    # Sleep on the plane, or at a long stopover, where it covers a destination night.
+    arr_dest_date = arr.astimezone(dest).date()
+    places = [(d, a, "flight", None, "Sleep on the plane: it is night where you are going.") for d, a, _, _ in flights]
+    places += [(s0, s1, "stopover", sz.key, "Sleep here if you can (a lounge or airport hotel): it is night where you are going.")
+               for s0, s1, sz in stopovers if s1 - s0 >= timedelta(hours=LAYOVER_SLEEP_HOURS)]
+    for p0, p1, where, tzname, note in places:
+        for back in range(4):
+            d = arr_dest_date - timedelta(days=back)
+            n0 = night_start(d, ss, dest)
+            n1 = n0 + sleep_td
+            f0, f1 = max(n0, p0), min(n1, p1)
+            if f1 - f0 >= timedelta(hours=1):
+                sleeps.append((f0, f1))
+                events.append(Event("sleep", f0, f1, where, note, tz=tzname))
+
+    # Destination nights, on local time, until the body clock has caught up.
+    nights = max(1, post_days)
+    d = arr_dest_date - timedelta(days=1)
+    first = True
+    added = 0
+    while added < nights:
+        s0 = night_start(d, ss, dest)
+        s1 = s0 + sleep_td
+        d += timedelta(days=1)
+        if s1 <= arr + timedelta(hours=1):
+            continue
+        start = max(s0, arr + timedelta(hours=1))
+        if s1 - start < timedelta(hours=2):
+            continue
+        sleeps.append((start, s1))
+        note = "Local bedtime. " + ("First night: expect to wake early or late; stay in bed and keep it dark."
+                                    if first else "Keep to local time.")
+        events.append(Event("sleep", start, s1, "destination", note))
+        first = False
+        added += 1
+    sleeps.sort()
+
+    # Body clock: CBTmin per day, continuous from the first pre-flight night.
+    def home_cbt(d0: date) -> datetime:
+        return night_start(d0, ss, home) + sleep_td - timedelta(hours=CBT_BEFORE_WAKE)
+
+    k0 = first_home_night if pre_days else dep_home_date
+    shifts = []
+    k = 0
+    while True:
+        dk = k0 + timedelta(days=k)
+        if k < pre_days:
+            s = min(need, (k + 1) * PREFLIGHT_RATE)
+        else:
+            s = pre_shift
+        cbt = home_cbt(dk) - sign * timedelta(hours=s)
+        if cbt >= arr:
+            break
+        shifts.append((cbt, s))
+        k += 1
+        if k > 10:
+            break
+    post = 0
+    while True:
+        dk = k0 + timedelta(days=k)
+        s = min(need, pre_shift + (post + 1) * rate)
+        cbt = home_cbt(dk) - sign * timedelta(hours=s)
+        shifts.append((cbt, s))
+        k += 1
+        post += 1
+        if s >= need - 1e-9 or post > 20:
+            break
+
+    notes = {
+        ("light_seek", False): "Get bright light: outdoors if you can, otherwise a bright lamp or screen close up.",
+        ("light_seek", True): "Get light on the plane: window shade open, reading light on, or a bright screen close up.",
+        ("light_avoid", False): "Avoid bright light: dim lights, sunglasses outside, no screens close up.",
+        ("light_avoid", True): "Avoid light on the plane: shade down, eye mask, screens dimmed.",
+    }
+
+    def where_at(t: datetime):
+        if t < dep:
+            return "home", None
+        if t >= arr:
+            return "destination", None
+        for s0, s1, sz in stopovers:
+            if s0 <= t < s1:
+                return "stopover", sz.key
+        return "flight", None
+
+    def add_light(kind: str, a: datetime, b: datetime):
+        w, tzname = where_at(a)
+        events.append(Event(kind, a, b, w, notes[(kind, w == "flight")], tz=tzname))
+
+    for cbt, _ in shifts:
+        before = (cbt - timedelta(hours=LIGHT_WINDOW), cbt)
+        after = (cbt, cbt + timedelta(hours=LIGHT_WINDOW))
+        seek, avoid = (after, before) if sign > 0 else (before, after)
+        seek_pieces = _subtract(seek, sleeps)
+        if not seek_pieces:
+            # The window falls wholly inside a planned sleep, which is common
+            # when delaying: CBTmin sits in the small hours. The same side of
+            # the curve is still reachable awake, just further from CBTmin:
+            # the evening before that sleep when delaying, the morning after
+            # it when advancing. Weaker, but light you can actually get.
+            host = next(((a, b) for a, b in sleeps if a <= cbt <= b), None)
+            if host is not None:
+                h0, h1 = host
+                fallback = (h0 - timedelta(hours=LIGHT_WINDOW), h0) if sign < 0 else (h1, h1 + timedelta(hours=LIGHT_WINDOW))
+                seek_pieces = _subtract(fallback, sleeps)
+        for a, b in seek_pieces:
+            add_light("light_seek", a, b)
+        for a, b in _subtract(avoid, sleeps):
+            add_light("light_avoid", a, b)
+
+    # Melatonin: timing only, advancing only, on real nights (not the plane).
+    if melatonin and sign > 0:
+        for e in [e for e in events if e.type == "sleep" and e.where in ("home", "destination")]:
+            events.append(Event("melatonin", e.start - timedelta(minutes=30), None, e.where,
+                                "Optional: a low dose of melatonin 30 minutes before bed. Check with a doctor first; "
+                                "it needs a prescription in some countries."))
+
+    # Caffeine: from waking until six hours before the next bedtime.
+    if caffeine:
+        nights_only = [(a, b) for (a, b) in sleeps]
+        for (a0, a1), (b0, _) in zip(nights_only, nights_only[1:]):
+            c0, c1 = a1, b0 - timedelta(hours=CAFFEINE_CUTOFF)
+            if c1 - c0 >= timedelta(hours=1) and not (c0 < arr and c1 > dep):
+                where = "home" if c0 < dep else "destination"
+                events.append(Event("caffeine_ok", c0, c1, where, "Coffee or tea is fine now; none after this."))
+
+    # Arrival-day nap: short, early afternoon, well before bedtime.
+    arr_local = arr.astimezone(dest)
+    nap_open = local(datetime.combine(arr_local.date(), time(13, 0)), dest)
+    nap_close = local(datetime.combine(arr_local.date(), time(15, 0)), dest)
+    nap_start = max(nap_open, arr + timedelta(hours=1))
+    next_bed = next((a for a, _ in sleeps if a > nap_start), None)
+    if nap_start + timedelta(minutes=NAP_MINUTES) <= nap_close and (
+        next_bed is None or next_bed - nap_start >= timedelta(hours=CAFFEINE_CUTOFF)
+    ) and not any(a <= nap_start < b for a, b in sleeps):
+        events.append(Event("nap", nap_start, nap_start + timedelta(minutes=NAP_MINUTES), "destination",
+                            f"If you need it: one nap, {NAP_MINUTES} minutes at most. Set an alarm."))
+
+    events.sort(key=lambda e: (e.start, e.type))
+    adapted_by = (arr.astimezone(dest).date() + timedelta(days=post_days)) if post_days else arr.astimezone(dest).date()
+    way = "earlier" if sign > 0 else "later"
+    long_way = (strat == "advance" and difference < 0) or (strat == "delay" and difference > 0)
+    summary = (
+        f"Your body clock needs to move {need:g} hours {way}"
+        + (" (the long way round: it is faster for this trip)" if long_way else "")
+        + (f". Start {pre_days} day{'s' if pre_days != 1 else ''} before you fly" if pre_days else "")
+        + f", and expect to feel local after about {post_days} day{'s' if post_days != 1 else ''} there."
+    )
+    return TripPlan(mode="adapt", strategy=strat, shift_hours=need, preflight_days=pre_days,
+                    days_to_adapt_after_arrival=post_days, adapted_by=adapted_by, events=events,
+                    summary=summary, **base)
+
+
+# --- output ----------------------------------------------------------------------------
+
+def plan_to_dict(plan: TripPlan) -> dict:
+    """JSON-ready: every event with UTC times and the wall clock where the traveller is."""
+    home, dest = ZoneInfo(plan.home_tz), ZoneInfo(plan.destination_tz)
+
+    def zone_of(e: Event) -> ZoneInfo:
+        if e.tz:
+            return ZoneInfo(e.tz)
+        return home if e.where == "home" else dest
+
+    def render(dt: Optional[datetime], tz: ZoneInfo):
+        if dt is None:
+            return None, None
+        return dt.astimezone(UTC).isoformat().replace("+00:00", "Z"), dt.astimezone(tz).strftime("%Y-%m-%dT%H:%M")
+
+    out = []
+    for e in plan.events:
+        tz = zone_of(e)
+        s_utc, s_local = render(e.start, tz)
+        e_utc, e_local = render(e.end, tz)
+        out.append({
+            "type": e.type, "where": e.where, "note": e.note,
+            "start": s_utc, "end": e_utc,
+            "start_local": s_local, "end_local": e_local,
+            "local_tz": tz.key,
+        })
+    return {
+        "mode": plan.mode,
+        "home_tz": plan.home_tz,
+        "destination_tz": plan.destination_tz,
+        "time_difference_hours": plan.time_difference_hours,
+        "strategy": plan.strategy,
+        "shift_hours": plan.shift_hours,
+        "preflight_days": plan.preflight_days,
+        "days_to_adapt_after_arrival": plan.days_to_adapt_after_arrival,
+        "adapted_by": plan.adapted_by.isoformat() if plan.adapted_by else None,
+        "summary": plan.summary,
+        "events": out,
+        "disclaimer": plan.disclaimer,
+    }

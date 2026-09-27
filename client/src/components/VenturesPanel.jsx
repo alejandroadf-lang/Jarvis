@@ -40,6 +40,7 @@ const INTEGRATION_LABELS = {
   github: 'GitHub',
   workspace: 'Workspace (Obsidian / VS Code)',
   whatsapp: 'WhatsApp',
+  circadian: 'Circadian (jet lag app at /circadian)',
 };
 
 // Three states, not two. `ok === null` means "nothing to verify" — either the

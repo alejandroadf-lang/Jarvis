@@ -9,3 +9,6 @@ server/data
 .env
 .env.local
 .DS_Store
+ventures/circadian/data
+**/__pycache__
+**/.pytest_cache

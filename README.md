@@ -142,6 +142,26 @@ GitHub integration for this repo (its own setting, separate from
 anything above) — without it, redeploy manually from the Railway
 dashboard after a merge.
 
+### Circadian at /circadian
+
+The same Railway service also serves **Circadian**, the jet lag app, at
+`https://<your Railway domain>/circadian/`. Nothing extra to create: the
+Docker image installs Python and Circadian's dependencies, and
+`server/circadian.js` starts it beside Jarvis and forwards `/circadian/*` to
+it. Travellers don't need the Jarvis access token. Its data (reminders, WHOOP
+connections) goes in `circadian/` inside the volume from step 2.
+
+- **Check it:** `https://<your Railway domain>/circadian/health` answers
+  `{"status":"ok"}`, and `INTEGRATIONS` on WhatsApp has a *circadian* line.
+- **WHOOP:** in the WHOOP developer dashboard the redirect URL is
+  `https://<your Railway domain>/circadian/whoop/callback`. Then set
+  `WHOOP_CLIENT_ID` and `WHOOP_CLIENT_SECRET` on this service.
+- **Let the team check it's up:** send
+  `URL <ventureId> https://<your Railway domain>/circadian` on WhatsApp.
+  The path is kept, so their health checks hit Circadian and not Jarvis.
+
+The code lives in `ventures/circadian/`, and that copy is what is deployed.
+
 ### Voice experience
 
 Jarvis mode streams Claude's reply as it's generated and speaks it

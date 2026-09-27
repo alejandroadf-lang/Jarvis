@@ -1,0 +1,7 @@
+fastapi==0.115.0
+pydantic==2.9.2
+uvicorn[standard]==0.30.6
+# zoneinfo needs the tz database; slim images do not ship it.
+tzdata==2025.2
+# Web push reminders (py-vapid, http-ece and cryptography come with it).
+pywebpush==2.0.3

@@ -1,0 +1,10 @@
+{
+  "name": "Circadian — jet lag plan",
+  "short_name": "Circadian",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#10131F",
+  "theme_color": "#10131F",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}
