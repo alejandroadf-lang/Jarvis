@@ -223,8 +223,11 @@ def create_trip_plan(req: TripRequest, _auth=Depends(auth_and_rate_limit)):
     return plan
 
 
-# Generous for one person planning a trip, useless for reselling the engine.
-_APP_LIMITER = RateLimiter(max_requests=20, window_seconds=60)
+# Generous for one person using the app, useless for reselling the engine. A
+# page load makes eight or nine calls (plan, WHOOP status, baseline, progress,
+# reminders), and the Today screen redraws once when WHOOP moves the plan; at
+# 20 a minute a second open within the minute was refused.
+_APP_LIMITER = RateLimiter(max_requests=60, window_seconds=60)
 
 
 def _client_ip(request: Request) -> str:
@@ -496,6 +499,43 @@ class FeedbackRequest(BaseModel):
     followed: Optional[str] = Field(None, pattern="^(mostly|partly|hardly)$")
     shift_hours: Optional[float] = Field(None, ge=0, le=24)
     strategy: Optional[str] = Field(None, pattern="^(advance|delay)$")
+    # From the day-by-day log on the phone, when it was used: what "followed" is measured from.
+    done: Optional[int] = Field(None, ge=0, le=500)
+    skipped: Optional[int] = Field(None, ge=0, le=500)
+
+
+ACTIONABLE = ("light_seek", "light_avoid", "caffeine_ok", "melatonin", "nap")
+
+
+class LogRequest(BaseModel):
+    """
+    One tap on Today: a moment marked done or skipped, or the morning's
+    "how sharp do you feel" 1-5. Kept on the phone; counted here so what
+    people follow and how they feel can be set against what WHOOP measured.
+    """
+    device: str
+    kind: str = Field(..., pattern="^(moment|feel)$")
+    type: Optional[str] = Field(None, pattern="^(" + "|".join(ACTIONABLE) + ")$")
+    value: str = Field(..., max_length=8)
+    day: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    recovery: Optional[int] = Field(None, ge=0, le=100)
+    day_number: Optional[int] = Field(None, ge=-3, le=60)
+
+
+@app.post("/app/log")
+def app_log(req: LogRequest, request: Request, _limit=Depends(app_rate_limit)):
+    whoop.check_device(req.device)
+    if req.kind == "moment":
+        if req.type is None or req.value not in ("done", "skipped"):
+            raise ValueError("a moment log needs its type and done or skipped")
+        analytics.track("moment_logged", _as_device(request, req.device),
+                        {"type": req.type, "value": req.value, "day_number": req.day_number})
+    else:
+        if not req.value.isdigit() or not 1 <= int(req.value) <= 5:
+            raise ValueError("how you feel is 1 to 5")
+        analytics.track("morning_feel", _as_device(request, req.device),
+                        {"feel": int(req.value), "recovery": req.recovery, "day_number": req.day_number})
+    return {"ok": True}
 
 
 @app.post("/app/feedback")
@@ -511,6 +551,7 @@ def app_feedback(req: FeedbackRequest, request: Request, _limit=Depends(app_rate
     analytics.track("jet_lag_rated", _as_device(request, req.device), {
         "rating": req.rating, "followed": req.followed,
         "hours_shifted": req.shift_hours, "strategy": req.strategy,
+        "moments_done": req.done, "moments_skipped": req.skipped,
     })
     return {"thanks": True}
 
