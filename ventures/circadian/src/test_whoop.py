@@ -262,3 +262,18 @@ def test_a_firewall_page_is_logged_with_its_ray_id(monkeypatch, capsys):
     logged = capsys.readouterr().out
     assert "HTTP 403" in logged and "cloudflare" in logged and "8abc123-BKK" in logged
     assert "Error 1010" in logged and "<html>" not in logged and "csecret" not in logged
+
+
+@pytest.mark.parametrize("raw", [b"", b'{"message":"Forbidden"}'])
+def test_an_empty_or_gateway_403_is_logged_too(monkeypatch, capsys, raw):
+    import io
+    import urllib.error
+
+    def blocked(req, timeout):
+        raise urllib.error.HTTPError(req.full_url, 403, "Forbidden", {"server": "awselb/2.0"}, io.BytesIO(raw))
+
+    monkeypatch.setattr(whoop.urllib.request, "urlopen", blocked)
+    whoop._http("POST", whoop.TOKEN_URL, form={"client_secret": "csecret"})
+    logged = capsys.readouterr().out
+    assert "HTTP 403" in logged and "awselb/2.0" in logged and "csecret" not in logged
+    assert ("(empty body)" if not raw else "Forbidden") in logged

@@ -163,17 +163,23 @@ def _http(method: str, url: str, headers: Optional[dict] = None, form: Optional[
     except urllib.error.HTTPError as err:
         raw = err.read()
         try:
-            return err.code, json.loads(raw) if raw else None
+            body = json.loads(raw) if raw else None
         except ValueError:
-            # Not WHOOP's API talking but something in front of it (a firewall
-            # page): its first words and ray id say which rule, and a bare
-            # "HTTP 403" did not. Such pages never echo the request's form.
-            text = " ".join(raw[:4000].decode("utf-8", "replace").split())
-            text = re.sub(r"<[^>]+>", " ", text)
-            text = " ".join(text.split())[:300]
+            body = None
+        if err.code != 401 and not (isinstance(body, dict) and body.get("error")):
+            # Not WHOOP's OAuth server talking (it answers with an "error"
+            # field) but something in front of it: a firewall page, an empty
+            # 403, a gateway's {"message": ...}. Its server, ray id and first
+            # words say which, where a bare "HTTP 403" did not. Error pages
+            # like these never echo the request's form, so nothing secret is
+            # printed. The server header and ray id identify the edge.
+            text = re.sub(r"<[^>]+>", " ", raw[:4000].decode("utf-8", "replace"))
+            text = " ".join(text.split())[:300] or "(empty body)"
+            h = err.headers
             print(f"CircadianAPI: {method} {url.split('?')[0]} answered HTTP {err.code} "
-                  f"(server={err.headers.get('server', '?')}, cf-ray={err.headers.get('cf-ray', '-')}): {text}")
-            return err.code, None
+                  f"(server={h.get('server', '?')}, cf-ray={h.get('cf-ray', '-')}, "
+                  f"x-amzn-requestid={h.get('x-amzn-requestid', '-')}, via={h.get('via', '-')}): {text}")
+        return err.code, body
     except OSError:  # DNS, refused, timeout: status 0 means WHOOP was not reached
         return 0, None
 
