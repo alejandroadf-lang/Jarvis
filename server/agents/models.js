@@ -1,4 +1,5 @@
 import { hasSecret } from '../env.js';
+import { readJson, writeJson } from '../store.js';
 // Which model each agent actually runs on, and what that model costs.
 //
 // Every agent used to run on claude-sonnet-5, which was the right default
@@ -212,6 +213,92 @@ function defaultTierFor(agent) {
  * @param {object} agent - the agent definition
  * @param {boolean} alternativeAvailable - whether the non-default provider is configured
  */
+// The founder's switch between models, flipped from WhatsApp with MODE.
+//
+// AGENT_MODEL_TIERS moves one agent at a time and needs a Railway edit and a
+// redeploy, which is the wrong tool for "tokens are expensive this week, run
+// cheap" typed on a phone. So there are three positions, persisted in the data
+// directory so a redeploy keeps the choice:
+//
+//   eco    - every agent that can leave Claude runs on the cheapest provider
+//            that has a key, managers included. Moving the managers is the
+//            decision defaultTierFor() refuses to make silently; MODE ECO is
+//            the founder making it out loud.
+//   normal - the defaults: leaves cheap, managers on Claude.
+//   max    - everything on Claude, for when quality matters more than cost.
+//
+// A per-agent AGENT_MODEL_TIERS entry still wins in every mode: it is the more
+// specific instruction. Agents with web search stay on Claude in every mode,
+// because that search runs inside Anthropic and has nowhere else to go.
+export const MODEL_MODES = ['eco', 'normal', 'max'];
+const MODE_FILE = 'modelMode.json';
+
+export function getModelMode() {
+  const saved = readJson(MODE_FILE, {});
+  return MODEL_MODES.includes(saved?.mode) ? saved.mode : 'normal';
+}
+
+export function setModelMode(mode) {
+  const next = String(mode || '').trim().toLowerCase();
+  if (!MODEL_MODES.includes(next)) {
+    throw new Error(`"${mode}" is not a mode. Use ${MODEL_MODES.map((m) => m.toUpperCase()).join(', ')}.`);
+  }
+  writeJson(MODE_FILE, { mode: next, setAt: new Date().toISOString() });
+  return next;
+}
+
+// The alternative tiers, in the order they are tried when two cost the same.
+const ALTERNATIVE_TIERS = [DEEPSEEK_TIER, CHEAP_TIER, GEMINI_TIER, OPENAI_TIER];
+
+/**
+ * The cheapest tier whose provider has a key, by input plus output price, or
+ * null when none does. Prices are the same numbers the spend cap meters with,
+ * so "cheapest" here is cheapest on the bill.
+ */
+export function ecoTier() {
+  const openRouterAvailable = hasSecret('OPENROUTER_API_KEY');
+  const available = ALTERNATIVE_TIERS.filter((tier) => isProviderAvailable(MODELS[tier].provider, openRouterAvailable));
+  if (!available.length) return null;
+  const cost = (tier) => MODELS[tier].inputPricePerMTok + MODELS[tier].outputPricePerMTok;
+  return available.reduce((best, tier) => (cost(tier) < cost(best) ? tier : best));
+}
+
+function tierForMode(agent) {
+  const mode = getModelMode();
+  if (mode === 'max') return DEFAULT_TIER;
+  if (mode === 'eco' && canUseAlternativeModel(agent)) return ecoTier() || DEFAULT_TIER;
+  return agent.modelTier || defaultTierFor(agent);
+}
+
+function priced(spec) {
+  return `${spec.model} ($${spec.inputPricePerMTok} in / $${spec.outputPricePerMTok} out per million tokens)`;
+}
+
+/** The switch's position and what it means, in words for a phone. */
+export function describeModelMode() {
+  const mode = getModelMode();
+  const claude = priced(MODELS[DEFAULT_TIER]);
+  const lines = [`Model mode: ${mode.toUpperCase()}.`];
+  if (mode === 'max') {
+    lines.push(`Every agent runs on ${claude}.`);
+  } else if (mode === 'eco') {
+    const tier = ecoTier();
+    lines.push(
+      tier
+        ? `Every agent, managers included, runs on ${priced(MODELS[tier])}, the cheapest provider with a key. Agents that search the web stay on ${claude}.`
+        : 'No cheaper provider has a key, so every agent is still on Claude. Set DEEPSEEK_API_KEY (the cheapest) or OPENROUTER_API_KEY in Railway to make ECO save money.'
+    );
+  } else {
+    const leaves = hasSecret('OPENROUTER_API_KEY') ? priced(MODELS[CHEAP_TIER]) : `${claude}, because OPENROUTER_API_KEY is not set`;
+    lines.push(`Specialists run on ${leaves}. Managers and agents that search the web run on ${claude}.`);
+  }
+  if (Object.keys(agentTierOverrides()).length) {
+    lines.push('AGENT_MODEL_TIERS in Railway still decides for the agents it names.');
+  }
+  lines.push('Switch with MODE ECO, MODE NORMAL or MODE MAX.');
+  return lines.join('\n');
+}
+
 export function resolveModelForAgent(agent, alternativeAvailable) {
   // The founder's assignment wins over the org chart's. Still subject to
   // every rule below, so moving an orchestrator onto a cheap tier is
@@ -230,7 +317,7 @@ export function resolveModelForAgent(agent, alternativeAvailable) {
   // established this agent needs no tools, every leaf on the roster was
   // deliberately cheap anyway, and AGENT_MODEL_TIERS can move any single agent
   // back without a deploy.
-  const tier = agentTierOverrides()[agent.id] || agent.modelTier || defaultTierFor(agent);
+  const tier = agentTierOverrides()[agent.id] || tierForMode(agent);
   const spec = getModelSpec(tier);
   if (spec.provider === 'anthropic') return spec;
   if (!isProviderAvailable(spec.provider, alternativeAvailable) || !canUseAlternativeModel(agent)) {

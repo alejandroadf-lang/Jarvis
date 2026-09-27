@@ -1439,6 +1439,24 @@ and then check the results of:
 AGENT_MODEL_TIERS="ceo:reasoner,cto:reasoner,cfo:analyst,cmo:analyst,coo:reasoner"
 ```
 
+#### The switch: MODE on WhatsApp
+
+`AGENT_MODEL_TIERS` moves one agent at a time and needs a Railway edit and a
+redeploy. The founder's actual question on a phone is simpler: "run cheap this
+week" or "I need the best answers today". So there is a three-position switch,
+kept in the data directory so a redeploy remembers it:
+
+- `MODE ECO` puts every agent that can leave Claude, managers included, on the
+  cheapest provider that has a key. "Cheapest" means by the prices the spend
+  cap meters with, so it follows the price variables.
+- `MODE NORMAL` restores the defaults above: leaves cheap, managers on Claude.
+- `MODE MAX` puts everything on Claude.
+- `MODE` on its own says where the switch is and what each group runs on.
+  `SPEND` shows the position next to the day's number.
+
+Agents with web search stay on Claude in every position, and an
+`AGENT_MODEL_TIERS` entry still wins for the agents it names.
+
 #### The bug this surfaced
 
 `createMessage` dispatched providers through a chain of `if` statements with no

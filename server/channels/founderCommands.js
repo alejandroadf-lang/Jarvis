@@ -52,6 +52,7 @@ import {
 import { getLatestDailyReport } from '../dailyReports.js';
 import { withdrawPlan, getApprovedPlan } from '../dailyPlan.js';
 import { listAffordableModels } from '../agents/openrouter.js';
+import { describeModelMode, setModelMode, getModelMode } from '../agents/models.js';
 import { listTasks } from '../tasks.js';
 import { describeDegradation } from '../degradation.js';
 import { isEvalRunning } from '../eval/run.js';
@@ -86,6 +87,9 @@ const COMMANDS = [
   // exact failure the venture-id requirement above exists to prevent.
   { kind: 'ready', re: /^(ready|blocked)(?:\s+(v_\S+))?$/i, arg: 'ventureId' },
   { kind: 'models', re: /^models(?:\s+(\S+))?$/i, arg: 'search' },
+  // The switch between models: cheap, default, or Claude for everything. See
+  // agents/models.js for what each position does.
+  { kind: 'mode', re: /^mode(?:\s+(eco|normal|max))?$/i, arg: 'mode' },
   // Withdrawing an approval the founder already gave.
   //
   // approvePlan was a one-way door. submitPlan refuses while today's plan is
@@ -382,6 +386,7 @@ BUILD [ventureId] — what the team is building right now
 SPEND — today's model spend against the cap
 INTEGRATIONS — what's actually connected
 MODELS [search] — live OpenRouter models and their prices
+MODE [ECO|NORMAL|MAX] — switch between cheap models and Claude to save tokens
 REPORT — the latest daily report
 PITCH — generate today's pitch now and email it, exactly as the 8am one
 
@@ -466,7 +471,9 @@ export async function runFounderCommand(command, deps = {}) {
             : '')
         : '';
       const degraded = describeDegradation();
-      return [headline + cacheLine, degraded].filter(Boolean).join('\n\n');
+      // Next to the number it changes, so a high one points at the lever.
+      const mode = `Model mode: ${getModelMode().toUpperCase()}. MODE ECO runs every agent it can on the cheapest provider.`;
+      return [headline + cacheLine, mode, degraded].filter(Boolean).join('\n\n');
     }
 
     case 'ventures': {
@@ -736,6 +743,11 @@ export async function runFounderCommand(command, deps = {}) {
       if (!getApprovedPlan()) return 'No plan is approved, so there is nothing to withdraw. The team can submit one at any time.';
       const plan = withdrawPlan({ reason: command.reason || 'Withdrawn by the founder.' });
       return `The approved plan is withdrawn${plan.note ? `: ${plan.note}` : '.'}\n\nNothing from it runs any more. The team can submit a new one right away — it takes effect the moment you approve it.`;
+    }
+
+    case 'mode': {
+      if (command.mode) setModelMode(command.mode);
+      return describeModelMode();
     }
 
     case 'models': {
