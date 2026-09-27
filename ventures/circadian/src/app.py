@@ -32,7 +32,7 @@ from pydantic import BaseModel, Field
 from src import analytics, push, store, whoop
 from src.auth import RateLimiter, auth_and_rate_limit
 from src.ics import plan_to_ics
-from src.itinerary import plan_to_dict, plan_trip
+from src.itinerary import merge_plans, plan_itinerary, plan_to_dict, plan_trip
 from src.shift_logic import plan_shift
 from src.telemetry import get_call_count, record_call
 
@@ -165,12 +165,19 @@ class Leg(BaseModel):
     arrival_tz: str
 
 
+class Journey(BaseModel):
+    legs: List[Leg] = Field(..., min_length=1, description="The flights of this journey in order, connections included")
+
+
 class TripRequest(BaseModel):
     departure: Optional[datetime] = Field(None, description="Wall-clock departure time at the origin, e.g. 2026-10-10T23:55")
     departure_tz: Optional[str] = Field(None, description="IANA time zone of the origin, e.g. Asia/Bangkok")
     arrival: Optional[datetime] = Field(None, description="Wall-clock arrival time at the final destination")
     arrival_tz: Optional[str] = Field(None, description="IANA time zone of the destination, e.g. Europe/Paris")
     legs: Optional[List[Leg]] = Field(None, description="For connections: every flight in order; replaces the four fields above")
+    journeys: Optional[List[Journey]] = Field(None, description=(
+        "Several journeys in order, separated by stays: a round trip, an open jaw (back from another city) or a "
+        "multi-city trip. Each starts from the body clock the previous one predicts. Replaces legs and return_departure."))
     sleep_start: Optional[str] = Field(None, description="Usual bedtime at home, HH:MM")
     sleep_end: Optional[str] = Field(None, description="Usual wake time at home, HH:MM")
     chronotype: str = Field("intermediate", description="early | intermediate | late; used when sleep times are missing")
@@ -181,8 +188,15 @@ class TripRequest(BaseModel):
     strategy: str = Field("auto", description="auto | advance | delay")
 
 
-def _plan(req: TripRequest):
-    return plan_trip(
+def _plans(req: TripRequest):
+    """One plan per journey. A single flight or connection is an itinerary of one."""
+    if req.journeys:
+        return plan_itinerary(
+            [[leg.model_dump() for leg in j.legs] for j in req.journeys],
+            sleep_start=req.sleep_start, sleep_end=req.sleep_end, chronotype=req.chronotype,
+            preflight_days=req.preflight_days, melatonin=req.melatonin, caffeine=req.caffeine, strategy=req.strategy,
+        )
+    return [plan_trip(
         departure=req.departure, departure_tz=req.departure_tz,
         arrival=req.arrival, arrival_tz=req.arrival_tz,
         sleep_start=req.sleep_start, sleep_end=req.sleep_end,
@@ -190,7 +204,12 @@ def _plan(req: TripRequest):
         return_departure=req.return_departure,
         melatonin=req.melatonin, caffeine=req.caffeine, strategy=req.strategy,
         legs=[leg.model_dump() for leg in req.legs] if req.legs else None,
-    )
+    )]
+
+
+def _plan(req: TripRequest):
+    """The whole trip as one plan, for what reads events only: reminders, the calendar, WHOOP."""
+    return merge_plans(_plans(req))
 
 
 @app.post("/v2/plan", responses={400: {"model": ErrorResponse}})
@@ -214,15 +233,27 @@ def app_rate_limit(request: Request) -> None:
     _APP_LIMITER.check("ip:" + _client_ip(request))
 
 
-@app.post("/app/plan", responses={400: {"model": ErrorResponse}})
-def app_plan(req: TripRequest, request: Request, _limit=Depends(app_rate_limit)):
-    plan = plan_to_dict(_plan(req))
+def _count_plan(req: TripRequest, request: Request, first: dict) -> None:
     # The page re-plans the saved (or example) trip on every open; only the
     # button is someone planning a trip.
     submitted = request.headers.get("x-circadian-intent", "") == "submit"
     analytics.track("plan_made" if submitted else "app_opened", request.headers,
-                    analytics.plan_properties(req, plan))
+                    analytics.plan_properties(req, first))
+
+
+@app.post("/app/plan", responses={400: {"model": ErrorResponse}})
+def app_plan(req: TripRequest, request: Request, _limit=Depends(app_rate_limit)):
+    plan = plan_to_dict(_plan(req))
+    _count_plan(req, request, plan)
     return plan
+
+
+@app.post("/app/itinerary", responses={400: {"model": ErrorResponse}})
+def app_itinerary(req: TripRequest, request: Request, _limit=Depends(app_rate_limit)):
+    """The same trip as one plan per journey, which is how the page shows it."""
+    plans = [plan_to_dict(p) for p in _plans(req)]
+    _count_plan(req, request, plans[0])
+    return {"journeys": plans}
 
 
 @app.get("/app/plan.ics")
