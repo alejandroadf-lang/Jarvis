@@ -64,6 +64,25 @@ class NotConnected(Exception):
     """No usable WHOOP connection for this device."""
 
 
+class ConnectFailed(ValueError):
+    """
+    Connecting did not work, with why in a word the page turns into advice:
+    keys (WHOOP rejected the client id or secret), redirect (the callback URL
+    is not the one registered), expired (the sign-in code was used or too
+    old), network (WHOOP could not be reached), whoop (anything else).
+    A bare "did not work" left the owner with nothing to fix.
+    """
+
+    def __init__(self, reason: str, detail: str):
+        super().__init__(detail)
+        self.reason = reason
+
+
+# Sent on every request to WHOOP. Python's default ("Python-urllib/3.x") is
+# the kind of client a bot filter in front of an API can refuse outright.
+USER_AGENT = "Circadian/1.0 (jet lag planner; +https://github.com/alejandroadf-lang/Jarvis)"
+
+
 # --- configuration ---------------------------------------------------------------------
 
 def is_configured() -> bool:
@@ -130,6 +149,8 @@ def _http(method: str, url: str, headers: Optional[dict] = None, form: Optional[
     """(status, json body or None). Replaced in tests."""
     data = urllib.parse.urlencode(form).encode() if form is not None else None
     req = urllib.request.Request(url, data=data, method=method, headers=dict(headers or {}))
+    req.add_header("User-Agent", USER_AGENT)
+    req.add_header("Accept", "application/json")
     if form is not None:
         req.add_header("Content-Type", "application/x-www-form-urlencoded")
     try:
@@ -142,6 +163,8 @@ def _http(method: str, url: str, headers: Optional[dict] = None, form: Optional[
             return err.code, json.loads(raw) if raw else None
         except ValueError:
             return err.code, None
+    except OSError:  # DNS, refused, timeout: status 0 means WHOOP was not reached
+        return 0, None
 
 
 # --- tokens -----------------------------------------------------------------------------
@@ -174,8 +197,26 @@ def exchange_code(device: str, code: str, redirect_uri: str, now: Optional[float
         "client_secret": os.environ["WHOOP_CLIENT_SECRET"].strip(),
     })
     if status != 200 or not body or "access_token" not in body:
-        raise ValueError(f"WHOOP did not accept the sign-in (HTTP {status})")
+        raise _why_refused(status, body)
     _save_tokens(device, body, now if now is not None else time.time())
+
+
+def _why_refused(status: int, body) -> ConnectFailed:
+    """WHOOP's token error, sorted into what the owner or traveller can do about it."""
+    error = str((body or {}).get("error", "")) if isinstance(body, dict) else ""
+    about = str((body or {}).get("error_description", "")) if isinstance(body, dict) else ""
+    detail = f"WHOOP did not accept the sign-in (HTTP {status}{', ' + error if error else ''}{': ' + about[:200] if about else ''})"
+    # Logged so the reason is in Railway's logs; nothing here is a secret.
+    print(f"CircadianAPI: {detail}")
+    if status == 0:
+        return ConnectFailed("network", detail)
+    if status == 401 or error in ("invalid_client", "unauthorized_client"):
+        return ConnectFailed("keys", detail)
+    if "redirect" in about.lower():
+        return ConnectFailed("redirect", detail)
+    if error == "invalid_grant":
+        return ConnectFailed("expired", detail)
+    return ConnectFailed("whoop", detail)
 
 
 def _refresh(device: str, now: float) -> str:

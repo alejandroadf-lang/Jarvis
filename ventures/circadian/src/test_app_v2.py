@@ -133,7 +133,7 @@ def test_whoop_connect_redirects_with_a_signed_state_when_configured(monkeypatch
 
 def test_whoop_callback_with_a_forged_state_does_not_connect():
     r = client.get("/whoop/callback", params={"code": "c", "state": "forged-state-xx"}, follow_redirects=False)
-    assert r.status_code == 302 and r.headers["location"] == "/?whoop=failed"
+    assert r.status_code == 302 and r.headers["location"] == "/?whoop=failed&why=link"
     assert client.get("/app/whoop/status", params={"device": DEVICE}).json()["connected"] is False
 
 
