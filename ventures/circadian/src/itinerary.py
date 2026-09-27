@@ -293,7 +293,9 @@ def _parse_legs(legs) -> List[Tuple[datetime, datetime, ZoneInfo, ZoneInfo]]:
         if a <= d:
             raise ValueError(f"flight {i}: arrival must be after departure")
         if parsed and d < parsed[-1][1]:
-            raise ValueError(f"flight {i} departs before flight {i - 1} lands")
+            raise ValueError(
+                f"The flight on from stop {i - 1} leaves {_when(d.astimezone(dz))}, before you land there "
+                f"({_when(parsed[-1][1].astimezone(dz))}, local times): check the times at stop {i - 1}.")
         parsed.append((d, a, dz, az))
     if not parsed:
         raise ValueError("a trip needs at least one flight")
@@ -649,7 +651,10 @@ def plan_itinerary(
     parsed = [_parse_legs(j) for j in journeys]
     for i in range(1, len(parsed)):
         if parsed[i][0][0] < parsed[i - 1][-1][1]:
-            raise ValueError(f"journey {i + 1} departs before journey {i} lands")
+            prev_land, prev_zone = parsed[i - 1][-1][1], parsed[i - 1][-1][3]
+            raise ValueError(
+                f"Flight {i + 1} leaves {_when(parsed[i][0][0].astimezone(parsed[i][0][2]))}, before flight {i} "
+                f"lands ({_when(prev_land.astimezone(prev_zone))}, local times): check the landing date of flight {i}.")
 
     plans: List[TripPlan] = []
     body_offset: Optional[float] = None

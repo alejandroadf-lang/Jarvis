@@ -154,17 +154,28 @@
   // became three days and was refused.
   const asMinutes = (v) => (v ? Date.parse(v + "Z") / 60000 : NaN);
   const fromMinutes = (m) => new Date(m * 60000).toISOString().slice(0, 16);
+  //
+  // Every value the field passes through counts, on "input" as well as
+  // "change": the iPhone's date wheel reports each step, but scrolling back to
+  // the starting date fires no "change" (the value is what it was on focus),
+  // so the landing kept the forward step and ended days after its departure.
+  const MAX_SHIFT_MINUTES = 366 * 24 * 60;
   function keepFlightLength(journey) {
     const dep = journey.querySelector(".departure");
     let before = dep.value;
-    dep.addEventListener("change", () => {
-      const shift = asMinutes(dep.value) - asMinutes(before);
+    const follow = () => {
+      const at = asMinutes(dep.value);
+      if (!Number.isFinite(at)) return; // half-typed: wait for a whole date
+      const shift = at - asMinutes(before);
+      if (Math.abs(shift) > MAX_SHIFT_MINUTES) return; // mid-way through typing a year
       before = dep.value;
-      if (!Number.isFinite(shift) || !shift) return;
+      if (!shift) return; // also the first date put into an empty field
       for (const input of journey.querySelectorAll(".arrival, .stop-arrival, .stop-departure")) {
         if (input.value) input.value = fromMinutes(asMinutes(input.value) + shift);
       }
-    });
+    };
+    dep.addEventListener("input", follow);
+    dep.addEventListener("change", follow);
   }
 
   function addJourney(values = {}) {

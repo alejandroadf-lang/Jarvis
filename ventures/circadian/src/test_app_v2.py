@@ -205,7 +205,7 @@ def test_the_calendar_covers_the_whole_itinerary():
 def test_journeys_out_of_order_are_a_400_not_a_500():
     bad = {"journeys": [OPEN_JAW["journeys"][1], OPEN_JAW["journeys"][0]]}
     r = client.post("/app/itinerary", json=bad)
-    assert r.status_code == 400 and "departs before" in r.json()["error"]["message"]
+    assert r.status_code == 400 and "before flight 1 lands" in r.json()["error"]["message"]
 
 
 def test_whoop_progress_without_connection_is_a_clear_409():
