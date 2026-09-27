@@ -542,3 +542,56 @@ def test_melatonin_advice_says_fast_release():
 def test_the_brief_covers_arrival_day():
     brief = {b["title"]: b["text"] for b in advice.briefing(lhr_to_hnd(preflight_days=2))}
     assert brief["Arrival day"].startswith("You land at 15:00. Stay up until 23:00")
+
+
+# --- when the brain is clearest -------------------------------------------------------------
+
+def windows(plan, kind):
+    return [e for e in plan.events if e.type == kind]
+
+
+def test_flying_east_the_fog_is_the_local_morning_and_the_clear_hours_come_later():
+    plan = lhr_to_hnd(preflight_days=0)
+    tokyo = ZoneInfo("Asia/Tokyo")
+    fog = windows(plan, "fog")[0]
+    assert fog.start.astimezone(tokyo).hour < 12, "the body's night falls in the Tokyo morning"
+    assert "middle of its night" in fog.note and "driving" in fog.note
+    focus = [e for e in windows(plan, "focus") if e.start.astimezone(tokyo).date() == fog.start.astimezone(tokyo).date()][0]
+    assert focus.start.astimezone(tokyo).hour >= 12, "the clear hours come after the fog"
+    assert "your body" in focus.note.lower()
+
+
+def test_flying_west_the_fog_moves_to_the_evening():
+    fog = windows(bkk_to_cdg(), "fog")[0]
+    assert fog.start.astimezone(ZoneInfo("Europe/Paris")).hour >= 18
+
+
+def test_clear_hours_end_an_hour_before_bed():
+    plan = lhr_to_hnd(preflight_days=0)
+    beds = [e.start for e in plan.events if e.type == "sleep" and e.where == "destination"]
+    for f in windows(plan, "focus"):
+        nxt = min(b for b in beds if b >= f.end)
+        assert nxt - f.end >= timedelta(hours=1)
+
+
+def test_no_windows_once_the_body_has_caught_up():
+    plan = lhr_to_hnd(preflight_days=0)
+    last = max(windows(plan, "focus") + windows(plan, "fog"), key=lambda e: e.start)
+    assert last.start.date() <= plan.adapted_by
+
+
+def test_a_short_trip_on_home_time_still_gets_its_clear_hours():
+    short = plan_trip(datetime(2026, 10, 10, 9, 0), "Europe/London", datetime(2026, 10, 10, 12, 0),
+                      "America/New_York", return_departure=datetime(2026, 10, 12, 18, 0))
+    assert short.mode == "stay_on_home_time" and windows(short, "focus")
+
+
+def test_the_brief_says_when_to_book_meetings():
+    brief = {b["title"]: b["text"] for b in advice.briefing(lhr_to_hnd(preflight_days=0))}
+    assert "sharpest" in brief["Best time for work"] and "foggiest" in brief["Best time for work"]
+
+
+def test_the_calendar_names_the_new_windows():
+    from src.ics import plan_to_ics
+    text = plan_to_ics(lhr_to_hnd())
+    assert "SUMMARY:Clearest thinking: demanding work" in text and "SUMMARY:Low focus: routine tasks only" in text

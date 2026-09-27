@@ -28,6 +28,9 @@ TITLES = {
     "caffeine_ok": "Caffeine OK until the end of this",
     "nap": "Nap, 30 minutes at most",
     "flight": "Flight",
+    "stopover": "Stopover",
+    "focus": "Clearest thinking: demanding work",
+    "fog": "Low focus: routine tasks only",
 }
 ALARMED = {"light_seek", "light_avoid", "melatonin", "nap"}
 

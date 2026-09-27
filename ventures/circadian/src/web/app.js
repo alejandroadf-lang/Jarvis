@@ -17,6 +17,7 @@
   const LABELS = {
     sleep: "Sleep", light_seek: "Bright light", light_avoid: "Avoid light", melatonin: "Melatonin",
     caffeine_ok: "Coffee OK", nap: "Nap", flight: "Flight", stopover: "Stopover",
+    focus: "Clearest thinking", fog: "Foggy stretch",
   };
   const CHRONO = { early: ["22:00", "06:00"], intermediate: ["23:00", "07:00"], late: ["00:30", "08:30"] };
 
