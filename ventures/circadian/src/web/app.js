@@ -865,6 +865,17 @@
   }
 
   refreshWhoopButton();
+  // From the Home Screen app, iPhone runs the WHOOP sign-in in a separate
+  // browser sheet; the app underneath never reloads, so it kept saying
+  // "Connect WHOOP" after connecting. Look again whenever it comes back.
+  document.addEventListener("visibilitychange", async () => {
+    if (document.visibilityState !== "visible") return;
+    const wasConnected = $("whoop-button").classList.contains("connected");
+    const st = await refreshWhoopButton();
+    if (st?.connected && !wasConnected) {
+      const e = $("error"); e.textContent = "WHOOP is connected. Your progress appears below your plan."; e.className = "ok"; e.hidden = false;
+    }
+  });
 
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 })();
