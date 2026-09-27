@@ -285,3 +285,22 @@ def test_a_refused_token_exchange_carries_whoops_status_to_the_page(monkeypatch)
 def test_whoop_baseline_without_a_connection_is_a_clear_409():
     r = client.get("/app/whoop/baseline", params={"device": DEVICE})
     assert r.status_code == 409 and r.json()["error"]["code"] == "whoop_not_connected"
+
+
+def test_the_whoop_webhook_route_refuses_unsigned_deliveries_and_takes_signed_ones(monkeypatch):
+    import base64 as _b64
+    import hashlib as _hashlib
+    import hmac as _hmac
+    import time as _time
+    from src import checkin as checkin_module
+
+    monkeypatch.setenv("WHOOP_CLIENT_SECRET", "csecret")
+    handled = []
+    monkeypatch.setattr(checkin_module, "in_background", lambda fn, *a: fn(*a))
+    monkeypatch.setattr(checkin_module, "handle_webhook", lambda body: handled.append(body) or "ok")
+    body = b'{"type":"recovery.updated","user_id":10129}'
+    assert client.post("/whoop/webhook", content=body).status_code == 401
+    ts = str(int(_time.time() * 1000))
+    sig = _b64.b64encode(_hmac.new(b"csecret", ts.encode() + body, _hashlib.sha256).digest()).decode()
+    r = client.post("/whoop/webhook", content=body, headers={"x-whoop-signature": sig, "x-whoop-signature-timestamp": ts})
+    assert r.status_code == 200 and r.json() == {"received": True} and handled == [body]

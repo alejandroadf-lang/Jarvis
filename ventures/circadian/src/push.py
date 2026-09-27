@@ -86,7 +86,13 @@ def reminders_from_plan(plan: TripPlan, now: Optional[datetime] = None) -> List[
     return out
 
 
-def subscribe(device: str, subscription: dict, plan: TripPlan) -> int:
+def subscribe(device: str, subscription: dict, plan: TripPlan, trip: Optional[dict] = None) -> int:
+    """
+    trip: the request the plan was made from, kept so the morning check-in
+    (checkin.py) can rebuild the plan without the page. Check-ins already
+    sent for this device are kept across a re-subscribe, so re-planning the
+    same trip does not send this morning's twice.
+    """
     if not isinstance(subscription, dict) or not str(subscription.get("endpoint", "")).startswith("https://"):
         raise ValueError("a push subscription needs an https endpoint")
     keys = subscription.get("keys") or {}
@@ -95,7 +101,9 @@ def subscribe(device: str, subscription: dict, plan: TripPlan) -> int:
     reminders = reminders_from_plan(plan)
 
     def change(all_):
-        all_[device] = {"subscription": subscription, "reminders": reminders}
+        old = all_.get(device) or {}
+        all_[device] = {"subscription": subscription, "reminders": reminders, "trip": trip,
+                        "checkins": old.get("checkins") or {}}
         return all_
 
     store.update(COLLECTION, {}, change)
@@ -144,6 +152,19 @@ def send_webpush(subscription: dict, payload: dict) -> None:
         if code in (404, 410):
             raise Gone() from err
         raise
+
+
+def send_to(device: str, payload: dict, send: Callable[[dict, dict], None] = None) -> bool:
+    """One push to a device now, outside the reminder list. False if it has no subscription, or a gone one."""
+    entry = store.read(COLLECTION, {}).get(device)
+    if not entry:
+        return False
+    try:
+        (send or send_webpush)(entry["subscription"], payload)
+        return True
+    except Gone:
+        unsubscribe(device)
+        return False
 
 
 def dispatch(now: Optional[datetime] = None, send: Callable[[dict, dict], None] = None) -> Dict[str, int]:
@@ -195,6 +216,12 @@ def dispatch(now: Optional[datetime] = None, send: Callable[[dict, dict], None] 
 
 
 _started = False
+_ticks: List[Callable[[datetime], object]] = []
+
+
+def on_tick(fn: Callable[[datetime], object]) -> None:
+    """Something else to do each minute, after the reminders (the morning check-in sweep)."""
+    _ticks.append(fn)
 
 
 def start_scheduler() -> None:
@@ -210,6 +237,11 @@ def start_scheduler() -> None:
                 dispatch()
             except Exception as err:
                 print(f"CircadianAPI: reminder pass failed: {err}")
+            for fn in list(_ticks):
+                try:
+                    fn(datetime.now(UTC))
+                except Exception as err:
+                    print(f"CircadianAPI: scheduled pass failed: {err}")
             time.sleep(TICK_SECONDS)
 
     threading.Thread(target=loop, name="circadian-reminders", daemon=True).start()

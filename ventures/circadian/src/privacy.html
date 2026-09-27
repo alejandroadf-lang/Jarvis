@@ -48,15 +48,20 @@
   nothing is stored for it either.</p>
 
   <h2>Reminders</h2>
-  <p>If you turn on reminders, the server keeps your device ID, your browser's push address, and the times and
-  wording of that trip's reminders, so it can send them when they are due. They are deleted when you turn
-  reminders off, or when your browser tells the server the push address no longer works.</p>
+  <p>If you turn on reminders, the server keeps your device ID, your browser's push address, the trip's flights
+  and your sleep times, and the times and wording of that trip's reminders, so it can send them when they are
+  due. They are deleted when you turn reminders off, or when your browser tells the server the push address no
+  longer works.</p>
 
   <h2>WHOOP</h2>
   <p>If you connect WHOOP, you sign in on WHOOP's own page; the app never sees your WHOOP password. The app
-  asks only to read your sleep and recovery. The server keeps the access keys WHOOP issues, against your
-  device ID. Each time you open your progress, it reads your sleep and recovery for the dates of the
-  trip to compare them with the plan, and does not store them.</p>
+  asks only to read your sleep and recovery. The server keeps the access keys WHOOP issues and your WHOOP
+  member number, against your device ID. Each time you open your progress, it reads your sleep and recovery
+  for the dates of the trip, and the two weeks before it, to compare them with the plan, and does not store
+  them.</p>
+  <p>With reminders on as well, WHOOP tells the server when it has scored your night, and the server sends you
+  one morning check-in: last night against the plan, your recovery, and today's times. The server keeps only
+  the date of each check-in it sent, so you get one per night.</p>
   <p>Disconnecting WHOOP in the app revokes the app's access at WHOOP and deletes the keys from the server.
   You can also remove the app from your WHOOP account settings.</p>
 
