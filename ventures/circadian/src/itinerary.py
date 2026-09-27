@@ -67,6 +67,9 @@ MAX_FLIGHT_HOURS = 48       # first departure to final arrival, stopovers includ
 LAYOVER_SLEEP_HOURS = 4     # a stopover this long can hold real sleep
 READY_BEFORE_DEPARTURE = timedelta(hours=3)
 
+# What the traveller has for light when daylight isn't available or practical.
+LIGHT_DEVICES = ("none", "glasses", "box")
+
 # Used only when the traveller gives no sleep times.
 CHRONOTYPE_SLEEP = {
     "early": (22.0, 6.0),
@@ -108,6 +111,7 @@ class TripPlan:
     body_offset_hours: float = 0.0
     phase: List[Tuple[datetime, float]] = field(default_factory=list)
     usual_bedtime: Optional[float] = None   # hours, home clock; for "1 h earlier than usual"
+    light_device: str = "none"              # none | glasses | box: shapes the light advice
 
 
 # --- small helpers ---------------------------------------------------------------------
@@ -241,6 +245,7 @@ def plan_trip(
     strategy: str = "auto",
     legs=None,
     body_offset_hours: Optional[float] = None,
+    light_device: str = "none",
 ) -> TripPlan:
     """
     departure / arrival: wall-clock times at the origin and the final
@@ -280,6 +285,8 @@ def plan_trip(
     preflight_days = int(preflight_days)
     if chronotype not in CHRONOTYPE_SLEEP:
         raise ValueError(f"unknown chronotype: {chronotype}")
+    if light_device not in LIGHT_DEVICES:
+        raise ValueError(f"light_device must be one of {', '.join(LIGHT_DEVICES)}")
 
     default_start, default_end = CHRONOTYPE_SLEEP[chronotype]
     ss = parse_hour(sleep_start) if sleep_start is not None else default_start
@@ -308,7 +315,7 @@ def plan_trip(
                             tz=sz.key))
     base = dict(home_tz=home.key, destination_tz=dest.key, time_difference_hours=difference,
                 local_time_difference_hours=local_difference, body_offset_hours=body_offset,
-                usual_bedtime=ss)
+                usual_bedtime=ss, light_device=light_device)
 
     # --- no shift -----------------------------------------------------------------------
     if abs(difference) < 1:
@@ -546,6 +553,7 @@ def plan_itinerary(
     melatonin: bool = True,
     caffeine: bool = True,
     strategy: str = "auto",
+    light_device: str = "none",
 ) -> List[TripPlan]:
     """
     Several journeys in order, each a list of flights (connections included),
@@ -574,6 +582,7 @@ def plan_itinerary(
             legs=legs, sleep_start=sleep_start, sleep_end=sleep_end, chronotype=chronotype,
             preflight_days=preflight_days if i == 0 else 0, return_departure=nxt,
             melatonin=melatonin, caffeine=caffeine, strategy=strategy, body_offset_hours=body_offset,
+            light_device=light_device,
         )
         if nxt is not None:
             cut = nxt - READY_BEFORE_DEPARTURE

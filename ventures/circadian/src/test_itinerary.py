@@ -510,3 +510,35 @@ def test_melatonin_is_not_suggested_for_a_westward_trip():
     west = [bkk_to_cdg()]
     mel = next(s for s in advice.supplements(west)["items"] if s["name"] == "Melatonin")
     assert mel["evidence"] == "Not for this trip"
+
+
+# --- benchmark gaps: light devices, sunglasses, melatonin type, arrival day ------------------
+
+def test_light_glasses_change_the_advice_where_daylight_is_not_available():
+    plain = notes(lhr_to_hnd(preflight_days=2), "light_seek", "home")
+    glasses = notes(lhr_to_hnd(preflight_days=2, light_device="glasses"), "light_seek", "home")
+    assert all("lamp" in n for n in plain)
+    assert all("light glasses" in n for n in glasses)
+    box = notes(lhr_to_hnd(preflight_days=2, light_device="box"), "light_seek", "home")
+    assert all("light box" in n for n in box)
+
+
+def test_an_unknown_light_device_is_refused():
+    with pytest.raises(ValueError, match="light_device"):
+        lhr_to_hnd(light_device="laser")
+
+
+def test_the_first_sunglasses_note_says_which_kind():
+    avoid = notes(lhr_to_hnd(preflight_days=2), "light_avoid", "destination")
+    daylight = [n for n in avoid if n.startswith("Sunglasses")]
+    assert daylight and "wrap-around" in daylight[0] and "blue-blocking" in daylight[0]
+
+
+def test_melatonin_advice_says_fast_release():
+    mel = notes(lhr_to_hnd(preflight_days=2), "melatonin")
+    assert "fast-release" in mel[0] and "rescription" in mel[0]
+
+
+def test_the_brief_covers_arrival_day():
+    brief = {b["title"]: b["text"] for b in advice.briefing(lhr_to_hnd(preflight_days=2))}
+    assert brief["Arrival day"].startswith("You land at 15:00. Stay up until 23:00")

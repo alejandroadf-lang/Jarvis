@@ -186,6 +186,7 @@ class TripRequest(BaseModel):
     melatonin: bool = True
     caffeine: bool = True
     strategy: str = Field("auto", description="auto | advance | delay")
+    light_device: str = Field("none", description="none | glasses | box: light glasses or a light box, for when daylight isn't practical")
 
 
 def _plans(req: TripRequest):
@@ -195,6 +196,7 @@ def _plans(req: TripRequest):
             [[leg.model_dump() for leg in j.legs] for j in req.journeys],
             sleep_start=req.sleep_start, sleep_end=req.sleep_end, chronotype=req.chronotype,
             preflight_days=req.preflight_days, melatonin=req.melatonin, caffeine=req.caffeine, strategy=req.strategy,
+            light_device=req.light_device,
         )
     return [plan_trip(
         departure=req.departure, departure_tz=req.departure_tz,
@@ -202,7 +204,7 @@ def _plans(req: TripRequest):
         sleep_start=req.sleep_start, sleep_end=req.sleep_end,
         chronotype=req.chronotype, preflight_days=req.preflight_days,
         return_departure=req.return_departure,
-        melatonin=req.melatonin, caffeine=req.caffeine, strategy=req.strategy,
+        melatonin=req.melatonin, caffeine=req.caffeine, strategy=req.strategy, light_device=req.light_device,
         legs=[leg.model_dump() for leg in req.legs] if req.legs else None,
     )]
 
@@ -420,6 +422,31 @@ def whoop_progress(req: ProgressRequest, request: Request, _limit=Depends(app_ra
     except whoop.NotConnected:
         return JSONResponse(status_code=409, content={"error": {
             "code": "whoop_not_connected", "message": "WHOOP is not connected on this phone. Tap Connect WHOOP."}})
+
+
+class FeedbackRequest(BaseModel):
+    device: str
+    rating: int = Field(..., ge=1, le=5, description="1 no jet lag, 2 mild, 3 moderate, 4 bad, 5 severe")
+    followed: Optional[str] = Field(None, pattern="^(mostly|partly|hardly)$")
+    shift_hours: Optional[float] = Field(None, ge=0, le=24)
+    strategy: Optional[str] = Field(None, pattern="^(advance|delay)$")
+
+
+@app.post("/app/feedback")
+def app_feedback(req: FeedbackRequest, request: Request, _limit=Depends(app_rate_limit)):
+    """
+    How bad the jet lag was, after the trip, and how much of the plan was
+    followed. Timeshifter publishes exactly this comparison (travellers who
+    followed the advice against those who didn't); it is the only evidence a
+    jet lag app works, so it is collected the same way. Sent to analytics
+    only, against the anonymous device id; nothing is stored here.
+    """
+    whoop.check_device(req.device)
+    analytics.track("jet_lag_rated", _as_device(request, req.device), {
+        "rating": req.rating, "followed": req.followed,
+        "hours_shifted": req.shift_hours, "strategy": req.strategy,
+    })
+    return {"thanks": True}
 
 
 @app.post("/app/whoop/disconnect")
