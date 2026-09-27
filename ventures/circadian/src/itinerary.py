@@ -64,6 +64,10 @@ CAFFEINE_CUTOFF = 6.0       # no caffeine within this many hours of bedtime
 NAP_MINUTES = 30
 SHORT_TRIP_HOURS = 72       # at the destination for less: stay on home time
 MAX_FLIGHT_HOURS = 48       # first departure to final arrival, stopovers included
+# The longest scheduled nonstop (Singapore-New York) is under 19 hours. A
+# single flight over 30 is a landing date typed a day or more late; the margin
+# leaves room for a long delay without refusing a real flight.
+MAX_LEG_HOURS = 30
 LAYOVER_SLEEP_HOURS = 4     # a stopover this long can hold real sleep
 READY_BEFORE_DEPARTURE = timedelta(hours=3)
 
@@ -209,6 +213,43 @@ def choose_strategy(difference: float, preflight_days: int, requested: str = "au
     return "delay", delay_need, DELAY_RATE
 
 
+def _duration(td: timedelta) -> str:
+    hours = round(td.total_seconds() / 3600)
+    days, hours = divmod(hours, 24)
+    parts = [f"{days} day{'s' if days != 1 else ''}"] if days else []
+    if hours or not parts:
+        parts.append(f"{hours} hour{'s' if hours != 1 else ''}")
+    return " ".join(parts)
+
+
+def _when(t: datetime) -> str:
+    return f"{t.strftime('%a')} {t.day} {t.strftime('%b')} {t.strftime('%H:%M')}"
+
+
+def _check_lengths(flights) -> None:
+    """
+    The times are what the traveller typed, and a landing date one or two days
+    off is the usual slip on a phone's date picker. The message says which
+    flight, how long it came out as, and what to check, because "not
+    supported; plan each leg" left someone with a direct flight nowhere to go.
+    """
+    for i, (d, a, dz, az) in enumerate(flights, start=1):
+        if a - d > timedelta(hours=MAX_LEG_HOURS):
+            which = f"Flight {i}" if len(flights) > 1 else "This flight"
+            raise ValueError(
+                f"{which} comes out at {_duration(a - d)} ({_when(d.astimezone(dz))} to "
+                f"{_when(a.astimezone(az))}, local times). "
+                "The longest flights are about 19 hours: check the landing date on your ticket."
+            )
+    dep, arr = flights[0][0], flights[-1][1]
+    if arr - dep > timedelta(hours=MAX_FLIGHT_HOURS):
+        raise ValueError(
+            f"This journey comes out at {_duration(arr - dep)} from first take-off to last landing "
+            f"({_when(dep.astimezone(flights[0][2]))} to {_when(arr.astimezone(flights[-1][3]))}, local times). Check the dates of each flight; "
+            f"if a stop really lasts days, add it as a separate trip with Multi-city."
+        )
+
+
 def _parse_legs(legs) -> List[Tuple[datetime, datetime, ZoneInfo, ZoneInfo]]:
     """[(dep_utc, arr_utc, dep_zone, arr_zone)], validated as one journey."""
     parsed = []
@@ -279,8 +320,7 @@ def plan_trip(
     body_offset = _offset_hours(home, dep) if body_offset_hours is None else float(body_offset_hours)
     body = timezone(timedelta(hours=body_offset))
     stopovers = [(flights[i][1], flights[i + 1][0], flights[i][3]) for i in range(len(flights) - 1)]
-    if arr - dep > timedelta(hours=MAX_FLIGHT_HOURS):
-        raise ValueError(f"a journey longer than {MAX_FLIGHT_HOURS} hours is not supported; plan each leg")
+    _check_lengths(flights)
     if not 0 <= int(preflight_days) <= MAX_PREFLIGHT_DAYS:
         raise ValueError(f"preflight_days must be 0 to {MAX_PREFLIGHT_DAYS}")
     preflight_days = int(preflight_days)
