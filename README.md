@@ -184,6 +184,36 @@ separate turns — and it's submitted automatically, no click required. It
 runs a separate continuous `SpeechRecognition` session from the manual
 push-to-talk button, so the two are mutually exclusive while wake word is on.
 
+### OmniRoute, an AI gateway in front of every model
+
+When Claude's credit runs out, Jarvis falls back through OpenAI, Gemini,
+DeepSeek and OpenRouter, each with its own key and balance.
+[OmniRoute](https://github.com/diegosouzapw/OmniRoute) (MIT) replaces that
+juggling with one gateway that has its own fallback across many providers,
+free ones included. Once connected it is the first backup, and any agent can
+run on it.
+
+1. **Add a service** to the same Railway project: *New → Docker Image →*
+   `diegosouzapw/omniroute:latest`.
+2. **Give it a volume** mounted at `/app/data`, where it keeps its providers
+   and keys. Without one it forgets them on every redeploy.
+3. **Set its variables:** `PORT=20128`, `OMNIROUTE_WS_BRIDGE_SECRET` to any
+   long random string, and `NEXT_PUBLIC_BASE_URL` to the domain from step 4.
+4. **Generate a domain** for it and open the dashboard. Secure the dashboard
+   login before anything else, then add your providers and create a client
+   API key.
+5. **On the Jarvis service** set `OMNIROUTE_URL` to that domain and
+   `OMNIROUTE_API_KEY` to the key. Railway's private address,
+   `http://<service name>.railway.internal:20128`, also works and keeps the
+   traffic inside the project.
+6. **Check it:** `INTEGRATIONS` on WhatsApp has an *omniroute* line that
+   says whether the gateway answered and accepted the key.
+
+To run an agent on it rather than only falling back to it, add
+`<agentId>:router` to `AGENT_MODEL_TIERS`. It is metered at Claude's price
+until you set `OMNIROUTE_INPUT_PRICE_PER_MTOK` and
+`OMNIROUTE_OUTPUT_PRICE_PER_MTOK`, so the daily spend cap never undercounts it.
+
 ### A phone number for the help desk
 
 The travel help desk answers a real phone line through Twilio, on Railway as

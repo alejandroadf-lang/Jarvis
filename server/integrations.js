@@ -15,6 +15,7 @@
 
 import { isOpenRouterConfigured } from './agents/openrouter.js';
 import { isDeepSeekConfigured, deepSeekModel } from './agents/deepseek.js';
+import { isOmniRouteConfigured, omniRouteBase, omniRouteModel, omniRouteProblem } from './agents/omniroute.js';
 import { isHonchoConfigured, FOUNDER_PEER_ID } from './memory/honcho.js';
 import { isEmailConfigured } from './email.js';
 import { isInboxConfigured } from './inbox.js';
@@ -406,14 +407,46 @@ async function probeDeepSeek() {
   }
 }
 
+/**
+ * Asks the gateway for its model list: proves it is up and takes the key,
+ * and costs no tokens. OmniRoute is the founder's own service, so "couldn't
+ * reach it" usually means it is not deployed or the URL is wrong.
+ */
+async function probeOmniRoute() {
+  if (!isOmniRouteConfigured()) {
+    const problem = omniRouteProblem();
+    return (process.env.OMNIROUTE_URL || '').trim()
+      ? { configured: false, ok: false, detail: problem }
+      : notConfigured('Not set — no gateway in the backup chain. Set OMNIROUTE_URL and OMNIROUTE_API_KEY to add one.');
+  }
+  try {
+    const res = await withTimeout(
+      fetch(`${omniRouteBase()}/models`, { headers: { Authorization: `Bearer ${readSecret('OMNIROUTE_API_KEY')}` } }),
+      'OmniRoute'
+    );
+    if (res.status === 401 || res.status === 403) {
+      return { configured: true, ok: false, detail: 'Key rejected by the gateway. Create a new one in the OmniRoute dashboard.' };
+    }
+    if (!res.ok) return { configured: true, ok: false, detail: `OmniRoute returned ${res.status} at ${omniRouteBase()}/models.` };
+    return {
+      configured: true,
+      ok: true,
+      detail: `Gateway up and key accepted — first backup if Claude fails, asking for "${omniRouteModel()}".`,
+    };
+  } catch (err) {
+    return { configured: true, ok: false, detail: `Couldn't reach OmniRoute at ${omniRouteBase()}: ${err.message}` };
+  }
+}
+
 export async function getIntegrationStatus() {
-  const [openrouter, honcho, whatsapp, openai, gemini, deepseek] = await Promise.all([
+  const [openrouter, honcho, whatsapp, openai, gemini, deepseek, omniroute] = await Promise.all([
     probeOpenRouter(),
     probeHoncho(),
     probeWhatsApp(),
     probeOpenAI(),
     probeGemini(),
     probeDeepSeek(),
+    probeOmniRoute(),
   ]);
 
   return {
@@ -438,6 +471,7 @@ export async function getIntegrationStatus() {
     openai,
     gemini,
     deepseek,
+    omniroute,
     honcho,
     whatsapp,
     // Synchronous: there is nothing to probe without placing a call, and a
