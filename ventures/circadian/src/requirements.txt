@@ -5,3 +5,6 @@ uvicorn[standard]==0.30.6
 tzdata==2025.2
 # Web push reminders (py-vapid, http-ece and cryptography come with it).
 pywebpush==2.0.3
+# WHOOP calls (whoop.py). Already installed with pywebpush; named here because
+# whoop.py imports it directly.
+requests>=2.31,<3

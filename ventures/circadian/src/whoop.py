@@ -32,17 +32,16 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
-import json
 import os
 import re
 import time
-import urllib.error
 import urllib.parse
-import urllib.request
 from datetime import datetime, timedelta, timezone
 from statistics import median
 from typing import Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
+
+import requests
 
 from src import store
 from src.itinerary import TripPlan
@@ -149,33 +148,42 @@ def authorize_url(device: str, redirect_uri: str) -> str:
 # --- HTTP -------------------------------------------------------------------------------
 
 def _http(method: str, url: str, headers: Optional[dict] = None, form: Optional[dict] = None) -> Tuple[int, Optional[dict]]:
-    """(status, json body or None). Replaced in tests."""
-    data = urllib.parse.urlencode(form).encode() if form is not None else None
-    req = urllib.request.Request(url, data=data, method=method, headers=dict(headers or {}))
-    req.add_header("User-Agent", USER_AGENT)
-    req.add_header("Accept", "application/json")
-    if form is not None:
-        req.add_header("Content-Type", "application/x-www-form-urlencoded")
+    """
+    (status, json body or None). Replaced in tests.
+
+    Through requests (already installed: pywebpush depends on it) rather than
+    urllib. Cloudflare in front of WHOOP answered the live token exchange with
+    "Sorry, you have been blocked" (cf-ray a419c319baaa991c-SJC) even after
+    the User-Agent was fixed; urllib's connection looks unlike any common
+    client (no ALPN, bare headers), which bot scoring weighs, while requests
+    is what WHOOP's own examples and most integrations use.
+    """
+    h = {"User-Agent": USER_AGENT, "Accept": "application/json", **(headers or {})}
     try:
-        with urllib.request.urlopen(req, timeout=15) as res:
-            raw = res.read()
-            return res.status, (json.loads(raw) if raw else None)
-    except urllib.error.HTTPError as err:
-        raw = err.read()
-        try:
-            return err.code, json.loads(raw) if raw else None
-        except ValueError:
-            # Not WHOOP's API talking but something in front of it (a firewall
-            # page): its first words and ray id say which rule, and a bare
-            # "HTTP 403" did not. Such pages never echo the request's form.
-            text = " ".join(raw[:4000].decode("utf-8", "replace").split())
-            text = re.sub(r"<[^>]+>", " ", text)
-            text = " ".join(text.split())[:300]
-            print(f"CircadianAPI: {method} {url.split('?')[0]} answered HTTP {err.code} "
-                  f"(server={err.headers.get('server', '?')}, cf-ray={err.headers.get('cf-ray', '-')}): {text}")
-            return err.code, None
-    except OSError:  # DNS, refused, timeout: status 0 means WHOOP was not reached
+        res = requests.request(method, url, headers=h, data=form, timeout=15)
+    except requests.RequestException:  # DNS, refused, timeout: 0 means WHOOP was not reached
         return 0, None
+    try:
+        body = res.json() if res.content else None
+    except ValueError:
+        body = None
+    if res.status_code >= 400 and res.status_code != 401 and not (isinstance(body, dict) and body.get("error")):
+        # Not WHOOP's OAuth server talking (it answers with an "error" field)
+        # but something in front of it: a firewall page, an empty 403, a
+        # gateway's {"message": ...}. Its server, ray id and words say which,
+        # where a bare "HTTP 403" did not. Such error pages never echo the
+        # request's form, so nothing secret is printed.
+        page = res.content[:6000].decode("utf-8", "replace")
+        page = _re_script.sub(" ", page)
+        text = " ".join(re.sub(r"<[^>]+>", " ", page).split())[:400] or "(empty body)"
+        print(f"CircadianAPI: {method} {url.split('?')[0]} answered HTTP {res.status_code} "
+              f"(server={res.headers.get('server', '?')}, cf-ray={res.headers.get('cf-ray', '-')}, "
+              f"x-amzn-requestid={res.headers.get('x-amzn-requestid', '-')}): {text}")
+    return res.status_code, body
+
+
+# Scripts and styles say nothing about why a firewall page refused.
+_re_script = re.compile(r"<(script|style)\b.*?</\1>", re.S | re.I)
 
 
 # --- tokens -----------------------------------------------------------------------------
