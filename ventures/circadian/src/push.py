@@ -72,6 +72,9 @@ def reminders_from_plan(plan: TripPlan, now: Optional[datetime] = None) -> List[
         # The plan's own note, first sentence: it names the city, the times and
         # whether to go outside or use a lamp. The fixed text is the fallback.
         specific = (e.note or "").split(". ")[0].rstrip(".")
+        if e.type == "melatonin" and e.note:
+            # Whole note: the prescription warning is the second sentence.
+            specific = e.note.rstrip(".")
         out.append({
             "at": at.astimezone(UTC).isoformat(),
             "title": title,

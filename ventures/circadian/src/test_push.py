@@ -38,6 +38,9 @@ def test_reminders_are_future_only_and_in_order():
     assert {"light_seek", "sleep", "melatonin"} <= kinds
     bedtime = next(r for r in rs if r["kind"] == "sleep")
     assert bedtime["title"] == "Bedtime in 30 minutes"
+    # The body is the plan's own advice for that moment, not a fixed line.
+    assert "Tokyo" in next(r for r in rs if r["kind"] == "sleep" and "Tokyo" in r["body"])["body"]
+    assert all("rescription" in r["body"] for r in rs if r["kind"] == "melatonin")
 
 
 def test_no_bedtime_reminder_for_sleep_on_the_plane():
