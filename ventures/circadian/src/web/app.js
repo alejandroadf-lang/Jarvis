@@ -510,39 +510,91 @@
 
   // --- trips ------------------------------------------------------------------------------
 
-  function tripTitle(trip) {
-    const first = trip.journeys?.[0]?.legs?.[0];
-    if (!first) return "Trip";
-    const city = (label) => String(label || "").split(" (")[0];
-    const stops = trip.journeys.map((j) => city(j.legs.at(-1)?.to));
-    const date = (first.departure || "").slice(0, 10);
-    const home = city(first.from);
-    const route = stops.length > 1 && stops.at(-1) === home
-      ? `${[home, ...stops.slice(0, -1)].join(" to ")} and back`
-      : [home, ...stops].join(" to ");
-    return `${route} · ${date}`;
+  // My trips lives in its own window, opened from the header, so the page
+  // itself is the form and the plan. Rows are identified by route and first
+  // departure day: re-planning the same trip with corrected times replaces it
+  // rather than adding a second row that reads exactly like the first.
+  const cityName = (label) => String(label || "").split(" (")[0];
+  const shortDate = (local) => {
+    if (!local) return "";
+    const [y, m, d] = local.slice(0, 10).split("-").map(Number);
+    return new Date(Date.UTC(y, m - 1, d, 12)).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
+  };
+
+  function tripInfo(trip) {
+    const js = trip.journeys || [];
+    const first = js[0]?.legs?.[0];
+    if (!first) return { key: "", route: "Trip", when: "", kind: "" };
+    const home = cityName(first.from);
+    const stops = js.map((j) => cityName(j.legs.at(-1)?.to));
+    const type = tripType(trip);
+    const route = type === "return" ? `${home} ⇄ ${stops[0]}`
+      : stops.length > 1 && stops.at(-1) === home ? `${[home, ...stops.slice(0, -1)].join(" → ")} → ${home}`
+      : [home, ...stops].join(" → ");
+    const when = js.length > 1
+      ? `${shortDate(first.departure)} – ${shortDate(js.at(-1).legs[0]?.departure)}`
+      : shortDate(first.departure);
+    const connections = js.reduce((n, j) => n + Math.max(0, j.legs.length - 1), 0);
+    const kind = { return: "Return", oneway: "One way", multi: "Multi-city" }[type]
+      + (connections ? ` · ${connections} stop${connections === 1 ? "" : "s"}` : "");
+    const key = `${[home, ...stops].join(">")}|${(first.departure || "").slice(0, 10)}`;
+    return { key, route, when, kind };
+  }
+
+  function savedTrips() {
+    // Newest first; drop older copies of the same trip (see tripInfo).
+    const seen = new Set();
+    const trips = load(K.trips, []).map(upgrade).filter((t) => {
+      const { key } = tripInfo(t);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    return trips;
   }
 
   function renderTrips() {
-    const trips = load(K.trips, []).map(upgrade);
-    $("trips-card").hidden = trips.length < 2;
+    const trips = savedTrips();
+    save(K.trips, trips);
+    const current = tripInfo(load(K.current, null) ? upgrade(load(K.current, null)) : {}).key;
+    $("open-trips").hidden = trips.length === 0;
+    $("trips-count").textContent = String(trips.length);
     const box = $("trips"); box.replaceChildren();
-    trips.forEach((t, i) => {
-      const row = el("div", "trip");
-      row.appendChild(el("span", "", tripTitle(t)));
-      const open = el("button", "secondary", "Open"); open.type = "button";
-      open.addEventListener("click", () => { fill(t); makePlan(t); scrollTo({ top: 0 }); });
+    for (const t of trips) {
+      const info = tripInfo(t);
+      const row = el("div", `trip${info.key === current ? " current" : ""}`);
+      row.appendChild(el("div", "trip-route", info.route));
+      const meta = el("div", "trip-meta");
+      meta.append(el("span", "", info.when), el("span", "", info.kind));
+      if (info.key === current) meta.appendChild(el("span", "", "Open now"));
+      row.appendChild(meta);
+      const actions = el("div", "trip-actions");
+      const open = el("button", "", "Open plan"); open.type = "button";
+      open.addEventListener("click", () => {
+        $("trips-dialog").close();
+        fill(t); makePlan(t); scrollTo({ top: 0 });
+      });
       const del = el("button", "secondary", "Delete"); del.type = "button";
-      del.addEventListener("click", () => { const all = load(K.trips, []); all.splice(i, 1); save(K.trips, all); renderTrips(); });
-      const actions = el("div", "stats"); actions.append(open, del);
+      del.setAttribute("aria-label", `Delete ${info.route}, ${info.when}`);
+      del.addEventListener("click", () => {
+        save(K.trips, savedTrips().filter((x) => tripInfo(x).key !== info.key));
+        renderTrips();
+        if (!savedTrips().length) $("trips-dialog").close();
+      });
+      actions.append(open, del);
       row.appendChild(actions);
       box.appendChild(row);
-    });
+    }
   }
 
+  $("open-trips").addEventListener("click", () => { renderTrips(); $("trips-dialog").showModal(); });
+  $("close-trips").addEventListener("click", () => $("trips-dialog").close());
+  // A tap on the dimmed area outside the sheet closes it, as on any phone sheet.
+  $("trips-dialog").addEventListener("click", (e) => { if (e.target === $("trips-dialog")) $("trips-dialog").close(); });
+
   function remember(trip) {
-    const key = JSON.stringify(trip.journeys);
-    const all = load(K.trips, []).map(upgrade).filter((t) => JSON.stringify(t.journeys) !== key);
+    const key = tripInfo(trip).key;
+    const all = savedTrips().filter((t) => tripInfo(t).key !== key);
     all.unshift(trip);
     save(K.trips, all.slice(0, 10));
     save(K.current, trip);
