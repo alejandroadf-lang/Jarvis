@@ -477,7 +477,9 @@
   async function renderReminders(container, tripReq) {
     const card = el("div", "card");
     card.appendChild(el("h2", "", "Reminders"));
-    const text = el("p", "", "A tap on the shoulder when it is time for light, bed, or the last coffee.");
+    const text = el("p", "", $("whoop-button").classList.contains("connected")
+      ? "A tap on the shoulder when it is time for light, bed, or the last coffee, and a check-in each morning once WHOOP has scored your night: how it went against the plan, and today's times."
+      : "A tap on the shoulder when it is time for light, bed, or the last coffee.");
     card.appendChild(text);
     const button = el("button", "secondary", "Turn on reminders"); button.type = "button";
     card.appendChild(button);

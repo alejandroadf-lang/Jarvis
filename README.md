@@ -156,6 +156,12 @@ connections) goes in `circadian/` inside the volume from step 2.
 - **WHOOP:** in the WHOOP developer dashboard the redirect URL is
   `https://<your Railway domain>/circadian/whoop/callback`. Then set
   `WHOOP_CLIENT_ID` and `WHOOP_CLIENT_SECRET` on this service.
+- **Morning check-in:** in the same WHOOP app, add the webhook URL
+  `https://<your Railway domain>/circadian/whoop/webhook` (API v2). With
+  reminders on, a traveller gets one push each morning once WHOOP has scored
+  the night: last night against the plan, recovery, today's times. Without
+  the webhook the server asks WHOOP itself, one to four hours after each
+  planned wake.
 - **Let the team check it's up:** send
   `URL <ventureId> https://<your Railway domain>/circadian` on WhatsApp.
   The path is kept, so their health checks hit Circadian and not Jarvis.

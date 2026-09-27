@@ -31,7 +31,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from src import advice, analytics, push, store, whoop
+from src import advice, analytics, checkin, push, store, whoop
 from src.auth import RateLimiter, auth_and_rate_limit
 from src.ics import plan_to_ics
 from src.itinerary import estimate_landing, merge_plans, plan_itinerary, plan_to_dict, plan_trip
@@ -336,6 +336,7 @@ def _startup() -> None:
     print(whoop.describe())
     # In the background: a slow WHOOP must not hold up serving the page.
     threading.Thread(target=lambda: print(whoop.reachability()), daemon=True).start()
+    checkin.start()
     push.start_scheduler()
 
 
@@ -347,7 +348,7 @@ def push_key(_limit=Depends(app_rate_limit)):
 @app.post("/app/push/subscribe")
 def push_subscribe(req: PushSubscribeRequest, request: Request, _limit=Depends(app_rate_limit)):
     whoop.check_device(req.device)
-    count = push.subscribe(req.device, req.subscription, _plan(req.trip))
+    count = push.subscribe(req.device, req.subscription, _plan(req.trip), trip=req.trip.model_dump(mode="json", exclude_none=True))
     analytics.track("reminders_on", _as_device(request, req.device), {"reminders": count})
     return {"subscribed": True, "reminders": count}
 
@@ -430,6 +431,27 @@ def whoop_callback(request: Request, code: Optional[str] = None, state: Optional
     print("CircadianAPI: WHOOP connected.")
     analytics.track("whoop_connected", _as_device(request, device))
     return RedirectResponse(f"{_prefix(request)}/?whoop=connected", status_code=302)
+
+
+@app.post("/whoop/webhook", include_in_schema=False)
+async def whoop_webhook(request: Request):
+    """
+    WHOOP's notice that a sleep or recovery was scored: the morning check-in's
+    trigger (checkin.py). Registered in the WHOOP developer dashboard as
+    <public base>/whoop/webhook. Answered at once; the work runs behind.
+    Not rate-limited by IP like the app routes: WHOOP's addresses are shared.
+    """
+    body = await request.body()
+    if not checkin.verify_signature(request.headers.get("x-whoop-signature-timestamp", ""), body,
+                                    request.headers.get("x-whoop-signature", "")):
+        print("CircadianAPI: a WHOOP webhook delivery failed its signature check and was ignored.")
+        return JSONResponse(status_code=401, content={"error": {"code": "bad_signature", "message": "signature check failed"}})
+
+    def work():
+        print(f"CircadianAPI: morning check-in from WHOOP webhook: {checkin.handle_webhook(body)}")
+
+    checkin.in_background(work)
+    return {"received": True}
 
 
 @app.get("/app/whoop/status")
