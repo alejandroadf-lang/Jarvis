@@ -707,6 +707,15 @@ def merge_plans(plans: List[TripPlan]) -> TripPlan:
     events.sort(key=lambda e: (e.start, e.type))
     first, last = plans[0], plans[-1]
     adapting = [p for p in plans if p.mode == "adapt"]
+    # Each journey's phase is relative to its own starting body clock; on the
+    # first journey's scale they read as one trajectory, so body_offset_at
+    # and the clock graph work on the merged plan too.
+    phase = []
+    for p in plans:
+        base_shift = p.body_offset_hours - first.body_offset_hours
+        phase += [(cbt, base_shift + s) for cbt, s in p.phase]
+        if not p.phase and p is not first:
+            phase.append((min(e.start for e in p.events), base_shift))
     return TripPlan(
         mode="adapt" if adapting else first.mode,
         home_tz=first.home_tz, destination_tz=last.destination_tz,
@@ -719,10 +728,65 @@ def merge_plans(plans: List[TripPlan]) -> TripPlan:
         summary=" ".join(p.summary for p in plans),
         local_time_difference_hours=first.local_time_difference_hours,
         body_offset_hours=first.body_offset_hours,
+        phase=phase,
     )
 
 
 # --- output ----------------------------------------------------------------------------
+
+def local_zone_at(plan: TripPlan, at: datetime) -> ZoneInfo:
+    """Where the traveller is at a moment: the clock of the last thing on the ground before it."""
+    zone = ZoneInfo(plan.home_tz)
+    for e in plan.events:
+        if e.start > at:
+            break
+        # Anything in the air (the flight itself, sleep on it) says nothing
+        # about where the traveller is; a stopover does, and carries its zone.
+        if e.type == "flight" or e.where == "flight":
+            continue
+        zone = ZoneInfo(e.tz or (plan.home_tz if e.where == "home" else plan.destination_tz))
+    return zone
+
+
+def hours_off_local(plan: TripPlan, at: datetime) -> float:
+    """Body clock minus the local clock, in hours: 0 is adapted, +6 is a body six hours ahead."""
+    zone = local_zone_at(plan, at)
+    local_offset = (at.astimezone(zone).utcoffset() or timedelta(0)).total_seconds() / 3600
+    return round(body_offset_at(plan, at) - local_offset, 2)
+
+
+def clock_series(plan: TripPlan) -> List[dict]:
+    """
+    The body clock against the local clock over the whole trip, as points to
+    draw: at the plan's start, at each landing (the local clock jumps, the
+    body's does not), at each expected step of the body clock, and at the
+    end. This is the picture of jet lag itself: a line that has to come back
+    to zero, and what a night measured by WHOOP is plotted against.
+    """
+    if not plan.events:
+        return []
+    moments = {min(e.start for e in plan.events), max(e.end or e.start for e in plan.events)}
+    # A point just before and one at each change, so the line steps rather
+    # than slopes: where the local clock changes (landing, a stopover), and
+    # where the body clock is expected to move.
+    zone = plan.home_tz
+    for e in plan.events:
+        if e.type == "flight" or e.where == "flight":
+            continue
+        here = e.tz or (plan.home_tz if e.where == "home" else plan.destination_tz)
+        if here != zone:
+            moments.add(e.start - timedelta(seconds=1))
+            moments.add(e.start)
+            zone = here
+    for cbt, _ in plan.phase:
+        moments.add(cbt - timedelta(seconds=1))
+        moments.add(cbt)
+    out = []
+    for at in sorted(moments):
+        out.append({"at": at.astimezone(UTC).isoformat().replace("+00:00", "Z"),
+                    "hours": hours_off_local(plan, at), "local_tz": local_zone_at(plan, at).key})
+    return out
+
 
 def plan_to_dict(plan: TripPlan) -> dict:
     """JSON-ready: every event with UTC times and the wall clock where the traveller is."""
@@ -763,5 +827,6 @@ def plan_to_dict(plan: TripPlan) -> dict:
         "summary": plan.summary,
         "briefing": advice.briefing(plan),
         "events": out,
+        "clock": clock_series(plan),
         "disclaimer": plan.disclaimer,
     }

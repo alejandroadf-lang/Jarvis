@@ -633,3 +633,41 @@ def test_a_flight_back_before_the_flight_out_lands_names_both_times():
         ])
     assert str(err.value).startswith(
         "Flight 2 leaves Fri 9 Oct 15:00, before flight 1 lands (Sat 10 Oct 01:25, local times)")
+
+
+def test_the_clock_series_starts_on_home_time_and_comes_back_to_zero():
+    from src.itinerary import clock_series, hours_off_local, plan_to_dict
+    plan = plan_trip(datetime(2026, 10, 6, 19, 0), "Asia/Bangkok", datetime(2026, 10, 7, 1, 25), "Europe/London",
+                     preflight_days=2)
+    pts = clock_series(plan)
+    assert pts and pts == plan_to_dict(plan)["clock"]
+    # Before flying the body is on Bangkok time, so 0 h off local; landing puts it 6 h ahead of London.
+    assert pts[0]["hours"] == 0 and pts[0]["local_tz"] == "Asia/Bangkok"
+    landed = next(p for p in pts if p["local_tz"] == "Europe/London")
+    assert 3.5 <= landed["hours"] <= 6.0     # two preflight days at 1 h/day have already moved it from 6
+    assert abs(pts[-1]["hours"]) < 0.01, "the line ends on local time"
+    # Monotonic: every step brings it closer to zero, never further.
+    london = [p["hours"] for p in pts if p["local_tz"] == "Europe/London"]
+    assert all(b <= a + 1e-9 for a, b in zip(london, london[1:]))
+    # Sleep on the plane is not "in London": the line stays on Bangkok's clock
+    # (at or below zero, the body moving later) until the wheels touch down.
+    assert all(p["hours"] <= 0 for p in pts if p["local_tz"] == "Asia/Bangkok")
+    landing = next(e.end for e in plan.events if e.type == "flight")
+    assert landed["at"] == landing.isoformat().replace("+00:00", "Z")
+    # And the point function agrees with the series.
+    assert hours_off_local(plan, datetime(2026, 10, 12, 12, tzinfo=timezone.utc)) == pts[-1]["hours"]
+
+
+def test_a_merged_itinerary_keeps_one_body_clock_line():
+    from src.itinerary import clock_series
+    out = plan_itinerary([
+        [leg("2026-10-06T19:00", "Asia/Bangkok", "2026-10-07T01:25", "Europe/London")],
+        [leg("2026-10-16T15:00", "Europe/London", "2026-10-17T09:25", "Asia/Bangkok")],
+    ])
+    merged = merge_plans(out)
+    pts = clock_series(merged)
+    # Adapted in London by the flight back, then 6 h behind Bangkok on landing, then back to zero.
+    before_back = [p for p in pts if p["local_tz"] == "Europe/London"][-1]
+    assert abs(before_back["hours"]) < 0.01
+    back = [p for p in pts if p["local_tz"] == "Asia/Bangkok" and p["at"] > "2026-10-16"]
+    assert back[0]["hours"] <= -5 and abs(back[-1]["hours"]) < 0.01
