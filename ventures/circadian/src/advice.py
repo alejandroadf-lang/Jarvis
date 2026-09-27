@@ -299,6 +299,101 @@ def _melatonin(plan, e, zone: str, n: int = 1) -> str:
             f"working into the morning. Check with a doctor first; it needs a prescription in some countries.")
 
 
+# --- when the brain is clearest ---------------------------------------------------------------
+#
+# Alertness and thinking follow the body clock, not the wall clock. On its own
+# clock the body is sharpest in the late morning and again from late afternoon
+# into the evening, dips after lunch, and is at its worst through its night,
+# lowest just before its usual wake time (the core temperature minimum). This
+# is a circadian model only: a short night makes every hour worse, which is
+# why the notes say "clearest" rather than promise a sharp mind.
+#
+# Hours are counted from the traveller's usual wake time on their body clock:
+# 2 to 6 hours after waking and from 9 hours after waking to an hour before
+# usual bedtime are the clear hours; the body's usual sleeping hours are the
+# foggy ones.
+
+STEP = timedelta(minutes=15)
+MIN_WINDOW = timedelta(hours=1)
+
+
+def _since_wake(plan, at: datetime) -> float:
+    body = at.astimezone(timezone(timedelta(hours=_body_offset(plan, at))))
+    wake = plan.usual_wake if plan.usual_wake is not None else 7.0
+    return ((body.hour + body.minute / 60) - wake) % 24
+
+
+def _awake_len(plan) -> float:
+    wake = plan.usual_wake if plan.usual_wake is not None else 7.0
+    bed = plan.usual_bedtime if plan.usual_bedtime is not None else 23.0
+    return (bed - wake) % 24
+
+
+def _state(plan, at: datetime) -> str:
+    rel, awake = _since_wake(plan, at), _awake_len(plan)
+    if rel >= awake:
+        return "fog"
+    if 2 <= rel < 6 or 9 <= rel < awake - 1:
+        return "focus"
+    return ""
+
+
+def _longest(plan, a: datetime, b: datetime, kind: str):
+    best, run_start, t = None, None, a
+    while t <= b:
+        inside = t < b and _state(plan, t) == kind
+        if inside and run_start is None:
+            run_start = t
+        if not inside and run_start is not None:
+            if t - run_start >= MIN_WINDOW and (best is None or t - run_start > best[1] - best[0]):
+                best = (run_start, t)
+            run_start = None
+        t += STEP
+    return best
+
+
+def alertness_windows(plan) -> List[Tuple[str, datetime, datetime]]:
+    """[(focus|fog, start, end)] for each waking stretch there, while the body is off local time."""
+    if plan.mode not in ("adapt", "stay_on_home_time"):
+        return []
+    nights = sorted((e for e in plan.events if e.type == "sleep" and e.where == "destination"), key=lambda e: e.start)
+    flights = [e for e in plan.events if e.type == "flight"]
+    if not nights or not flights:
+        return []
+    landed = max(e.end for e in flights) + timedelta(hours=1)
+    stretches = [(landed, nights[0].start)] + [(n.end, m.start) for n, m in zip(nights, nights[1:])]
+    out = []
+    for a, b in stretches:
+        if b - a < timedelta(hours=2):
+            continue
+        if plan.mode == "adapt" and abs(_gap(plan, a, plan.destination_tz)) < 1:
+            continue   # caught up: an ordinary day, nothing to plan around
+        for kind in ("focus", "fog"):
+            # Demanding work stops an hour before bed: that hour is for winding down.
+            window = _longest(plan, a, b - timedelta(hours=1) if kind == "focus" else b, kind)
+            if window:
+                out.append((kind, window[0], window[1]))
+    return out
+
+
+def _focus(plan, e, zone: str, n: int) -> str:
+    start, end, here = _hm(e.start, zone), _hm(e.end, zone), city(zone)
+    body = f"{_body_time(plan, e.start)} to {_body_time(plan, e.end)}"
+    if n == 1:
+        return (f"Clearest thinking today: {start} to {end} {here} time. Your body thinks it's {body}, "
+                f"its sharpest hours. Put demanding work, big decisions and important meetings here.")
+    return f"Clearest thinking: {start} to {end} (your body: {body}). Save the hard work for this."
+
+
+def _fog(plan, e, zone: str, n: int) -> str:
+    start, end, here = _hm(e.start, zone), _hm(e.end, zone), city(zone)
+    body = f"{_body_time(plan, e.start)} to {_body_time(plan, e.end)}"
+    if n == 1:
+        return (f"Foggiest stretch: {start} to {end} {here} time. Your body thinks it's {body}, the middle "
+                f"of its night. Routine tasks only; avoid big decisions and, if you can, driving.")
+    return f"Foggy: {start} to {end} (your body: {body}). Routine tasks only; avoid driving if you can."
+
+
 def _nap(plan, e, zone: str) -> str:
     return (f"If you're flagging: one nap, {_hm(e.start, zone)} to {_hm(e.end, zone)}, no longer. Set an alarm; "
             f"a longer or later nap takes from tonight's sleep.")
@@ -333,6 +428,10 @@ def describe(plan) -> None:
             e.note = _melatonin(plan, e, zone, n)
         elif e.type == "nap":
             e.note = _nap(plan, e, zone)
+        elif e.type == "focus":
+            e.note = _focus(plan, e, zone, n)
+        elif e.type == "fog":
+            e.note = _fog(plan, e, zone, n)
 
 
 # --- the plan in brief ----------------------------------------------------------------------
@@ -408,6 +507,17 @@ def briefing(plan) -> List[Dict[str, str]]:
             if coffee and coffee.end > landing:
                 parts.append(f"coffee is fine until {_hm(coffee.end, z)}")
             items.append({"title": "Arrival day", "text": "; ".join(parts) + "."})
+
+    focus = [e for e in events if e.type == "focus"]
+    if focus:
+        z = plan.destination_tz
+        day1 = focus[1] if len(focus) > 1 and focus[0].start < max(e.end for e in events if e.type == "flight") + timedelta(hours=12) else focus[0]
+        fog = next((e for e in events if e.type == "fog" and _day(e.start, z) == _day(day1.start, z)), None)
+        text = f"{_day(day1.start, z)}: sharpest {_hm(day1.start, z)} to {_hm(day1.end, z)}"
+        if fog:
+            text += f", foggiest {_hm(fog.start, z)} to {_hm(fog.end, z)}"
+        text += ". Book important meetings in the sharp hours; each day's are in your plan."
+        items.append({"title": "Best time for work", "text": text})
 
     if plan.mode == "adapt":
         seek = next((e for e in events if e.type == "light_seek" and e.where == "destination"), None)

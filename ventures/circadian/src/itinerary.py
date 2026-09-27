@@ -80,7 +80,7 @@ CHRONOTYPE_SLEEP = {
 
 @dataclass
 class Event:
-    type: str                 # sleep | light_seek | light_avoid | melatonin | caffeine_ok | nap | flight | stopover
+    type: str                 # sleep | light_seek | light_avoid | melatonin | caffeine_ok | nap | flight | stopover | focus | fog
     start: datetime           # UTC
     end: Optional[datetime]   # UTC, None for point events
     where: str                # home | flight | stopover | destination
@@ -111,6 +111,7 @@ class TripPlan:
     body_offset_hours: float = 0.0
     phase: List[Tuple[datetime, float]] = field(default_factory=list)
     usual_bedtime: Optional[float] = None   # hours, home clock; for "1 h earlier than usual"
+    usual_wake: Optional[float] = None      # hours, home clock; anchors the body's alert and foggy hours
     light_device: str = "none"              # none | glasses | box: shapes the light advice
 
 
@@ -315,7 +316,7 @@ def plan_trip(
                             tz=sz.key))
     base = dict(home_tz=home.key, destination_tz=dest.key, time_difference_hours=difference,
                 local_time_difference_hours=local_difference, body_offset_hours=body_offset,
-                usual_bedtime=ss, light_device=light_device)
+                usual_bedtime=ss, usual_wake=se, light_device=light_device)
 
     # --- no shift -----------------------------------------------------------------------
     if abs(difference) < 1:
@@ -349,7 +350,7 @@ def plan_trip(
                                      f"stay on {advice.city(home.key)} time. Sleep and get daylight on your home "
                                      "clock, and don't try to adapt."),
                             **base)
-            advice.describe(plan)
+            _add_alertness(plan)
             return plan
 
     # --- adapt ----------------------------------------------------------------------------
@@ -529,8 +530,16 @@ def plan_trip(
     plan = TripPlan(mode="adapt", strategy=strat, shift_hours=need, preflight_days=pre_days,
                     days_to_adapt_after_arrival=post_days, adapted_by=adapted_by, events=events,
                     summary=summary, phase=[(cbt, sign * s) for cbt, s in shifts], **base)
-    advice.describe(plan)
+    _add_alertness(plan)
     return plan
+
+
+def _add_alertness(plan: TripPlan) -> None:
+    """Add the clearest and foggiest hours of each day there, then word every event."""
+    for kind, a, b in advice.alertness_windows(plan):
+        plan.events.append(Event(kind, a, b, "destination"))
+    plan.events.sort(key=lambda e: (e.start, e.type))
+    advice.describe(plan)
 
 
 def body_offset_at(plan: TripPlan, at: datetime) -> float:
