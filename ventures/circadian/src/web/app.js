@@ -148,6 +148,25 @@
     renumber();
   }
 
+  // Moving the departure moves the landing and any stop times by the same
+  // amount, so the flight keeps its length. Without it, changing the date you
+  // leave left the landing on the old date: a 13-hour Bangkok-London flight
+  // became three days and was refused.
+  const asMinutes = (v) => (v ? Date.parse(v + "Z") / 60000 : NaN);
+  const fromMinutes = (m) => new Date(m * 60000).toISOString().slice(0, 16);
+  function keepFlightLength(journey) {
+    const dep = journey.querySelector(".departure");
+    let before = dep.value;
+    dep.addEventListener("change", () => {
+      const shift = asMinutes(dep.value) - asMinutes(before);
+      before = dep.value;
+      if (!Number.isFinite(shift) || !shift) return;
+      for (const input of journey.querySelectorAll(".arrival, .stop-arrival, .stop-departure")) {
+        if (input.value) input.value = fromMinutes(asMinutes(input.value) + shift);
+      }
+    });
+  }
+
   function addJourney(values = {}) {
     const node = $("journey-template").content.firstElementChild.cloneNode(true);
     const flight = flightOf(values.legs);
@@ -160,6 +179,7 @@
       mirrorReturn();
     });
     for (const f of ["from", "to"]) node.querySelector("." + f).addEventListener("input", mirrorReturn);
+    keepFlightLength(node);
     node.querySelectorAll(".stops-choice button").forEach((b) => b.addEventListener("click", () => {
       setStops(node, Number(b.dataset.stops));
       if (Number(b.dataset.stops)) stopNodes(node).at(-1).querySelector(".stop-city").focus();

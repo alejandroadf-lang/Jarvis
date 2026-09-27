@@ -605,6 +605,8 @@ def test_a_mistyped_landing_date_says_which_flight_and_what_to_check():
     msg = str(err.value)
     assert "This flight comes out at 3 days 2 hours" in msg
     assert "Mon 6 Oct 19:00 to Thu 9 Oct 15:00" in msg and "check the landing date" in msg
+    # "Lands" is easily read as the end of a short work trip: say how to enter that.
+    assert "choose Return" in msg and "under 3 days there, the plan keeps you on home time" in msg
     # The same trip with the right date plans.
     plan_trip(datetime(2031, 10, 6, 19), "Asia/Bangkok", datetime(2031, 10, 7, 15), "Europe/London")
 
