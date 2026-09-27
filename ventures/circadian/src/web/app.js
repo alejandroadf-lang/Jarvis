@@ -343,9 +343,15 @@
   const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text !== undefined) n.textContent = text; return n; };
   const hm = (local) => (local ? local.slice(11, 16) : "");
 
-  function dayTitle(local, zone) {
+  // With `now`, today and tomorrow are named as such, judged on that city's clock.
+  function dayTitle(local, zone, now) {
     const [y, m, d] = local.slice(0, 10).split("-").map(Number);
-    const text = new Date(Date.UTC(y, m - 1, d, 12)).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
+    let text = new Date(Date.UTC(y, m - 1, d, 12)).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
+    if (now) {
+      const dateThere = (t) => new Intl.DateTimeFormat("sv-SE", { timeZone: zone }).format(t); // YYYY-MM-DD
+      if (local.slice(0, 10) === dateThere(now)) text = `Today, ${text}`;
+      else if (local.slice(0, 10) === dateThere(new Date(now.getTime() + 864e5))) text = `Tomorrow, ${text}`;
+    }
     return `${text} · ${cityOf(zone)} time`;
   }
 
@@ -438,11 +444,20 @@
       .filter((e) => e.type !== "flight" && e.type !== "stopover" && new Date(e.end || e.start) > now)
       .sort((a, b) => new Date(a.start) - new Date(b.start)).slice(0, 3);
     if (!upcoming.length) return;
-    const card = el("div", "card");
+    const card = el("div", "card upcoming");
     card.appendChild(el("h2", "", "Coming up"));
-    const box = el("div", "events");
-    for (const e of upcoming) box.appendChild(eventRow(e, now));
-    card.appendChild(box);
+    // Three rows can span two days and two cities, and a bare "21:00" left
+    // the traveller asking which day it meant: head each day as the full plan does.
+    let box, shown;
+    for (const e of upcoming) {
+      const key = `${e.start_local.slice(0, 10)}|${e.local_tz}`;
+      if (key !== shown) {
+        shown = key;
+        card.appendChild(el("h3", "", dayTitle(e.start_local, e.local_tz, now)));
+        box = card.appendChild(el("div", "events"));
+      }
+      box.appendChild(eventRow(e, now));
+    }
     container.appendChild(card);
   }
 
