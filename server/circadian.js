@@ -14,7 +14,7 @@
 // - The prefix is stripped on the way in and announced in X-Forwarded-Prefix,
 //   which is how Circadian builds its WHOOP callback URL and its redirects.
 //   A client-supplied X-Forwarded-Prefix is overwritten, never passed on.
-// - The child gets only the variables it needs. It is our own code, but it
+// - The child gets only the variables it needs (its own, WHOOP, push, PostHog). It is our own code, but it
 //   has no reason to hold the Anthropic, Twilio or GitHub keys, and a process
 //   that doesn't hold a secret can't leak it.
 
@@ -40,7 +40,7 @@ const MAX_BACKOFF_MS = 30_000;
 
 // What the child inherits. Proxy and certificate variables are here because
 // WHOOP and the push services are reached over HTTPS from inside it.
-const PASSED_ENV = /^(CIRCADIAN_|WHOOP_|VAPID_)|^(PATH|HOME|LANG|LC_ALL|TZ|SSL_CERT_FILE|SSL_CERT_DIR|REQUESTS_CA_BUNDLE|HTTPS?_PROXY|NO_PROXY|https?_proxy|no_proxy)$/;
+const PASSED_ENV = /^(CIRCADIAN_|WHOOP_|VAPID_|POSTHOG_)|^(PATH|HOME|LANG|LC_ALL|TZ|SSL_CERT_FILE|SSL_CERT_DIR|REQUESTS_CA_BUNDLE|HTTPS?_PROXY|NO_PROXY|https?_proxy|no_proxy)$/;
 
 const state = {
   child: null,

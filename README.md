@@ -160,6 +160,12 @@ connections) goes in `circadian/` inside the volume from step 2.
   `URL <ventureId> https://<your Railway domain>/circadian` on WhatsApp.
   The path is kept, so their health checks hit Circadian and not Jarvis.
 
+- **Usage analytics:** set `POSTHOG_API_KEY` (from a free PostHog project)
+  to see plans made, reminders turned on, WHOOP connections and server
+  errors. Events are sent from the server, without trip locations or IP
+  addresses, and browsers with Do Not Track or Global Privacy Control are not
+  counted.
+
 The code lives in `ventures/circadian/`, and that copy is what is deployed.
 
 ### Voice experience

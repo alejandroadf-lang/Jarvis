@@ -119,6 +119,7 @@ test("the child gets Circadian's variables and none of Jarvis's keys", () => {
     WHOOP_CLIENT_ID: 'cid',
     WHOOP_CLIENT_SECRET: 'cs',
     VAPID_SUBJECT: 'mailto:x@example.com',
+    POSTHOG_API_KEY: 'phc_x',
     JARVIS_DATA_DIR: '/data',
   });
   assert.equal(env.ANTHROPIC_API_KEY, undefined);
@@ -127,6 +128,7 @@ test("the child gets Circadian's variables and none of Jarvis's keys", () => {
   assert.equal(env.WHOOP_CLIENT_ID, 'cid');
   assert.equal(env.WHOOP_CLIENT_SECRET, 'cs');
   assert.equal(env.VAPID_SUBJECT, 'mailto:x@example.com');
+  assert.equal(env.POSTHOG_API_KEY, 'phc_x');
   assert.equal(env.PATH, '/usr/bin');
   // Inside the volume Jarvis already has, so reminders survive a redeploy.
   assert.equal(env.CIRCADIAN_DATA_DIR, '/data/circadian');
