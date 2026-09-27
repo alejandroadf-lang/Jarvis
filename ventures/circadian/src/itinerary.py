@@ -48,6 +48,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import List, Optional, Tuple
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from src import advice
 from src.shift_logic import DISCLAIMER
 
 UTC = timezone.utc
@@ -106,6 +107,7 @@ class TripPlan:
     # in an itinerary starts from.
     body_offset_hours: float = 0.0
     phase: List[Tuple[datetime, float]] = field(default_factory=list)
+    usual_bedtime: Optional[float] = None   # hours, home clock; for "1 h earlier than usual"
 
 
 # --- small helpers ---------------------------------------------------------------------
@@ -305,7 +307,8 @@ def plan_trip(
                             f"Stopover in {sz.key.split('/')[-1].replace('_', ' ')}. Follow the plan's light advice here too.",
                             tz=sz.key))
     base = dict(home_tz=home.key, destination_tz=dest.key, time_difference_hours=difference,
-                local_time_difference_hours=local_difference, body_offset_hours=body_offset)
+                local_time_difference_hours=local_difference, body_offset_hours=body_offset,
+                usual_bedtime=ss)
 
     # --- no shift -----------------------------------------------------------------------
     if abs(difference) < 1:
@@ -333,11 +336,14 @@ def plan_trip(
                                             "Your home-time night. Keep to it: the trip is too short to adapt."))
                 d += timedelta(days=1)
             events.sort(key=lambda e: e.start)
-            return TripPlan(mode="stay_on_home_time", strategy=None, shift_hours=0.0, preflight_days=0,
+            plan = TripPlan(mode="stay_on_home_time", strategy=None, shift_hours=0.0, preflight_days=0,
                             days_to_adapt_after_arrival=0, adapted_by=None, events=events,
-                            summary=(f"You are there under {SHORT_TRIP_HOURS} hours: stay on home time. "
-                                     "Sleep and get daylight as you would at home."),
+                            summary=(f"You are in {advice.city(dest.key)} under {SHORT_TRIP_HOURS} hours: "
+                                     f"stay on {advice.city(home.key)} time. Sleep and get daylight on your home "
+                                     "clock, and don't try to adapt."),
                             **base)
+            advice.describe(plan)
+            return plan
 
     # --- adapt ----------------------------------------------------------------------------
     strat, need, rate = choose_strategy(difference, preflight_days, strategy)
@@ -503,15 +509,21 @@ def plan_trip(
     adapted_by = (arr.astimezone(dest).date() + timedelta(days=post_days)) if post_days else arr.astimezone(dest).date()
     way = "earlier" if sign > 0 else "later"
     long_way = (strat == "advance" and difference < 0) or (strat == "delay" and difference > 0)
+    there = advice.city(dest.key)
+    by = f"{adapted_by.strftime('%a')} {adapted_by.day} {adapted_by.strftime('%b')}"
     summary = (
-        f"Your body clock needs to move {need:g} hours {way}"
+        f"Your body clock needs to move {need:g} hours {way} to reach {there} time"
         + (" (the long way round: it is faster for this trip)" if long_way else "")
         + (f". Start {pre_days} day{'s' if pre_days != 1 else ''} before you fly" if pre_days else "")
-        + f", and expect to feel local after about {post_days} day{'s' if post_days != 1 else ''} there."
+        + f", and expect to feel on {there} time by {by}, about {post_days} day{'s' if post_days != 1 else ''} after landing."
+        + (" The first days matter most: the morning light windows below do most of the work." if sign > 0 else
+           " The first days matter most: the evening light windows below do most of the work.")
     )
-    return TripPlan(mode="adapt", strategy=strat, shift_hours=need, preflight_days=pre_days,
+    plan = TripPlan(mode="adapt", strategy=strat, shift_hours=need, preflight_days=pre_days,
                     days_to_adapt_after_arrival=post_days, adapted_by=adapted_by, events=events,
                     summary=summary, phase=[(cbt, sign * s) for cbt, s in shifts], **base)
+    advice.describe(plan)
+    return plan
 
 
 def body_offset_at(plan: TripPlan, at: datetime) -> float:
@@ -575,6 +587,7 @@ def plan_itinerary(
                     e.end = cut
                 kept.append(e)
             plan.events = kept
+            advice.describe(plan)
             # Where the body will be on leaving, expressed near the next
             # departure city's offset so the next difference comes out short way round.
             leaving = body_offset_at(plan, nxt)

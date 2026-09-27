@@ -161,7 +161,7 @@ def test_melatonin_only_when_advancing_and_never_on_the_plane():
     assert not [e for e in bkk_to_cdg().events if e.type == "melatonin"]
     mel = [e for e in lhr_to_hnd().events if e.type == "melatonin"]
     assert mel and all(e.where != "flight" for e in mel)
-    assert all("prescription" in e.note for e in mel)
+    assert all("rescription" in e.note for e in mel)
     assert not [e for e in lhr_to_hnd(melatonin=False).events if e.type == "melatonin"]
 
 
@@ -388,3 +388,71 @@ def test_merged_plan_keeps_every_event_on_its_own_clock():
     assert {"Europe/London", "Asia/Bangkok"} <= clocks, "each journey's events keep their own destination clock"
     assert merged.events == sorted(merged.events, key=lambda e: (e.start, e.type))
     assert merge_plans(plans[:1]) is plans[0]
+
+
+# --- the advice: specific to the trip, not one sentence per event type ----------------------
+
+from zoneinfo import ZoneInfo  # noqa: E402
+
+from src import advice  # noqa: E402
+
+
+def notes(plan, kind, where=None):
+    return [e.note for e in plan.events if e.type == kind and (where is None or e.where == where)]
+
+
+def test_sunrise_is_worked_out_for_the_city():
+    # Tokyo in mid October: sunrise about 05:40. Dark at 04:30 local, light by 06:30.
+    tokyo = advice.coordinates("Asia/Tokyo")
+    assert tokyo and 35 < tokyo[0] < 36 and 139 < tokyo[1] < 140
+    assert advice.solar_elevation(datetime(2026, 10, 12, 19, 30, tzinfo=UTC), *tokyo) < advice.HORIZON
+    assert advice.solar_elevation(datetime(2026, 10, 12, 21, 30, tzinfo=UTC), *tokyo) > advice.HORIZON
+    assert advice.coordinates("Nowhere/Atlantis") is None
+
+
+def test_a_light_window_before_sunrise_says_use_a_lamp_not_go_outside():
+    notes_ = notes(lhr_to_hnd(preflight_days=2), "light_seek", "home")
+    assert notes_ and all("dark in London" in n and "lamp" in n for n in notes_)
+    assert not any("Get outside" in n for n in notes_)
+
+
+def test_daylight_windows_name_the_city_and_the_times():
+    plan = lhr_to_hnd(preflight_days=2)
+    seek = [e for e in plan.events if e.type == "light_seek" and e.where == "destination"]
+    first = seek[0]
+    start = first.start.astimezone(ZoneInfo("Asia/Tokyo")).strftime("%H:%M")
+    assert "Tokyo" in first.note and start in first.note
+    assert len({e.note for e in seek}) == len(seek), "no two mornings read the same"
+
+
+def test_each_night_says_where_the_body_clock_is():
+    plan = lhr_to_hnd(preflight_days=2)
+    nights = notes(plan, "sleep", "destination")
+    assert "Night 1 in Tokyo" in nights[0]
+    assert "behind Tokyo" in nights[0] and "feels like" in nights[0]
+    assert "lie awake" in nights[0]
+    assert "wake feeling local" in nights[-1]
+
+
+def test_pre_flight_nights_say_how_far_from_usual():
+    homes = notes(lhr_to_hnd(preflight_days=2), "sleep", "home")
+    assert "1 h earlier than usual" in homes[0] and "2 h earlier than usual" in homes[1]
+
+
+def test_melatonin_explains_once_then_stays_short():
+    mel = notes(lhr_to_hnd(preflight_days=2), "melatonin")
+    assert all("rescription" in m for m in mel), "the warning is on every one"
+    assert all(len(m) < len(mel[0]) for m in mel[1:])
+
+
+def test_the_summary_names_the_city_and_the_day_to_feel_local():
+    plan = lhr_to_hnd(preflight_days=2)
+    assert "Tokyo time" in plan.summary
+    assert plan.adapted_by.strftime("%a") in plan.summary
+
+
+def test_describe_can_run_twice_without_doubling_up():
+    plan = lhr_to_hnd(preflight_days=2)
+    before = [e.note for e in plan.events]
+    advice.describe(plan)
+    assert [e.note for e in plan.events] == before
