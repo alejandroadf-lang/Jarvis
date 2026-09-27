@@ -68,34 +68,90 @@
   const localInput = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 
   // A trip is journeys separated by stays; a journey is one flight or a chain
-  // of connections. The return is simply the next journey, and an open jaw is
-  // the next journey leaving from a different city.
+  // of connections. The panel is laid out the way flight search sites are:
+  // Return, One way or Multi-city on top, From and To with a swap, then the
+  // times. Return keeps the second journey's cities mirrored from the first;
+  // an open jaw is Multi-city with a different city in the second row.
   function journeyNodes() { return [...$("journeys").querySelectorAll(".journey")]; }
   function legNodes(journey) { return [...journey.querySelectorAll(".leg")]; }
   const firstFrom = () => journeyNodes()[0]?.querySelector(".from")?.value || "";
+  const mode = () => document.querySelector('input[name="trip_type"]:checked')?.value || "oneway";
+
+  // What kind of trip a saved one is, so the switch shows it the same way.
+  function tripType(trip) {
+    const js = trip.journeys || [];
+    if (js.length <= 1) return "oneway";
+    const out = js[0].legs, back = js[1].legs;
+    const mirrored = js.length === 2 && back.length === 1
+      && back[0].from === out.at(-1).to && back[0].to === out[0].from;
+    return mirrored ? "return" : "multi";
+  }
+
+  function mirrorReturn() {
+    if (mode() !== "return") return;
+    const [out, back] = journeyNodes();
+    if (!out || !back) return;
+    const leg = legNodes(back)[0];
+    leg.querySelector(".from").value = legNodes(out).at(-1).querySelector(".to").value;
+    leg.querySelector(".to").value = legNodes(out)[0].querySelector(".from").value;
+  }
 
   function renumber() {
+    const m = mode();
     const journeys = journeyNodes();
     journeys.forEach((j, ji) => {
-      j.querySelector(".journey-title").textContent = journeys.length > 1 ? `Flight ${ji + 1}` : "Your flight";
-      j.querySelector(".remove-journey").hidden = ji === 0;
+      const head = j.querySelector(".journey-head");
+      head.hidden = m === "oneway";
+      j.querySelector(".journey-title").textContent = m === "return" ? (ji === 0 ? "Outbound" : "Return") : `Flight ${ji + 1}`;
+      j.querySelector(".remove-journey").hidden = m !== "multi" || ji === 0;
+      j.classList.toggle("mirrored", m === "return" && ji === 1);
       const legs = legNodes(j);
       legs.forEach((n, i) => {
-        n.querySelector(".leg-title").textContent = `Leg ${i + 1}`;
+        n.querySelector(".leg-title").textContent = `Connection ${i}`;
+        n.querySelector(".leg-head").hidden = i === 0;
         n.querySelector(".remove-leg").hidden = i === 0;
-        n.querySelector(".leg-head").hidden = legs.length === 1;
+        n.querySelector(".swap").hidden = i > 0;
+        for (const f of ["from", "to"]) n.querySelector("." + f).readOnly = m === "return" && ji === 1 && i === 0;
       });
     });
+    $("add-journey").hidden = m !== "multi";
+    mirrorReturn();
   }
 
   function addLeg(journey, values = {}) {
     const node = $("leg-template").content.firstElementChild.cloneNode(true);
     for (const k of ["from", "to", "departure", "arrival"]) if (values[k]) node.querySelector("." + k).value = values[k];
     node.querySelector(".remove-leg").addEventListener("click", () => { node.remove(); renumber(); });
+    node.querySelector(".swap").addEventListener("click", () => {
+      const from = node.querySelector(".from"), to = node.querySelector(".to");
+      [from.value, to.value] = [to.value, from.value];
+      mirrorReturn();
+    });
+    for (const f of ["from", "to"]) node.querySelector("." + f).addEventListener("input", mirrorReturn);
     journey.querySelector(".legs").appendChild(node);
     renumber();
     return node;
   }
+
+  // Switching the trip type keeps what was typed: One way drops the later
+  // flights, Return needs exactly two with the second mirrored, Multi-city
+  // shows every flight with its own cities.
+  function setMode(next) {
+    document.querySelector(`input[name="trip_type"][value="${next}"]`).checked = true;
+    const journeys = journeyNodes();
+    if (next === "oneway") journeys.slice(1).forEach((j) => j.remove());
+    if (next === "return") {
+      journeys.slice(2).forEach((j) => j.remove());
+      if (journeyNodes().length < 2) addJourney({ legs: [{}] });
+    }
+    if (next === "multi" && journeyNodes().length < 2) {
+      const last = legNodes(journeyNodes().at(-1)).at(-1);
+      addJourney({ legs: [{ from: last.querySelector(".to").value, to: firstFrom() }] });
+    }
+    renumber();
+  }
+
+  $("trip-type").addEventListener("change", () => setMode(mode()));
 
   function addJourney(values = {}) {
     const node = $("journey-template").content.firstElementChild.cloneNode(true);
@@ -111,10 +167,11 @@
   }
 
   // The next flight starts where the last one landed and, by default, goes
-  // home: a round trip is one tap, an open jaw or another city is one edit.
+  // home, so another city or an open jaw is one edit.
   $("add-journey").addEventListener("click", () => {
     const last = legNodes(journeyNodes().at(-1)).at(-1);
-    const node = addJourney({ legs: [{ from: last ? last.querySelector(".to").value : "", to: firstFrom() }] });
+    const from = last ? last.querySelector(".to").value : "";
+    const node = addJourney({ legs: [{ from, to: firstFrom() === from ? "" : firstFrom() }] });
     node.querySelector(".departure").focus();
     node.scrollIntoView({ behavior: "smooth", block: "center" });
   });
@@ -130,8 +187,13 @@
     const a = new Date(d); a.setDate(a.getDate() + 1); a.setHours(15, 0, 0, 0);
     const from = zones.includes(here) ? here : "Europe/London";
     const to = from.startsWith("Asia/") ? "Europe/London" : "Asia/Tokyo";
+    const back = new Date(d); back.setDate(back.getDate() + 14); back.setHours(12, 0, 0, 0);
+    const home = new Date(back); home.setDate(home.getDate() + 1); home.setHours(6, 0, 0, 0);
     return {
-      journeys: [{ legs: [{ from: labelOf(from), to: labelOf(to), departure: localInput(d), arrival: localInput(a) }] }],
+      journeys: [
+        { legs: [{ from: labelOf(from), to: labelOf(to), departure: localInput(d), arrival: localInput(a) }] },
+        { legs: [{ from: labelOf(to), to: labelOf(from), departure: localInput(back), arrival: localInput(home) }] },
+      ],
       sleep_start: "23:00", sleep_end: "07:00", chronotype: "intermediate", preflight_days: "2",
       melatonin: true, caffeine: true, example: true,
     };
@@ -154,6 +216,7 @@
     $("journeys").replaceChildren();
     for (const j of trip.journeys || []) addJourney(j);
     if (!journeyNodes().length) addJourney();
+    setMode(tripType(trip));
     for (const k of ["sleep_start", "sleep_end", "chronotype", "preflight_days"]) {
       if (trip[k] !== undefined) $(k).value = trip[k];
     }
