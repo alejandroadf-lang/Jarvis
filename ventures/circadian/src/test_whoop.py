@@ -227,53 +227,55 @@ def test_a_refused_sign_in_says_which_thing_to_fix(monkeypatch, capsys, status, 
     assert f"HTTP {status}" in logged and "csecret" not in logged and "code123" not in logged
 
 
+class FakeResponse:
+    def __init__(self, status, content=b"", headers=None):
+        self.status_code, self.content, self.headers = status, content, headers or {}
+
+    def json(self):
+        import json
+        return json.loads(self.content)
+
+
 def test_requests_to_whoop_identify_the_app(monkeypatch):
     seen = {}
 
-    class Res:
-        status = 200
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-        def read(self): return b"{}"
+    def fake_request(method, url, headers, data, timeout):
+        seen.update({k.lower(): v for k, v in headers.items()})
+        return FakeResponse(200, b"{}")
 
-    def fake_urlopen(req, timeout):
-        seen.update({k.lower(): v for k, v in req.header_items()})
-        return Res()
-
-    monkeypatch.setattr(whoop.urllib.request, "urlopen", fake_urlopen)
-    whoop._http("POST", whoop.TOKEN_URL, form={"a": "b"})
+    monkeypatch.setattr(whoop.requests, "request", fake_request)
+    assert whoop._http("POST", whoop.TOKEN_URL, form={"a": "b"}) == (200, {})
     ua = seen["user-agent"]
     # Neither Python's default nor the crawler-style "(...; +https://...)" suffix
     # that the live token exchange was refused with.
-    assert ua.startswith("Circadian/") and "python-urllib" not in ua.lower() and "+http" not in ua
+    assert ua.startswith("Circadian/") and "python" not in ua.lower() and "+http" not in ua
 
 
 def test_a_firewall_page_is_logged_with_its_ray_id(monkeypatch, capsys):
-    import io
-    import urllib.error
-    page = b"<html><title>Attention Required! | Cloudflare</title><body>Sorry, you have been blocked. Error 1010</body></html>"
-
-    def blocked(req, timeout):
-        raise urllib.error.HTTPError(req.full_url, 403, "Forbidden",
-                                     {"server": "cloudflare", "cf-ray": "8abc123-BKK"}, io.BytesIO(page))
-
-    monkeypatch.setattr(whoop.urllib.request, "urlopen", blocked)
+    # What the live server got: Cloudflare's block page, ray id and all.
+    page = (b"<html><head><title>Attention Required! | Cloudflare</title><style>body{margin:0}</style>"
+            b"<script>if (!navigator.cookieEnabled) {}</script></head>"
+            b"<body>Sorry, you have been blocked. You are unable to access api.prod.whoop.com</body></html>")
+    monkeypatch.setattr(whoop.requests, "request", lambda *a, **k: FakeResponse(
+        403, page, {"server": "cloudflare", "cf-ray": "a419c319baaa991c-SJC"}))
     assert whoop._http("POST", whoop.TOKEN_URL, form={"client_secret": "csecret"}) == (403, None)
     logged = capsys.readouterr().out
-    assert "HTTP 403" in logged and "cloudflare" in logged and "8abc123-BKK" in logged
-    assert "Error 1010" in logged and "<html>" not in logged and "csecret" not in logged
+    assert "HTTP 403" in logged and "cloudflare" in logged and "a419c319baaa991c-SJC" in logged
+    assert "you have been blocked" in logged and "unable to access" in logged
+    assert "<html>" not in logged and "cookieEnabled" not in logged and "csecret" not in logged
 
 
 @pytest.mark.parametrize("raw", [b"", b'{"message":"Forbidden"}'])
 def test_an_empty_or_gateway_403_is_logged_too(monkeypatch, capsys, raw):
-    import io
-    import urllib.error
-
-    def blocked(req, timeout):
-        raise urllib.error.HTTPError(req.full_url, 403, "Forbidden", {"server": "awselb/2.0"}, io.BytesIO(raw))
-
-    monkeypatch.setattr(whoop.urllib.request, "urlopen", blocked)
+    monkeypatch.setattr(whoop.requests, "request", lambda *a, **k: FakeResponse(403, raw, {"server": "awselb/2.0"}))
     whoop._http("POST", whoop.TOKEN_URL, form={"client_secret": "csecret"})
     logged = capsys.readouterr().out
     assert "HTTP 403" in logged and "awselb/2.0" in logged and "csecret" not in logged
     assert ("(empty body)" if not raw else "Forbidden") in logged
+
+
+def test_whoop_unreachable_is_status_zero(monkeypatch):
+    def down(*a, **k):
+        raise whoop.requests.ConnectionError("no route")
+    monkeypatch.setattr(whoop.requests, "request", down)
+    assert whoop._http("GET", whoop.API + "/recovery") == (0, None)
