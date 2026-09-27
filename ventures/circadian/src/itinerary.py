@@ -26,6 +26,15 @@ current zone (home before departure, destination from boarding on, since that
 is when to change your watch). Daylight-saving is handled by zoneinfo; the time
 difference is the one in force at the moment of arrival.
 
+Itineraries. A round trip, an open jaw (back from a different city) or a
+multi-city trip is a list of journeys separated by stays, and plan_itinerary
+chains them: each journey starts from the body clock the previous one predicts
+at that departure, not from the local clock of the city being left. After two
+days in London on the way from Bangkok to New York the body is still hours
+east of London, and a plan that assumed it was local would be wrong by that
+much. The body clock is a fixed UTC offset here (it has no daylight-saving of
+its own), which is why plan_trip takes body_offset_hours.
+
 Not medical advice. Melatonin is given as timing only, never a dose, and only
 for advancing: morning melatonin for delays is sedating and the evidence for
 it is weaker. It is prescription-only in parts of Europe and the UK.
@@ -80,7 +89,7 @@ class TripPlan:
     mode: str                         # adapt | stay_on_home_time | no_shift
     home_tz: str
     destination_tz: str
-    time_difference_hours: float      # destination minus home, at arrival
+    time_difference_hours: float      # destination minus the body clock, at arrival
     strategy: Optional[str]           # advance | delay
     shift_hours: float
     preflight_days: int
@@ -89,6 +98,14 @@ class TripPlan:
     events: List[Event] = field(default_factory=list)
     summary: str = ""
     disclaimer: str = DISCLAIMER
+    # Destination minus the departure city's clock. Equal to
+    # time_difference_hours unless the body was already part-way when leaving.
+    local_time_difference_hours: float = 0.0
+    # The body clock's UTC offset at departure, and where it is expected to be
+    # after each CBTmin (UTC moment, signed hours moved). What the next journey
+    # in an itinerary starts from.
+    body_offset_hours: float = 0.0
+    phase: List[Tuple[datetime, float]] = field(default_factory=list)
 
 
 # --- small helpers ---------------------------------------------------------------------
@@ -221,6 +238,7 @@ def plan_trip(
     caffeine: bool = True,
     strategy: str = "auto",
     legs=None,
+    body_offset_hours: Optional[float] = None,
 ) -> TripPlan:
     """
     departure / arrival: wall-clock times at the origin and the final
@@ -231,6 +249,10 @@ def plan_trip(
     departure_tz, arrival and arrival_tz; it replaces the four single-flight
     arguments. Stopovers get their own clock, and sleep is only advised on
     board or at a stopover long enough to hold it.
+
+    body_offset_hours: the UTC offset the body clock is on at departure, when
+    that is not the departure city's own (see plan_itinerary). Sleep and light
+    before the flight follow the body; the shift is measured from it.
     """
     if legs:
         flights = _parse_legs(legs)
@@ -243,6 +265,11 @@ def plan_trip(
             raise ValueError("arrival must be after departure")
     home, dest = flights[0][2], flights[-1][3]
     dep, arr = flights[0][0], flights[-1][1]
+    # The clock the body is on. A fixed-offset zone stands in for it: pre-flight
+    # nights and the body's CBTmin are computed on it, and rendered in the
+    # departure city's real zone, which is what the traveller reads.
+    body_offset = _offset_hours(home, dep) if body_offset_hours is None else float(body_offset_hours)
+    body = timezone(timedelta(hours=body_offset))
     stopovers = [(flights[i][1], flights[i + 1][0], flights[i][3]) for i in range(len(flights) - 1)]
     if arr - dep > timedelta(hours=MAX_FLIGHT_HOURS):
         raise ValueError(f"a journey longer than {MAX_FLIGHT_HOURS} hours is not supported; plan each leg")
@@ -260,10 +287,12 @@ def plan_trip(
         raise ValueError("usual sleep must be between 4 and 12 hours")
     sleep_td = timedelta(hours=sleep_len)
 
-    difference = _offset_hours(dest, arr) - _offset_hours(home, arr)
-    difference = ((difference + 12) % 24) - 12   # into [-12, 12)
-    if difference == -12:
-        difference = 12.0
+    def wrap(hours: float) -> float:
+        hours = ((hours + 12) % 24) - 12   # into [-12, 12)
+        return 12.0 if hours == -12 else hours
+
+    difference = wrap(_offset_hours(dest, arr) - body_offset)
+    local_difference = wrap(_offset_hours(dest, arr) - _offset_hours(home, arr))
 
     events: List[Event] = []
     for i, (d, a, _dz, _az) in enumerate(flights):
@@ -275,7 +304,8 @@ def plan_trip(
         events.append(Event("stopover", s0, s1, "stopover",
                             f"Stopover in {sz.key.split('/')[-1].replace('_', ' ')}. Follow the plan's light advice here too.",
                             tz=sz.key))
-    base = dict(home_tz=home.key, destination_tz=dest.key, time_difference_hours=difference)
+    base = dict(home_tz=home.key, destination_tz=dest.key, time_difference_hours=difference,
+                local_time_difference_hours=local_difference, body_offset_hours=body_offset)
 
     # --- no shift -----------------------------------------------------------------------
     if abs(difference) < 1:
@@ -290,9 +320,9 @@ def plan_trip(
         if ret <= arr:
             raise ValueError("return_departure must be after arrival")
         if ret - arr < timedelta(hours=SHORT_TRIP_HOURS):
-            d = arr.astimezone(home).date() - timedelta(days=1)
+            d = arr.astimezone(body).date() - timedelta(days=1)
             while True:
-                s0 = night_start(d, ss, home)
+                s0 = night_start(d, ss, body)
                 if s0 >= ret:
                     break
                 s1 = s0 + sleep_td
@@ -319,11 +349,11 @@ def plan_trip(
     sleeps: List[Tuple[datetime, datetime]] = []
 
     # Pre-flight nights, at home, on the shifting body clock.
-    dep_home_date = dep.astimezone(home).date()
+    dep_home_date = dep.astimezone(body).date()
     first_home_night = dep_home_date - timedelta(days=pre_days)
     for i in range(pre_days):
         shift = min(need, (i + 1) * PREFLIGHT_RATE)
-        s0 = night_start(first_home_night + timedelta(days=i), ss, home) - sign * timedelta(hours=shift)
+        s0 = night_start(first_home_night + timedelta(days=i), ss, body) - sign * timedelta(hours=shift)
         s1 = s0 + sleep_td
         if s1 > dep - READY_BEFORE_DEPARTURE:
             continue
@@ -370,7 +400,7 @@ def plan_trip(
 
     # Body clock: CBTmin per day, continuous from the first pre-flight night.
     def home_cbt(d0: date) -> datetime:
-        return night_start(d0, ss, home) + sleep_td - timedelta(hours=CBT_BEFORE_WAKE)
+        return night_start(d0, ss, body) + sleep_td - timedelta(hours=CBT_BEFORE_WAKE)
 
     k0 = first_home_night if pre_days else dep_home_date
     shifts = []
@@ -481,7 +511,111 @@ def plan_trip(
     )
     return TripPlan(mode="adapt", strategy=strat, shift_hours=need, preflight_days=pre_days,
                     days_to_adapt_after_arrival=post_days, adapted_by=adapted_by, events=events,
-                    summary=summary, **base)
+                    summary=summary, phase=[(cbt, sign * s) for cbt, s in shifts], **base)
+
+
+def body_offset_at(plan: TripPlan, at: datetime) -> float:
+    """The body clock's UTC offset, in hours, at a moment during or after this plan."""
+    moved = 0.0
+    for cbt, s in plan.phase:
+        if cbt <= at:
+            moved = s
+    return plan.body_offset_hours + moved
+
+
+# --- itineraries ------------------------------------------------------------------------
+
+def plan_itinerary(
+    journeys,
+    sleep_start=None,
+    sleep_end=None,
+    chronotype: str = "intermediate",
+    preflight_days: int = 2,
+    melatonin: bool = True,
+    caffeine: bool = True,
+    strategy: str = "auto",
+) -> List[TripPlan]:
+    """
+    Several journeys in order, each a list of flights (connections included),
+    separated by stays: a round trip, an open jaw, or a multi-city trip.
+
+    Chained: each journey starts from the body clock the previous plan predicts
+    at that departure. Pre-flight shifting applies to the first journey only,
+    because a stay is the previous journey's adaptation time and cannot be
+    both. Each journey's events stop three hours before the next departure, so
+    no night gets two plans. A stay under SHORT_TRIP_HOURS is handled by the
+    previous journey's short-trip rule: the body stays where it was, and the
+    next plan starts from there.
+    """
+    if not journeys:
+        raise ValueError("an itinerary needs at least one journey")
+    parsed = [_parse_legs(j) for j in journeys]
+    for i in range(1, len(parsed)):
+        if parsed[i][0][0] < parsed[i - 1][-1][1]:
+            raise ValueError(f"journey {i + 1} departs before journey {i} lands")
+
+    plans: List[TripPlan] = []
+    body_offset: Optional[float] = None
+    for i, legs in enumerate(journeys):
+        nxt = parsed[i + 1][0][0] if i + 1 < len(parsed) else None
+        plan = plan_trip(
+            legs=legs, sleep_start=sleep_start, sleep_end=sleep_end, chronotype=chronotype,
+            preflight_days=preflight_days if i == 0 else 0, return_departure=nxt,
+            melatonin=melatonin, caffeine=caffeine, strategy=strategy, body_offset_hours=body_offset,
+        )
+        if nxt is not None:
+            cut = nxt - READY_BEFORE_DEPARTURE
+            kept = []
+            for e in plan.events:
+                if e.start >= cut:
+                    continue
+                if e.end is not None and e.end > cut:
+                    if cut - e.start < timedelta(minutes=MIN_WINDOW_MINUTES):
+                        continue
+                    e.end = cut
+                kept.append(e)
+            plan.events = kept
+            # Where the body will be on leaving, expressed near the next
+            # departure city's offset so the next difference comes out short way round.
+            leaving = body_offset_at(plan, nxt)
+            next_local = _offset_hours(parsed[i + 1][0][2], nxt)
+            body_offset = next_local + (((leaving - next_local + 12) % 24) - 12)
+            if plan.mode == "adapt" and plan.adapted_by and nxt.astimezone(zone(plan.destination_tz)).date() < plan.adapted_by:
+                plan.summary += (" You fly on before your body clock has fully caught up; the next plan"
+                                 " starts from where it will actually be.")
+        plans.append(plan)
+    return plans
+
+
+def merge_plans(plans: List[TripPlan]) -> TripPlan:
+    """
+    One plan holding every journey's events, each on its own clock, for the
+    parts of the app that read events only: reminders, the calendar file and
+    WHOOP progress. The per-journey plans are what the page shows.
+    """
+    if len(plans) == 1:
+        return plans[0]
+    events: List[Event] = []
+    for p in plans:
+        for e in p.events:
+            tz = e.tz or (p.home_tz if e.where == "home" else p.destination_tz)
+            events.append(Event(e.type, e.start, e.end, e.where, e.note, tz=tz))
+    events.sort(key=lambda e: (e.start, e.type))
+    first, last = plans[0], plans[-1]
+    adapting = [p for p in plans if p.mode == "adapt"]
+    return TripPlan(
+        mode="adapt" if adapting else first.mode,
+        home_tz=first.home_tz, destination_tz=last.destination_tz,
+        time_difference_hours=first.time_difference_hours,
+        strategy=adapting[-1].strategy if adapting else None,
+        shift_hours=sum(p.shift_hours for p in plans),
+        preflight_days=first.preflight_days,
+        days_to_adapt_after_arrival=last.days_to_adapt_after_arrival,
+        adapted_by=last.adapted_by, events=events,
+        summary=" ".join(p.summary for p in plans),
+        local_time_difference_hours=first.local_time_difference_hours,
+        body_offset_hours=first.body_offset_hours,
+    )
 
 
 # --- output ----------------------------------------------------------------------------
@@ -516,6 +650,7 @@ def plan_to_dict(plan: TripPlan) -> dict:
         "home_tz": plan.home_tz,
         "destination_tz": plan.destination_tz,
         "time_difference_hours": plan.time_difference_hours,
+        "local_time_difference_hours": plan.local_time_difference_hours,
         "strategy": plan.strategy,
         "shift_hours": plan.shift_hours,
         "preflight_days": plan.preflight_days,

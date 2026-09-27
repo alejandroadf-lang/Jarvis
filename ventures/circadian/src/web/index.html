@@ -58,9 +58,16 @@
   .card { background: var(--surface); border: 1px solid var(--rule); border-radius: 16px; padding: 16px; display: grid; gap: 12px; }
   .card > p { margin: 0; color: var(--muted); font-size: 14px; }
   form { display: grid; gap: 14px; }
-  .leg { display: grid; gap: 12px; padding-bottom: 14px; border-bottom: 1px dashed var(--rule); }
+  #journeys { display: grid; gap: 12px; }
+  .journey { display: grid; gap: 12px; padding: 12px; border: 1px solid var(--rule); border-radius: 12px; }
+  .journey-head { display: flex; justify-content: space-between; align-items: center; font-size: 14px; font-weight: 600; }
+  .journey-head .link { font-weight: 500; font-size: 13px; }
+  .journey .legs { display: grid; gap: 12px; }
+  .journey .add-leg { justify-self: start; font-size: 14px; }
+  .leg { display: grid; gap: 12px; padding-bottom: 12px; border-bottom: 1px dashed var(--rule); }
   .leg:last-child { border-bottom: 0; padding-bottom: 0; }
   .leg-head { display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: var(--muted); }
+  .leg-head[hidden] { display: none; }
   .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   label { display: grid; gap: 6px; font-size: 13px; color: var(--muted); }
   input, select {
@@ -136,19 +143,15 @@
   <section class="card">
     <form id="trip" novalidate>
       <p class="example" id="example-note" hidden>An example trip, filled in to show how it works. Change it to yours.</p>
-      <div id="legs"></div>
-      <button type="button" class="secondary" id="add-leg">Add a connecting flight</button>
+      <div id="journeys"></div>
+      <button type="button" class="secondary" id="add-journey">Add your next flight: the return, or another city</button>
       <div class="row">
         <label for="sleep_start">Usual bedtime<input id="sleep_start" type="time" value="23:00"></label>
         <label for="sleep_end">Usual wake time<input id="sleep_end" type="time" value="07:00"></label>
       </div>
       <details>
-        <summary>Return flight and more options</summary>
+        <summary>More options</summary>
         <div class="more">
-          <div class="row">
-            <label for="return_departure">Flying back: departs<input id="return_departure" type="datetime-local"></label>
-            <label for="return_arrival">Flying back: lands<input id="return_arrival" type="datetime-local"></label>
-          </div>
           <label for="chronotype">Without an alarm, you would naturally
             <select id="chronotype">
               <option value="early">wake early (a morning person)</option>
@@ -177,6 +180,13 @@
   <section id="result" aria-live="polite"></section>
 </main>
 
+<template id="journey-template">
+  <div class="journey">
+    <div class="journey-head"><span class="journey-title">Your flight</span><button type="button" class="link remove-journey" hidden>Remove</button></div>
+    <div class="legs"></div>
+    <button type="button" class="link add-leg">Add a connecting flight</button>
+  </div>
+</template>
 <template id="leg-template">
   <div class="leg">
     <div class="leg-head"><span class="leg-title">Flight 1</span><button type="button" class="link remove-leg" hidden>Remove</button></div>

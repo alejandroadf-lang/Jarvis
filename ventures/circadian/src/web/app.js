@@ -67,28 +67,56 @@
   const pad = (n) => String(n).padStart(2, "0");
   const localInput = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 
-  function legNodes() { return [...$("legs").querySelectorAll(".leg")]; }
+  // A trip is journeys separated by stays; a journey is one flight or a chain
+  // of connections. The return is simply the next journey, and an open jaw is
+  // the next journey leaving from a different city.
+  function journeyNodes() { return [...$("journeys").querySelectorAll(".journey")]; }
+  function legNodes(journey) { return [...journey.querySelectorAll(".leg")]; }
+  const firstFrom = () => journeyNodes()[0]?.querySelector(".from")?.value || "";
 
   function renumber() {
-    legNodes().forEach((n, i) => {
-      n.querySelector(".leg-title").textContent = legNodes().length > 1 ? `Flight ${i + 1}` : "Your flight";
-      n.querySelector(".remove-leg").hidden = i === 0;
+    const journeys = journeyNodes();
+    journeys.forEach((j, ji) => {
+      j.querySelector(".journey-title").textContent = journeys.length > 1 ? `Flight ${ji + 1}` : "Your flight";
+      j.querySelector(".remove-journey").hidden = ji === 0;
+      const legs = legNodes(j);
+      legs.forEach((n, i) => {
+        n.querySelector(".leg-title").textContent = `Leg ${i + 1}`;
+        n.querySelector(".remove-leg").hidden = i === 0;
+        n.querySelector(".leg-head").hidden = legs.length === 1;
+      });
     });
   }
 
-  function addLeg(values = {}) {
+  function addLeg(journey, values = {}) {
     const node = $("leg-template").content.firstElementChild.cloneNode(true);
     for (const k of ["from", "to", "departure", "arrival"]) if (values[k]) node.querySelector("." + k).value = values[k];
     node.querySelector(".remove-leg").addEventListener("click", () => { node.remove(); renumber(); });
-    $("legs").appendChild(node);
+    journey.querySelector(".legs").appendChild(node);
     renumber();
     return node;
   }
 
-  $("add-leg").addEventListener("click", () => {
-    const last = legNodes().at(-1);
-    const node = addLeg({ from: last ? last.querySelector(".to").value : "" });
-    node.querySelector(".to").focus();
+  function addJourney(values = {}) {
+    const node = $("journey-template").content.firstElementChild.cloneNode(true);
+    node.querySelector(".remove-journey").addEventListener("click", () => { node.remove(); renumber(); });
+    node.querySelector(".add-leg").addEventListener("click", () => {
+      const last = legNodes(node).at(-1);
+      addLeg(node, { from: last ? last.querySelector(".to").value : "" }).querySelector(".to").focus();
+    });
+    $("journeys").appendChild(node);
+    for (const leg of values.legs || []) addLeg(node, leg);
+    if (!legNodes(node).length) addLeg(node);
+    return node;
+  }
+
+  // The next flight starts where the last one landed and, by default, goes
+  // home: a round trip is one tap, an open jaw or another city is one edit.
+  $("add-journey").addEventListener("click", () => {
+    const last = legNodes(journeyNodes().at(-1)).at(-1);
+    const node = addJourney({ legs: [{ from: last ? last.querySelector(".to").value : "", to: firstFrom() }] });
+    node.querySelector(".departure").focus();
+    node.scrollIntoView({ behavior: "smooth", block: "center" });
   });
 
   $("chronotype").addEventListener("change", () => {
@@ -103,17 +131,30 @@
     const from = zones.includes(here) ? here : "Europe/London";
     const to = from.startsWith("Asia/") ? "Europe/London" : "Asia/Tokyo";
     return {
-      legs: [{ from: labelOf(from), to: labelOf(to), departure: localInput(d), arrival: localInput(a) }],
+      journeys: [{ legs: [{ from: labelOf(from), to: labelOf(to), departure: localInput(d), arrival: localInput(a) }] }],
       sleep_start: "23:00", sleep_end: "07:00", chronotype: "intermediate", preflight_days: "2",
-      return_departure: "", return_arrival: "", melatonin: true, caffeine: true, example: true,
+      melatonin: true, caffeine: true, example: true,
     };
   }
 
+  // Trips saved before journeys existed had one list of legs and a return
+  // pair. They become a journey, and a second one for the return.
+  function upgrade(trip) {
+    if (!trip || trip.journeys) return trip;
+    const legs = trip.legs || [];
+    const journeys = [{ legs }];
+    if (trip.return_departure && trip.return_arrival && legs.length) {
+      journeys.push({ legs: [{ from: legs.at(-1).to, to: legs[0].from, departure: trip.return_departure, arrival: trip.return_arrival }] });
+    }
+    const { legs: _legs, return_departure: _rd, return_arrival: _ra, ...rest } = trip;
+    return { ...rest, journeys };
+  }
+
   function fill(trip) {
-    $("legs").replaceChildren();
-    for (const leg of trip.legs || []) addLeg(leg);
-    if (!legNodes().length) addLeg();
-    for (const k of ["sleep_start", "sleep_end", "chronotype", "preflight_days", "return_departure", "return_arrival"]) {
+    $("journeys").replaceChildren();
+    for (const j of trip.journeys || []) addJourney(j);
+    if (!journeyNodes().length) addJourney();
+    for (const k of ["sleep_start", "sleep_end", "chronotype", "preflight_days"]) {
       if (trip[k] !== undefined) $(k).value = trip[k];
     }
     $("melatonin").checked = trip.melatonin !== false;
@@ -123,20 +164,22 @@
 
   function read() {
     return {
-      legs: legNodes().map((n) => ({
-        from: n.querySelector(".from").value, to: n.querySelector(".to").value,
-        departure: n.querySelector(".departure").value, arrival: n.querySelector(".arrival").value,
+      journeys: journeyNodes().map((j) => ({
+        legs: legNodes(j).map((n) => ({
+          from: n.querySelector(".from").value, to: n.querySelector(".to").value,
+          departure: n.querySelector(".departure").value, arrival: n.querySelector(".arrival").value,
+        })),
       })),
       sleep_start: $("sleep_start").value, sleep_end: $("sleep_end").value, chronotype: $("chronotype").value,
-      preflight_days: $("preflight_days").value, return_departure: $("return_departure").value,
-      return_arrival: $("return_arrival").value, melatonin: $("melatonin").checked, caffeine: $("caffeine").checked,
+      preflight_days: $("preflight_days").value, melatonin: $("melatonin").checked, caffeine: $("caffeine").checked,
     };
   }
 
-  function toLegs(trip) {
-    return trip.legs.map((l, i) => {
+  function toLegs(legs, journeyNo) {
+    return legs.map((l, i) => {
       const dz = resolveZone(l.from), az = resolveZone(l.to);
-      const n = trip.legs.length > 1 ? ` on flight ${i + 1}` : "";
+      const where = journeyNo ? `flight ${journeyNo}` : "flight";
+      const n = legs.length > 1 ? ` on ${where}, leg ${i + 1}` : (journeyNo ? ` on ${where}` : "");
       if (!dz) throw new Error(`We could not find "${l.from}"${n}. Start typing a city and pick it from the list.`);
       if (!az) throw new Error(`We could not find "${l.to}"${n}. Start typing a city and pick it from the list.`);
       if (!l.departure || !l.arrival) throw new Error(`Add the departure and landing times${n} from your ticket.`);
@@ -151,19 +194,11 @@
     };
   }
 
-  // Outbound, and the return flight when both of its times are given.
-  function toRequests(trip) {
-    const legs = toLegs(trip);
-    const out = { ...common(trip), legs };
-    if (trip.return_departure) out.return_departure = trip.return_departure;
-    const reqs = [{ title: "Outbound", req: out }];
-    if (trip.return_departure && trip.return_arrival) {
-      reqs.push({ title: "Return", req: { ...common(trip), preflight_days: 0, legs: [{
-        departure: trip.return_departure, departure_tz: legs.at(-1).arrival_tz,
-        arrival: trip.return_arrival, arrival_tz: legs[0].departure_tz,
-      }] } });
-    }
-    return reqs;
+  // The whole trip as one request: the server chains the journeys so each
+  // starts from where the body clock will be, and clips them at the next flight.
+  function toRequest(trip) {
+    const many = trip.journeys.length > 1;
+    return { ...common(trip), journeys: trip.journeys.map((j, i) => ({ legs: toLegs(j.legs, many ? i + 1 : 0) })) };
   }
 
   // --- API ------------------------------------------------------------------------------
@@ -218,29 +253,22 @@
     return `app/plan.ics?t=${b64}`;
   }
 
-  function renderPlan(container, title, plan, req) {
+  const signed = (h) => `${h > 0 ? "+" : ""}${h}`;
+
+  function renderPlan(container, title, plan) {
     const now = new Date();
     const head = el("div", "card summary");
-    head.appendChild(el("h2", "", `${title}: ${cityOf(plan.home_tz)} to ${cityOf(plan.destination_tz)}`));
+    head.appendChild(el("h2", "", title));
     head.appendChild(el("p", "", plan.summary));
     const stats = el("div", "stats");
-    const diff = plan.time_difference_hours;
-    stats.appendChild(el("span", "stat", `${diff > 0 ? "+" : ""}${diff} h time difference`));
+    const diff = plan.time_difference_hours, local = plan.local_time_difference_hours;
+    // After a stay the body is not on the local clock, so the hours to shift
+    // differ from the map. Both are shown, or the first reads as a mistake.
+    stats.appendChild(el("span", "stat", local !== undefined && local !== diff
+      ? `${signed(diff)} h for your body clock (${signed(local)} h between the cities)`
+      : `${signed(diff)} h time difference`));
     if (plan.mode === "adapt") stats.appendChild(el("span", "stat", `${plan.days_to_adapt_after_arrival} day${plan.days_to_adapt_after_arrival === 1 ? "" : "s"} to adapt there`));
     head.appendChild(stats);
-    const actions = el("div", "actions");
-    const cal = el("a", "button", "Add to calendar"); cal.href = calendarLink(req);
-    actions.appendChild(cal);
-    const share = el("button", "secondary", "Share"); share.type = "button";
-    share.addEventListener("click", async () => {
-      const text = `My jet lag plan: ${plan.summary}`;
-      try {
-        if (navigator.share) await navigator.share({ title: "Circadian", text, url: APP_URL });
-        else { await navigator.clipboard.writeText(`${text} ${APP_URL}`); share.textContent = "Copied"; }
-      } catch { /* cancelled */ }
-    });
-    actions.appendChild(share);
-    head.appendChild(actions);
     container.appendChild(head);
 
     const groups = new Map();
@@ -257,6 +285,22 @@
       day.appendChild(box);
       container.appendChild(day);
     }
+  }
+
+  function renderActions(container, req, plans) {
+    const actions = el("div", "actions");
+    const cal = el("a", "button", "Add to calendar"); cal.href = calendarLink(req);
+    actions.appendChild(cal);
+    const share = el("button", "secondary", "Share"); share.type = "button";
+    share.addEventListener("click", async () => {
+      const text = `My jet lag plan: ${plans[0].plan.summary}`;
+      try {
+        if (navigator.share) await navigator.share({ title: "Circadian", text, url: APP_URL });
+        else { await navigator.clipboard.writeText(`${text} ${APP_URL}`); share.textContent = "Copied"; }
+      } catch { /* cancelled */ }
+    });
+    actions.appendChild(share);
+    container.appendChild(actions);
   }
 
   function renderNow(container, plans) {
@@ -283,7 +327,7 @@
     return Uint8Array.from(raw, (c) => c.charCodeAt(0));
   }
 
-  async function renderReminders(container, outboundReq) {
+  async function renderReminders(container, tripReq) {
     const card = el("div", "card");
     card.appendChild(el("h2", "", "Reminders"));
     const text = el("p", "", "A tap on the shoulder when it is time for light, bed, or the last coffee.");
@@ -321,7 +365,7 @@
         const { public_key } = await api("app/push/key");
         const sub = (await reg.pushManager.getSubscription())
           || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(public_key) });
-        const res = await api("app/push/subscribe", { device: device(), subscription: sub.toJSON(), trip: outboundReq });
+        const res = await api("app/push/subscribe", { device: device(), subscription: sub.toJSON(), trip: tripReq });
         setOn(res.reminders);
       } catch (err) {
         text.textContent = err.message || "Could not turn on reminders.";
@@ -333,7 +377,7 @@
 
   // --- WHOOP ------------------------------------------------------------------------------
 
-  async function renderWhoop(container, outboundReq) {
+  async function renderWhoop(container, tripReq) {
     const card = el("div", "card");
     card.appendChild(el("h2", "", "Progress from WHOOP"));
     const text = el("p", "", "Connect WHOOP to see each night you actually slept next to the plan.");
@@ -360,7 +404,7 @@
     });
     text.textContent = "Checking your sleep…";
     try {
-      const p = await api("app/whoop/progress", { device: device(), trip: outboundReq });
+      const p = await api("app/whoop/progress", { device: device(), trip: tripReq });
       text.textContent = p.summary;
       for (const n of p.nights) {
         const row = el("div", "night");
@@ -386,14 +430,20 @@
   // --- trips ------------------------------------------------------------------------------
 
   function tripTitle(trip) {
-    const first = trip.legs?.[0], last = trip.legs?.at(-1);
+    const first = trip.journeys?.[0]?.legs?.[0];
     if (!first) return "Trip";
+    const city = (label) => String(label || "").split(" (")[0];
+    const stops = trip.journeys.map((j) => city(j.legs.at(-1)?.to));
     const date = (first.departure || "").slice(0, 10);
-    return `${first.from.split(" (")[0]} to ${last.to.split(" (")[0]} · ${date}`;
+    const home = city(first.from);
+    const route = stops.length > 1 && stops.at(-1) === home
+      ? `${[home, ...stops.slice(0, -1)].join(" to ")} and back`
+      : [home, ...stops].join(" to ");
+    return `${route} · ${date}`;
   }
 
   function renderTrips() {
-    const trips = load(K.trips, []);
+    const trips = load(K.trips, []).map(upgrade);
     $("trips-card").hidden = trips.length < 2;
     const box = $("trips"); box.replaceChildren();
     trips.forEach((t, i) => {
@@ -410,8 +460,8 @@
   }
 
   function remember(trip) {
-    const key = JSON.stringify(trip.legs);
-    const all = load(K.trips, []).filter((t) => JSON.stringify(t.legs) !== key);
+    const key = JSON.stringify(trip.journeys);
+    const all = load(K.trips, []).map(upgrade).filter((t) => JSON.stringify(t.journeys) !== key);
     all.unshift(trip);
     save(K.trips, all.slice(0, 10));
     save(K.current, trip);
@@ -422,34 +472,37 @@
 
   async function makePlan(trip, { quiet = false } = {}) {
     const error = $("error"); error.hidden = true;
-    let reqs;
-    try { reqs = toRequests(trip); } catch (err) { if (!quiet) { error.textContent = err.message; error.hidden = false; } return; }
+    let req;
+    try { req = toRequest(trip); } catch (err) { if (!quiet) { error.textContent = err.message; error.hidden = false; } return; }
     const button = $("go"); button.disabled = true; button.textContent = "Making your plan…";
     try {
-      const plans = [];
-      for (const r of reqs) plans.push({ title: r.title, req: r.req, plan: await api("app/plan", r.req, quiet ? {} : { "x-circadian-intent": "submit" }) });
-      save("circadian.plans.v2", plans);
-      show(plans, trip);
+      const { journeys } = await api("app/itinerary", req, quiet ? {} : { "x-circadian-intent": "submit" });
+      const plans = journeys.map((plan, i) => ({
+        title: (journeys.length > 1 ? `Flight ${i + 1}: ` : "") + `${cityOf(plan.home_tz)} to ${cityOf(plan.destination_tz)}`,
+        plan,
+      }));
+      save("circadian.plans.v3", { req, plans });
+      show(plans, trip, req);
     } catch (err) {
-      const cached = load("circadian.plans.v2", null);
-      if (cached && !navigator.onLine) show(cached, trip);
+      const cached = load("circadian.plans.v3", null);
+      if (cached && !navigator.onLine) show(cached.plans, trip, cached.req);
       else if (!quiet) { error.textContent = err.message; error.hidden = false; }
     } finally {
       button.disabled = false; button.textContent = "Make my plan";
     }
   }
 
-  function show(plans, trip) {
+  function show(plans, trip, req) {
     const out = $("result"); out.replaceChildren();
     renderNow(out, plans);
+    renderActions(out, req, plans);
+    // Reminders and WHOOP take the whole trip, so a return or a second city
+    // gets its reminders and its nights too.
     if (!trip.example) {
-      renderReminders(out, plans[0].req);
-      renderWhoop(out, plans[0].req);
+      renderReminders(out, req);
+      renderWhoop(out, req);
     }
-    for (const p of plans) {
-      if (plans.length > 1) out.appendChild(el("p", "section-title", p.title));
-      renderPlan(out, p.title, p.plan, p.req);
-    }
+    for (const p of plans) renderPlan(out, p.title, p.plan);
     out.appendChild(el("p", "disclaimer", plans[0].plan.disclaimer));
   }
 
@@ -462,7 +515,7 @@
   });
 
   // First look: the current trip if there is one, otherwise a real example.
-  const current = load(K.current, null);
+  const current = upgrade(load(K.current, null));
   const trip = current || exampleTrip();
   fill(trip);
   renderTrips();

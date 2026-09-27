@@ -118,14 +118,16 @@ def track(event: str, headers, properties: Optional[dict] = None,
 
 def plan_properties(req, plan: dict) -> dict:
     """What a plan says about how the product is used, with nothing about where."""
+    journeys = req.journeys or []
     return {
         "mode": plan.get("mode"),
         "strategy": plan.get("strategy"),
         "hours_shifted": plan.get("shift_hours"),
         "days_to_adapt": plan.get("days_to_adapt_after_arrival"),
         "preflight_days": plan.get("preflight_days"),
-        "flights": len(req.legs) if req.legs else 1,
-        "has_return": req.return_departure is not None,
+        "flights": sum(len(j.legs) for j in journeys) if journeys else (len(req.legs) if req.legs else 1),
+        "journeys": len(journeys) or 1,
+        "has_return": req.return_departure is not None or len(journeys) > 1,
         "melatonin": req.melatonin,
         "caffeine": req.caffeine,
     }

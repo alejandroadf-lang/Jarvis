@@ -284,3 +284,107 @@ def test_legs_must_be_in_order():
         ])
     with pytest.raises(ValueError, match="at least one flight|give departure"):
         plan_trip(legs=[])
+
+
+# --- itineraries: open jaw and multi-city ---------------------------------------------------
+#
+# The claim under test: the second journey starts from where the body clock
+# will be, not from the local clock of the city being left. Each case here
+# would read the same as a naive "plan each flight on its own" for one number
+# and differs on the one that matters.
+
+from src.itinerary import body_offset_at, merge_plans, plan_itinerary  # noqa: E402
+
+
+def leg(dep, dep_tz, arr, arr_tz):
+    return {"departure": dep, "departure_tz": dep_tz, "arrival": arr, "arrival_tz": arr_tz}
+
+
+def test_a_body_clock_already_on_destination_time_needs_no_shift():
+    # London to Tokyo, but the body is still on Tokyo time (UTC+9): nothing to do.
+    plan = plan_trip(datetime(2026, 10, 10, 19, 0), "Europe/London", datetime(2026, 10, 11, 15, 0), "Asia/Tokyo",
+                     body_offset_hours=9.0)
+    assert plan.mode == "no_shift"
+    assert plan.local_time_difference_hours == 8.0 and plan.time_difference_hours == 0.0
+
+
+def test_open_jaw_return_starts_from_the_adapted_body_not_the_departure_city():
+    # Bangkok -> London, ten days there (fully adapted to London, UTC+1), then
+    # home from Paris (UTC+2). The body is on London time, so the shift back to
+    # Bangkok is 6 h, not the 5 h a Paris-to-Bangkok flight would suggest.
+    plans = plan_itinerary([
+        [leg("2026-10-04T19:00", "Asia/Bangkok", "2026-10-05T15:00", "Europe/London")],
+        [leg("2026-10-15T12:00", "Europe/Paris", "2026-10-16T06:00", "Asia/Bangkok")],
+    ])
+    assert [p.home_tz for p in plans] == ["Asia/Bangkok", "Europe/Paris"]
+    assert plans[1].local_time_difference_hours == 5.0
+    assert plans[1].time_difference_hours == 6.0
+    assert plans[1].body_offset_hours == 1.0
+    assert plans[1].preflight_days == 0, "a stay is the previous journey's adaptation time, not pre-flight time"
+
+
+def test_multi_city_with_a_short_stop_keeps_the_body_where_it_was():
+    # Bangkok -> London for 40 hours -> New York. Under 72 h in London means
+    # stay on Bangkok time there, so the flight on starts from Bangkok's clock.
+    plans = plan_itinerary([
+        [leg("2026-10-04T19:00", "Asia/Bangkok", "2026-10-05T15:00", "Europe/London")],
+        [leg("2026-10-07T08:00", "Europe/London", "2026-10-07T11:00", "America/New_York")],
+    ])
+    assert plans[0].mode == "stay_on_home_time"
+    assert plans[1].body_offset_hours == 7.0
+    assert plans[1].local_time_difference_hours == -5.0
+    assert plans[1].time_difference_hours == -11.0
+    assert plans[1].strategy == "delay"
+
+
+def test_multi_city_with_a_longer_stop_starts_from_the_partly_shifted_body():
+    # London -> Tokyo (8 h earlier, 1 h/day), four nights there, then Sydney.
+    # Four of the eight hours are done, so the body is on UTC+5 when it flies
+    # on: six hours from Sydney, not the two hours Tokyo is from Sydney.
+    plans = plan_itinerary([
+        [leg("2026-10-04T19:00", "Europe/London", "2026-10-05T15:00", "Asia/Tokyo")],
+        [leg("2026-10-09T10:00", "Asia/Tokyo", "2026-10-09T21:00", "Australia/Sydney")],
+    ], preflight_days=0)
+    first, second = plans
+    assert first.mode == "adapt" and first.strategy == "advance"
+    departure = datetime(2026, 10, 9, 1, 0, tzinfo=UTC)
+    assert body_offset_at(first, departure) == pytest.approx(5.0)
+    assert second.body_offset_hours == pytest.approx(5.0)
+    assert second.local_time_difference_hours == 2.0
+    assert second.time_difference_hours == pytest.approx(6.0)
+    assert "fly on before your body clock has fully caught up" in first.summary
+
+
+def test_a_journeys_events_stop_before_the_next_departure():
+    plans = plan_itinerary([
+        [leg("2026-10-04T19:00", "Asia/Bangkok", "2026-10-05T15:00", "Europe/London")],
+        [leg("2026-10-07T08:00", "Europe/London", "2026-10-08T06:00", "Asia/Bangkok")],
+    ])
+    cut = datetime(2026, 10, 7, 7, 0, tzinfo=UTC) - timedelta(hours=3)
+    assert plans[0].events, "the first journey still has a plan"
+    assert all(e.start < cut and (e.end is None or e.end <= cut) for e in plans[0].events)
+    assert any(e.type == "flight" for e in plans[1].events)
+
+
+def test_journeys_out_of_order_are_refused():
+    with pytest.raises(ValueError, match="journey 2 departs before journey 1 lands"):
+        plan_itinerary([
+            [leg("2026-10-04T19:00", "Asia/Bangkok", "2026-10-05T15:00", "Europe/London")],
+            [leg("2026-10-05T12:00", "Europe/London", "2026-10-06T06:00", "Asia/Bangkok")],
+        ])
+    with pytest.raises(ValueError, match="at least one journey"):
+        plan_itinerary([])
+
+
+def test_merged_plan_keeps_every_event_on_its_own_clock():
+    plans = plan_itinerary([
+        [leg("2026-10-04T19:00", "Asia/Bangkok", "2026-10-05T15:00", "Europe/London")],
+        [leg("2026-10-15T12:00", "Europe/Paris", "2026-10-16T06:00", "Asia/Bangkok")],
+    ])
+    merged = merge_plans(plans)
+    assert len(merged.events) == sum(len(p.events) for p in plans)
+    assert all(e.tz for e in merged.events), "every event says which clock it is on"
+    clocks = {e.tz for e in merged.events}
+    assert {"Europe/London", "Asia/Bangkok"} <= clocks, "each journey's events keep their own destination clock"
+    assert merged.events == sorted(merged.events, key=lambda e: (e.start, e.type))
+    assert merge_plans(plans[:1]) is plans[0]

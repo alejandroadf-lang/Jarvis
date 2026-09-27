@@ -177,6 +177,37 @@ def test_link_previews_carry_the_absolute_address_the_app_is_reached_at():
     assert client.get("/card.png").headers["content-type"] == "image/png"
 
 
+OPEN_JAW = {"journeys": [
+    {"legs": [{"departure": "2031-10-04T19:00", "departure_tz": "Asia/Bangkok", "arrival": "2031-10-05T15:00", "arrival_tz": "Europe/London"}]},
+    {"legs": [{"departure": "2031-10-15T12:00", "departure_tz": "Europe/Paris", "arrival": "2031-10-16T06:00", "arrival_tz": "Asia/Bangkok"}]},
+]}
+
+
+def test_an_itinerary_comes_back_as_one_plan_per_journey():
+    body = client.post("/app/itinerary", json=OPEN_JAW).json()
+    assert [p["home_tz"] for p in body["journeys"]] == ["Asia/Bangkok", "Europe/Paris"]
+    assert body["journeys"][1]["time_difference_hours"] == 6.0
+    assert body["journeys"][1]["local_time_difference_hours"] == 5.0
+    # The same trip as one plan, for reminders, WHOOP and the calendar.
+    merged = client.post("/app/plan", json=OPEN_JAW).json()
+    assert [e["type"] for e in merged["events"]].count("flight") == 2
+    assert merged["home_tz"] == "Asia/Bangkok" and merged["destination_tz"] == "Asia/Bangkok"
+
+
+def test_the_calendar_covers_the_whole_itinerary():
+    import base64
+    import json as _json
+    t = base64.urlsafe_b64encode(_json.dumps(OPEN_JAW).encode()).decode().rstrip("=")
+    r = client.get("/app/plan.ics", params={"t": t})
+    assert r.status_code == 200 and r.text.count("SUMMARY:Flight") == 2
+
+
+def test_journeys_out_of_order_are_a_400_not_a_500():
+    bad = {"journeys": [OPEN_JAW["journeys"][1], OPEN_JAW["journeys"][0]]}
+    r = client.post("/app/itinerary", json=bad)
+    assert r.status_code == 400 and "departs before" in r.json()["error"]["message"]
+
+
 def test_whoop_progress_without_connection_is_a_clear_409():
     r = client.post("/app/whoop/progress", json={"device": DEVICE, "trip": dict(TRIP)})
     assert r.status_code == 409 and r.json()["error"]["code"] == "whoop_not_connected"

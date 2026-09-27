@@ -153,6 +153,7 @@ plan as a calendar file with reminders.
 | `melatonin`, `caffeine` | bool | no, default `true` | Include melatonin timing (advancing only, never a dose) and caffeine windows. |
 | `strategy` | string | no, default `auto` | `auto` picks the faster way round, which past about nine zones east is often delaying; `advance` or `delay` forces it. |
 | `legs` | list | no | For connections: every flight in order, each with `departure`, `departure_tz`, `arrival`, `arrival_tz`. Replaces the four single-flight fields. Stopovers appear as `stopover` events on their own clock; sleep is advised on board, or at a stopover of 4 hours or more, only where it covers a night at the destination. |
+| `journeys` | list | no | Several journeys in order, each `{legs: [...]}`, separated by stays: a round trip, an open jaw (back from a different city) or a multi-city trip. Each journey's plan starts from the body clock the previous one predicts at that departure, pre-flight shifting applies to the first only, and each journey's events stop before the next departure. Replaces `legs` and `return_departure`. `POST /v2/plan` and `/app/plan` return the journeys merged into one plan; `POST /app/itinerary` (same fields) returns `{journeys: [plan, ...]}`, one per journey. |
 
 ### Response `200`
 
