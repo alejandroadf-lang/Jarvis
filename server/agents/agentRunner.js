@@ -274,8 +274,21 @@ function extraCostUsd(usage, intended, actual) {
   return Math.max(0, priceUsage(tokens, actual) - priceUsage(tokens, intended));
 }
 
+// A cheaper provider answering "no such model". Google retires Gemini models on
+// its own schedule (gemini-2.5-flash, set in GEMINI_MODEL, started answering
+// 404 "no longer available to new users"), and a 404 is not an outage by the
+// test above, so it went straight through: the CEO was on Gemini under MODE ECO
+// and the whole morning cycle failed in under a second. For a tier provider it
+// is the same condition as a rejected key (that provider cannot serve this
+// agent) and gets the same answer. For Anthropic itself a missing model is a
+// bug in this code, not something to route around, so it still throws.
+function isMissingModel(err) {
+  return err?.status === 404 || /model[^.]*(not found|no longer available|does not exist)/i.test(err?.message || '');
+}
+
 async function failOverToBackup(anthropic, modelSpec, params, err) {
-  if (!isProviderOutage(err)) throw err;
+  const tierCannotServe = modelSpec.provider !== 'anthropic' && isMissingModel(err);
+  if (!isProviderOutage(err) && !tierCannotServe) throw err;
 
   // A tiered agent whose cheaper provider is refusing us. models.js already
   // collapses a tier to the default model when the key is simply absent; a

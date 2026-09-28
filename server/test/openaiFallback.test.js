@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runAgent } from '../agents/agentRunner.js';
-import { resolveModelForAgent, MODELS, OPENAI_TIER, DEFAULT_TIER } from '../agents/models.js';
+import { resolveModelForAgent, MODELS, OPENAI_TIER, DEFAULT_TIER, GEMINI_TIER } from '../agents/models.js';
 
 let tmpDir;
 let savedKey;
@@ -244,6 +244,46 @@ test('a tier provider that rejects the key falls back to the default model', asy
     if (saved === undefined) delete process.env.OPENROUTER_API_KEY;
     else process.env.OPENROUTER_API_KEY = saved;
   }
+});
+
+// The 2026-09-28 daily report: MODE ECO put the CEO on Gemini, GEMINI_MODEL
+// named a model Google had retired, and its 404 was not an outage, so the
+// cycle failed in 0.8 s instead of running on Claude.
+test('a tier provider whose model is retired falls back to the default model', async () => {
+  const saved = { key: process.env.GEMINI_API_KEY, model: process.env.GEMINI_MODEL };
+  process.env.GEMINI_API_KEY = 'gemini-key';
+  process.env.GEMINI_MODEL = 'gemini-2.5-flash';
+  global.fetch = async () => ({
+    ok: false,
+    status: 404,
+    text: async () => '[{"error":{"code":404,"message":"This model models/gemini-2.5-flash is no longer available to new users."}}]',
+  });
+  let ranOn = null;
+  try {
+    const anthropic = {
+      messages: {
+        create: async (params) => {
+          ranOn = params.model;
+          return { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Leadership sync: all ventures on track.' }], usage: { input_tokens: 10, output_tokens: 20 } };
+        },
+      },
+    };
+    const agents = { ceo: { id: 'ceo', title: 'CEO', department: 'Exec', reportsTo: null, reports: [], modelTier: GEMINI_TIER, systemPrompt: 'You lead.' } };
+    const { text } = await runAgent({ anthropic, agents, agentId: 'ceo', messages: [{ role: 'user', content: 'daily sync' }] });
+    assert.match(text, /all ventures on track/);
+    assert.equal(ranOn, MODELS[DEFAULT_TIER].model);
+  } finally {
+    for (const [k, v] of [['GEMINI_API_KEY', saved.key], ['GEMINI_MODEL', saved.model]]) {
+      if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
+  }
+});
+
+test('a 404 from Anthropic itself is a bug to see, not something to route around', async () => {
+  let calls = 0;
+  const anthropic = { messages: { create: async () => { calls += 1; throw apiError(404, 'model: claude-nonexistent not found'); } } };
+  await assert.rejects(runAgent({ anthropic, agents: SOLO, agentId: 'solo', messages: [{ role: 'user', content: 'hi' }] }), /not found/);
+  assert.equal(calls, 1);
 });
 
 test('the fallback is priced as the model that actually ran', async () => {
