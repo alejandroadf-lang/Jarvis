@@ -33,7 +33,7 @@ export function isEmailConfigured() {
 // existing call site (daily report, tranche/proposal alerts) keeps working
 // unchanged. Real customer outreach (sendCustomerEmail, below) is the only
 // caller that passes a different address.
-async function sendEmail(subject, text, to = process.env.REPORT_EMAIL_TO) {
+async function sendEmail(subject, text, to = process.env.REPORT_EMAIL_TO, headers = undefined) {
   const transport = buildTransport();
   if (!transport) {
     console.log(`Email skipped ("${subject}"): set SMTP_HOST and REPORT_EMAIL_TO to enable it.`);
@@ -45,6 +45,7 @@ async function sendEmail(subject, text, to = process.env.REPORT_EMAIL_TO) {
     to,
     subject,
     text,
+    ...(headers ? { headers } : {}),
   });
   console.log(`Email sent: ${subject}`);
   return true;
@@ -169,8 +170,45 @@ export async function sendDeploymentEmail(venture, details) {
 // in this app that sends email to anyone other than the founder. Uses the
 // exact same SMTP transport and opt-in gate as everything else; there is no
 // separate "customer email" configuration to set up.
+//
+// List-Unsubscribe puts an unsubscribe button in the recipient's mail client
+// (Gmail and Yahoo expect it from anyone sending at volume). It opens a reply
+// to this address with the subject "unsubscribe", which the reply watcher
+// honours like any other unsubscribe (see outreachCompliance.js).
+export function unsubscribeHeaders() {
+  const from = (process.env.REPORT_EMAIL_FROM || process.env.SMTP_USER || '').trim();
+  const address = (from.match(/<([^>]+)>/)?.[1] || from).trim();
+  if (!address.includes('@')) return undefined;
+  return { 'List-Unsubscribe': `<mailto:${address}?subject=unsubscribe&body=unsubscribe>` };
+}
+
+/**
+ * The acknowledgment a new monthly customer is owed: what they signed up to,
+ * that it renews, and a way to cancel that needs nothing but a click. Sent
+ * to the customer, so it is kept to the facts they need.
+ */
+export function formatSubscriptionConfirmationEmail({ productName, terms, cancelUrl, contact }) {
+  const subject = `Your subscription: ${productName}`;
+  const text = [
+    `Thank you for subscribing to ${productName}.`,
+    '',
+    terms,
+    '',
+    `To cancel, open this link and press the button: ${cancelUrl}`,
+    ...(contact ? ['', `Questions: ${contact}.`] : []),
+    '',
+    'Stripe sends the receipt for each payment separately.',
+  ].join('\n');
+  return { subject, text };
+}
+
+export async function sendSubscriptionConfirmation(to, details) {
+  const { subject, text } = formatSubscriptionConfirmationEmail(details);
+  return sendEmail(subject, text, to);
+}
+
 export async function sendCustomerEmail(to, subject, body) {
-  return sendEmail(subject, body, to);
+  return sendEmail(subject, body, to, unsubscribeHeaders());
 }
 
 // Reports something that already happened to a real person outside the

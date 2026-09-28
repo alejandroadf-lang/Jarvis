@@ -71,10 +71,17 @@ import { getKillSwitch, haltRealActions, resumeRealActions } from './killSwitch.
 import { getSpendSummary } from './spend.js';
 import { getIntegrationStatus } from './integrations.js';
 import { getProfitShare, listContributions, recordContribution } from './finance/profitShare.js';
-import { verifyStripeSignature, interpretEvent } from './payments.js';
+import {
+  verifyStripeSignature,
+  interpretEvent,
+  renewalTerms,
+  cancelLink,
+  contactEmail,
+} from './payments.js';
+import { showCancel, confirmCancel } from './billingCancel.js';
 import { recordPayment, getVenture as getVentureForPayment } from './finance/ventures.js';
 import { addTransaction as addLedgerTransaction } from './finance/ledger.js';
-import { sendPaymentEmail, sendCallSummary } from './email.js';
+import { sendPaymentEmail, sendCallSummary, sendSubscriptionConfirmation } from './email.js';
 import {
   isWhatsAppConfigured,
   verifyWebhookChallenge,
@@ -765,6 +772,16 @@ app.post('/api/payments/webhook', async (req, res) => {
       }
       sendPaymentEmail(venture, paid).catch((err) => console.error('Payment alert failed:', err.message));
     }
+    // The renewal law's acknowledgment: terms and a way to cancel, once, on
+    // the first payment of a monthly plan.
+    if (paid.kind === 'monthly' && paid.firstPayment && paid.customerEmail && paid.subscriptionId) {
+      sendSubscriptionConfirmation(paid.customerEmail, {
+        productName: venture ? venture.title : 'your plan',
+        terms: renewalTerms({ amount: paid.amount, currency: paid.currency }),
+        cancelUrl: cancelLink(paid.subscriptionId),
+        contact: contactEmail(),
+      }).catch((err) => console.error('Subscription confirmation failed:', err.message));
+    }
     console.log(`Payment booked: ${paid.currency} ${paid.amount} for ${venture ? venture.title : 'no venture'}`);
   } catch (err) {
     console.error('Payment webhook could not book the payment:', err.message);
@@ -781,6 +798,10 @@ app.get('/paid', (req, res) => {
       : 'Thank you — your payment went through. A receipt is on its way from Stripe, and a person will be in touch.'
   );
 });
+
+// Cancelling a monthly plan, from the link in its confirmation email; see billingCancel.js.
+app.get('/billing/cancel', showCancel);
+app.post('/billing/cancel', confirmCancel);
 
 const whatsappInbound = createWhatsAppInbound({
   anthropic,

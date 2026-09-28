@@ -3916,3 +3916,19 @@ It does two jobs.
 The agents are told to report what posts say as opinion ("N posts say"),
 never as a market figure. The Integrations panel checks the key and that
 `XAI_MODEL` still exists at xAI, and names the current models when it does not.
+
+## Six laws with a fine per message, checked against the code
+
+A founder's checklist of legal traps that bill per user, per email or per
+charge, each checked against what this repository actually does.
+
+| Rule | What the code does |
+|---|---|
+| COPPA: a signup that never asks for age | Nothing here has a signup. Jarvis is the founder's own app behind a token; Circadian has no accounts and never asks for a name or age. Circadian's privacy page now says it is not directed at children and how anything kept for a phone is deleted. |
+| GDPR: Google Fonts loaded from Google | No page loads a font, script or stylesheet from Google or any other third party. Both apps use the system font. |
+| CIPA: session replay recording keystrokes | No session replay anywhere. Circadian's usage counts are sent from the server with no browser script (see `analytics.py`). |
+| CAN-SPAM: commercial email without opt-out or postal address | Outreach already had the reply-to-unsubscribe, honoured automatically. Every message now also says who sent it, that it is commercial, and the postal address, and carries a `List-Unsubscribe` header, whose button the reply watcher honours by subject. **Without `COMPANY_POSTAL_ADDRESS` nothing is sent**, and the agent is told which variable is missing. |
+| California automatic renewal: terms not by the button | A monthly checkout now shows the renewal terms beside Stripe's pay button. The customer is emailed them on the first payment with a cancel link: one button, no login, cancelling at the end of the paid month (`billingCancel.js`). A monthly link is refused while there is no contact address to name. |
+| DMCA: no registered agent | Nothing here publishes content uploaded by users, so there is no safe harbour to lose today. The day a venture hosts user uploads, the founder registers an agent at copyright.gov ($6) before launch. |
+
+None of this is legal advice. It is the floor the code will not go below.

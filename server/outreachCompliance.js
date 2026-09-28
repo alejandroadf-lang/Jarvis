@@ -20,6 +20,16 @@
 //      address, but a national TLD is a strong enough signal to refuse on and
 //      cheap enough to override with a recorded consent.
 //
+// And one for the United States, CAN-SPAM (15 U.S.C. 7704), which applies to
+// any commercial email, B2B included, at up to $53,088 per message:
+//
+//   5. Who sent it, that it is a commercial message, and a valid postal
+//      address, in every message. The address cannot be invented by an agent,
+//      so without COMPANY_POSTAL_ADDRESS nothing is sent at all.
+//   6. A working opt-out, honoured within ten business days. The reply
+//      "unsubscribe" above is one; the List-Unsubscribe header (see email.js)
+//      puts the same thing behind the mail client's own unsubscribe button.
+//
 // This is not legal advice, and the country list is the commonly cited one
 // rather than an exhaustive survey. What it is: a floor below which the code
 // will not go, whatever an agent is asked.
@@ -56,6 +66,27 @@ const UNSUBSCRIBE = [
   /\bno me contacten\b/i,
 ];
 
+/**
+ * Who the company is, for the footer. The name falls back to the venture's;
+ * the postal address has no fallback, because a made-up one is the violation.
+ */
+export function senderIdentity(venture) {
+  return {
+    name: (process.env.COMPANY_NAME || '').trim() || venture?.title || '',
+    postalAddress: (process.env.COMPANY_POSTAL_ADDRESS || '').trim().replace(/\s*\n\s*/g, ', '),
+  };
+}
+
+/** Why a commercial email cannot go out yet, or null when it can. */
+export function outreachRefusal() {
+  if ((process.env.COMPANY_POSTAL_ADDRESS || '').trim()) return null;
+  return (
+    'every commercial email must carry a valid postal address (CAN-SPAM), and none is set. ' +
+    'The founder needs to set COMPANY_POSTAL_ADDRESS in Railway: a street address, or a PO box or ' +
+    'private mailbox registered with the postal service.'
+  );
+}
+
 export function isUnsubscribe(text) {
   const body = String(text || '');
   return UNSUBSCRIBE.some((re) => re.test(body));
@@ -68,12 +99,16 @@ export function isUnsubscribe(text) {
  */
 export function complianceFooter(venture) {
   const name = venture?.title ? `"${venture.title}"` : 'this company';
+  const sender = senderIdentity(venture);
   return [
     '',
     '—',
     `This message was written and sent by an AI system working for ${name}. ` +
       'A person reads every reply.',
     "If you would rather not hear from us, reply with the word \"unsubscribe\" and you won't.",
+    ...(sender.postalAddress
+      ? [`This is a commercial message from ${sender.name || name}, ${sender.postalAddress}.`]
+      : []),
   ].join('\n');
 }
 

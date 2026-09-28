@@ -78,7 +78,7 @@ import {
 import { probeEndpoint } from './execute/probe.js';
 import { fetchReplies, isInboxConfigured } from './inbox.js';
 import { deployReadiness, outreachReadiness, formatReadiness } from './readiness.js';
-import { withComplianceFooter, isUnsubscribe } from './outreachCompliance.js';
+import { withComplianceFooter, isUnsubscribe, outreachRefusal } from './outreachCompliance.js';
 import { priceFloorRefusal, reviewOutbound } from './review.js';
 import { evaluate as evaluateArithmetic, formatNumber as formatCalcNumber } from './arithmetic.js';
 import {
@@ -529,6 +529,8 @@ export async function handleSendCustomerEmail(input, triggeredBy = 'interactive'
   if (typeof body !== 'string' || !body.trim()) {
     return 'Could not send: body is required.';
   }
+  const missing = outreachRefusal();
+  if (missing) return `Could not send: ${missing}`;
   try {
     const venture = authorizeOutreach(ventureId, { to });
 
@@ -609,7 +611,9 @@ export async function handleCheckReplies(input, triggeredBy = 'interactive', ctx
     // An unsubscribe is honoured here, before any agent reads it, so that no
     // judgment call sits between the request and the block. The reply is
     // still filed — the founder can see it — but it is not a lead.
-    if (isUnsubscribe(entry.body)) {
+    // The subject too: a mail client's unsubscribe button sends a message
+    // whose subject is "unsubscribe" and whose body may be empty.
+    if (isUnsubscribe(`${entry.subject}\n${entry.body}`)) {
       blockContact(venture.id, message.from, 'unsubscribed by reply');
       markRepliesRead(venture.id, [entry.messageId]);
       unsubscribed.push(message.from);
