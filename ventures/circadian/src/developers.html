@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="A jet lag plan for any flight, as an API: sleep, light, caffeine and melatonin timing, day by day, on each city's clock.">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<title>Circadian API</title>
+<style>
+  :root {
+    --night: #10131F; --surface: #1A1F33; --surface-2: #232A44; --rule: #2B3150;
+    --ink: #EEF0F7; --muted: #9AA3BF; --dawn: #F2A65A; --dusk: #8A90F5; --sage: #6FCF97; --danger: #F28B82;
+    --tap: 44px;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--night); color: var(--ink);
+    font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding: env(safe-area-inset-top, 0px) 16px env(safe-area-inset-bottom, 0px); }
+  main { max-width: 680px; margin: 0 auto; padding-block: 32px 64px; display: grid; gap: 36px; }
+  /* Grid items default to min-width: auto, so the long code line widened the
+     whole page past the phone and it zoomed out. Scroll inside the block instead. */
+  main > * { min-width: 0; }
+  h1 { font-size: 2rem; line-height: 1.15; margin: 0 0 8px; text-wrap: balance; }
+  h2 { font-size: 1.2rem; margin: 0 0 12px; text-wrap: balance; }
+  p { margin: 0 0 12px; max-width: 62ch; }
+  .lede { color: var(--muted); font-size: 1.1rem; }
+  .eyebrow { color: var(--dawn); font-size: .8rem; letter-spacing: .08em; text-transform: uppercase; margin: 0 0 6px; }
+  a { color: var(--dusk); }
+  a:focus-visible, button:focus-visible, input:focus-visible { outline: 3px solid var(--dusk); outline-offset: 2px; }
+  ul { margin: 0; padding-left: 1.2em; display: grid; gap: 6px; }
+  .table-wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+  thead th { color: var(--muted); font-weight: 600; font-size: .85rem; }
+  pre { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 14px; overflow-x: auto;
+    font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; margin: 0 0 12px; }
+  form { display: grid; gap: 12px; background: var(--surface); border: 1px solid var(--rule); border-radius: 14px; padding: 18px; }
+  label { display: grid; gap: 6px; color: var(--muted); font-size: .9rem; }
+  input { font: inherit; color: var(--ink); background: var(--surface-2); border: 1px solid var(--rule); border-radius: 10px;
+    padding: 10px 12px; min-height: var(--tap); }
+  button, .button { font: inherit; font-weight: 600; min-height: var(--tap); padding: 10px 18px; border-radius: 10px; border: 0;
+    background: var(--dawn); color: #1B1206; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; }
+  button:disabled { opacity: .6; cursor: wait; }
+  .key { word-break: break-all; background: var(--surface-2); border-radius: 10px; padding: 12px; font-family: ui-monospace, Menlo, monospace; }
+  .error { color: var(--danger); }
+  .ok { color: var(--sage); }
+  .small { color: var(--muted); font-size: .9rem; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <p class="eyebrow">Circadian API</p>
+    <h1>A jet lag plan for any flight, from one request.</h1>
+    <p class="lede">Send the flights. Get back when to sleep, when to seek and avoid light, the last coffee and
+      melatonin, day by day, on each city's own clock, with how many days the body clock needs to catch up.</p>
+  </header>
+
+  <section aria-labelledby="what">
+    <h2 id="what">What it handles</h2>
+    <ul>
+      <li>Connections, round trips, open jaws and multi-city itineraries, each journey starting from where the last one left the body clock.</li>
+      <li>East and west at their own rates (about 1 h a day east, 1.5 h west), and the long way round when it is quicker.</li>
+      <li>Trips under three days: stay on home time instead of shifting twice.</li>
+      <li>The traveller's own sleep times or chronotype, pre-flight shifting of up to three days, light glasses or a light box.</li>
+      <li>Every plan carries a plain-language summary and the disclaimer: it is general guidance, not medical advice.</li>
+    </ul>
+  </section>
+
+  <section aria-labelledby="start">
+    <h2 id="start">Quickstart</h2>
+    <pre><code id="curl">curl -X POST BASE/v2/plan \
+  -H "Authorization: Bearer ca_live_..." \
+  -H "Content-Type: application/json" \
+  -d '{"departure":"2026-10-20T00:30","departure_tz":"Asia/Bangkok",
+       "arrival":"2026-10-20T07:15","arrival_tz":"Europe/London"}'</code></pre>
+    <p class="small">A plan comes back in tens of milliseconds. Times are local wall-clock times with IANA zones. Connections go in
+      <code>legs</code>, round trips and multi-city trips in <code>journeys</code>. Errors are always
+      <code>{"error": {"code", "message"}}</code>. The full schema is in <a href="openapi.json">openapi.json</a>,
+      which imports into Postman or Insomnia. Every answer carries <code>X-Quota-Remaining</code>, and
+      <code>GET /v1/usage</code> tells you the month so far.</p>
+  </section>
+
+  <section aria-labelledby="plans">
+    <h2 id="plans">Plans</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th scope="col">Plan</th><th scope="col">Price</th><th scope="col">Plans a month</th><th scope="col">Per minute</th></tr></thead>
+        <tbody>
+{{PLANS}}
+        </tbody>
+      </table>
+    </div>
+    <p class="small">A plan is one request to <code>/v2/plan</code>, however many flights it covers. Quotas reset on the 1st (UTC).</p>
+    <p>{{UPGRADE}}</p>
+  </section>
+
+  <section aria-labelledby="key">
+    <h2 id="key">Get a free key</h2>
+    <form id="key-form" novalidate>
+      <label for="email">Work email<input id="email" name="email" type="email" autocomplete="email" required></label>
+      <label for="company">Company or project<input id="company" name="company" autocomplete="organization"></label>
+      <div><button type="submit" id="get-key">Get a free key</button></div>
+      <p class="small">{{FREE_QUOTA}} plans a month, no card. The key is shown once, here. Your email is kept to reach you
+        about the key and for nothing else.</p>
+      <div id="key-result" role="status" aria-live="polite"></div>
+    </form>
+  </section>
+
+  <footer class="small">
+    <p><a href="./">The Circadian app</a> · <a href="privacy">Privacy</a></p>
+  </footer>
+</main>
+<script>
+  // Relative to wherever this page is served: at the root, or below /circadian.
+  const base = location.href.replace(/developers.*$/, "").replace(/\/$/, "");
+  const curl = document.getElementById("curl");
+  curl.textContent = curl.textContent.replace("BASE", base);
+
+  const form = document.getElementById("key-form");
+  const out = document.getElementById("key-result");
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const button = document.getElementById("get-key");
+    const email = document.getElementById("email").value.trim();
+    out.textContent = "";
+    if (!email) { out.innerHTML = '<p class="error">Type an email address.</p>'; return; }
+    button.disabled = true; button.textContent = "Making your key…";
+    try {
+      const res = await fetch("developers/keys", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, company: document.getElementById("company").value.trim() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error?.message || `Something went wrong (${res.status}).`);
+      out.innerHTML = "";
+      const p = document.createElement("p"); p.className = "ok"; p.textContent = "Your key. Copy it now: it is not shown again.";
+      const k = document.createElement("div"); k.className = "key"; k.textContent = data.api_key;
+      const q = document.createElement("p"); q.className = "small"; q.textContent = `Free plan, ${data.monthly_plans} plans a month. Key id ${data.key_id}.`;
+      out.append(p, k, q);
+      curl.textContent = curl.textContent.replace("ca_live_...", data.api_key);
+    } catch (err) {
+      const p = document.createElement("p"); p.className = "error"; p.textContent = err.message; out.replaceChildren(p);
+    } finally {
+      button.disabled = false; button.textContent = "Get a free key";
+    }
+  });
+</script>
+</body>
+</html>

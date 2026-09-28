@@ -1,11 +1,20 @@
 """
-API-key authentication and rate limiting for CircadianAPI.
+API-key authentication, plans and rate limiting for CircadianAPI.
 
-v1 storage is in-memory (a single process). Replace _KEY_STORE and
-_RATE_LIMITER state with a persistent/shared store (e.g. Redis, a DB
-table) before running multiple instances or across restarts — as-is,
-all issued keys and rate-limit counters are lost on process restart
-and are not shared across instances.
+Two sources of keys, both checked by hash, never stored raw:
+
+- Keys issued by this service (a free key from the developer page, or one
+  the owner issues or upgrades through the admin endpoints) live in the
+  database (store.py, collection "api_keys"), so they survive a redeploy.
+  Until they did, every key lived in memory and a redeploy signed every
+  customer out; the only workaround was typing keys into a Railway variable.
+- Keys listed in CIRCADIAN_API_KEYS, loaded at start, as before. They are on
+  the Starter plan: they were handed to people paying the one price there was.
+
+Each key has a plan (PLANS): a per-minute limit and a monthly quota. The
+per-minute window is in memory (a restart forgiving one minute costs
+nothing); the monthly count is in the database (telemetry.py), because it is
+what a customer is billed against and what they are told is left.
 """
 
 from __future__ import annotations
@@ -17,7 +26,10 @@ import time
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Tuple
 
-from fastapi import Header, HTTPException, Depends
+from fastapi import Header, HTTPException, Depends, Response
+
+from src import store
+from src.telemetry import calls_this_month
 
 
 KEY_PREFIX = "ca_live_"
@@ -29,6 +41,18 @@ _KEY_STORE: Dict[str, "ApiKeyRecord"] = {}
 RATE_LIMIT_MAX_REQUESTS = 60
 RATE_LIMIT_WINDOW_SECONDS = 60
 
+KEYS = "api_keys"          # key hash -> {plan, name, email, created_at, active, last4}
+
+# What each plan allows. Prices are stated here so the developer page and the
+# contract cannot disagree with what is enforced; money is taken outside this
+# service (a Stripe payment link), and a key is moved to a paid plan with the
+# admin endpoint once it is paid.
+PLANS = {
+    "free": {"label": "Free", "monthly_plans": 100, "per_minute": 10, "price": "$0"},
+    "starter": {"label": "Starter", "monthly_plans": 5000, "per_minute": 60, "price": "$29 a month"},
+    "scale": {"label": "Scale", "monthly_plans": 100000, "per_minute": 300, "price": "by arrangement"},
+}
+
 
 @dataclass
 class ApiKeyRecord:
@@ -36,6 +60,12 @@ class ApiKeyRecord:
     prefix: str
     last4: str
     active: bool = True
+    plan: str = "starter"
+
+    @property
+    def key_id(self) -> str:
+        """A public name for the key, for the owner's admin list: not enough to use it."""
+        return self.key_hash[:12]
 
 
 def _hash_key(raw_key: str) -> str:
@@ -114,10 +144,70 @@ def load_keys_from_env(env: Optional[Dict[str, str]] = None) -> int:
 
 def _lookup_key(raw_key: str) -> Optional[ApiKeyRecord]:
     key_hash = _hash_key(raw_key)
-    record = _KEY_STORE.get(key_hash)
+    record = _KEY_STORE.get(key_hash) or _stored_record(key_hash)
     if record is None or not record.active:
         return None
     return record
+
+
+def _stored_record(key_hash: str) -> Optional[ApiKeyRecord]:
+    row = store.get(KEYS, key_hash)
+    if not row:
+        return None
+    return ApiKeyRecord(key_hash=key_hash, prefix=KEY_PREFIX, last4=row.get("last4", ""),
+                        active=bool(row.get("active", True)), plan=row.get("plan") if row.get("plan") in PLANS else "free")
+
+
+def issue_key(plan: str, name: str = "", email: str = "", now: Optional[float] = None) -> Tuple[str, dict]:
+    """
+    A new key, kept in the database. Returns (full key, the stored record with
+    its key_id). The full key exists only in this return value.
+    """
+    if plan not in PLANS:
+        raise ValueError(f"unknown plan {plan!r}: one of {', '.join(PLANS)}")
+    full_key = f"{KEY_PREFIX}{secrets.token_urlsafe(32)}"
+    key_hash = _hash_key(full_key)
+    row = {"plan": plan, "name": str(name or "")[:120], "email": str(email or "")[:200],
+           "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)), "active": True, "last4": full_key[-4:]}
+    store.put(KEYS, key_hash, row)
+    return full_key, {"key_id": key_hash[:12], **row}
+
+
+def find_key(key_id: str) -> Optional[Tuple[str, dict]]:
+    """(key hash, record) for a key_id from the admin list, or None."""
+    key_id = str(key_id or "")
+    if len(key_id) < 12:
+        return None
+    for key_hash, row in store.items(KEYS):
+        if key_hash.startswith(key_id):
+            return key_hash, row
+    return None
+
+
+def update_key(key_id: str, plan: Optional[str] = None, active: Optional[bool] = None) -> Optional[dict]:
+    """Move a key to another plan, or switch it off or on. None when there is no such key."""
+    if plan is not None and plan not in PLANS:
+        raise ValueError(f"unknown plan {plan!r}: one of {', '.join(PLANS)}")
+    found = find_key(key_id)
+    if not found:
+        return None
+    key_hash, _ = found
+
+    def change(row):
+        if row is None:
+            return None
+        if plan is not None:
+            row["plan"] = plan
+        if active is not None:
+            row["active"] = bool(active)
+        return row
+
+    row = store.update_record(KEYS, key_hash, change)
+    return {"key_id": key_hash[:12], **row} if row else None
+
+
+def list_keys() -> list:
+    return [{"key_id": h[:12], **row} for h, row in store.items(KEYS)]
 
 
 def _parse_bearer(authorization: Optional[str]) -> Optional[str]:
@@ -132,7 +222,7 @@ def _parse_bearer(authorization: Optional[str]) -> Optional[str]:
     return raw_key
 
 
-def require_api_key(authorization: str = Header(None)) -> ApiKeyRecord:
+def require_api_key(authorization: Optional[str] = Header(None)) -> ApiKeyRecord:
     """
     FastAPI dependency. Fails closed: any missing header, malformed
     header, or unknown/inactive key results in 401.
@@ -217,17 +307,40 @@ class RateLimiter:
 
 
 _RATE_LIMITER = RateLimiter()
+_PLAN_LIMITERS = {name: RateLimiter(max_requests=p["per_minute"], window_seconds=RATE_LIMIT_WINDOW_SECONDS)
+                  for name, p in PLANS.items()}
 
 # Keys from the host's secret variables, loaded once at import. See
 # load_keys_from_env for why this exists.
 load_keys_from_env()
 
 
-def auth_and_rate_limit(record: ApiKeyRecord = Depends(require_api_key)) -> ApiKeyRecord:
+def _limiter_for(record: ApiKeyRecord) -> RateLimiter:
+    # Env keys keep the module-level limiter the tests and v1 were written against.
+    return _RATE_LIMITER if record.key_hash in _KEY_STORE else _PLAN_LIMITERS[record.plan]
+
+
+def api_key_rate_limited(record: ApiKeyRecord = Depends(require_api_key)) -> ApiKeyRecord:
+    """A valid key within its per-minute limit. For reading usage, which a key over quota may still do."""
+    _limiter_for(record).check(record.key_hash)
+    return record
+
+
+def auth_and_rate_limit(response: Response, record: ApiKeyRecord = Depends(api_key_rate_limited)) -> ApiKeyRecord:
     """
-    Combined dependency: validates the API key (fail closed) and then
-    enforces the per-key rate limit. Use as a single Depends() in
-    app.py route definitions.
+    Combined dependency for anything that makes a plan: a valid key, within
+    its per-minute limit, with plans left this month. Every answer carries the
+    plan and what is left, so a customer's code can see a quota coming.
     """
-    _RATE_LIMITER.check(record.key_hash)
+    plan = PLANS[record.plan]
+    used = calls_this_month(record.key_hash)
+    response.headers["X-Plan"] = record.plan
+    response.headers["X-Quota-Limit"] = str(plan["monthly_plans"])
+    response.headers["X-Quota-Remaining"] = str(max(0, plan["monthly_plans"] - used - 1))
+    if used >= plan["monthly_plans"]:
+        raise HTTPException(status_code=429, detail={
+            "code": "quota_exceeded",
+            "message": f"This key has used the {plan['monthly_plans']} plans its {plan['label']} plan includes this "
+                       "month. It resets on the 1st (UTC); to raise it now, see the pricing on the developer page.",
+        }, headers={"X-Plan": record.plan, "X-Quota-Limit": str(plan["monthly_plans"]), "X-Quota-Remaining": "0"})
     return record

@@ -27,20 +27,29 @@ from pathlib import Path
 from typing import List, Optional
 
 from fastapi import Depends, FastAPI, Query, Request
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from src import advice, analytics, checkin, flights, push, store, whoop
-from src.auth import RateLimiter, auth_and_rate_limit
+from src import advice, analytics, checkin, developers, flights, push, store, whoop
+from src.auth import PLANS, RateLimiter, api_key_rate_limited, auth_and_rate_limit
 from src.ics import plan_to_ics
 from src.itinerary import estimate_landing, merge_plans, plan_itinerary, plan_to_dict, plan_trip
 from src.shift_logic import plan_shift
-from src.telemetry import get_call_count, record_call
+from src.telemetry import get_call_count, month_of, record_call
 
 WEB_DIR = Path(__file__).parent / "web"
 
+# No /docs or /redoc: FastAPI's pages load their scripts and styles from a
+# public CDN in the visitor's browser, which hands every visitor's address to
+# a third party (the same thing the Google Fonts rulings were about), and
+# under /circadian they looked for /openapi.json at the wrong path anyway.
+# The developer page is the documentation; /openapi.json imports into Postman.
 app = FastAPI(
+    docs_url=None,
+    redoc_url=None,
     title="CircadianAPI",
     version="1.0.0",
     description=(
@@ -87,7 +96,11 @@ class ShiftPlanResponse(BaseModel):
 
 
 class UsageResponse(BaseModel):
-    call_count: int
+    call_count: int = Field(..., description="Plans served for this key this month (UTC)")
+    period: str = Field(..., description="The month counted, YYYY-MM")
+    plan: str
+    monthly_plans: int
+    remaining: int
 
 
 class ErrorDetail(BaseModel):
@@ -107,6 +120,32 @@ def unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
     analytics.track("$exception", request.headers, analytics.exception_properties(exc, request.url.path))
     return JSONResponse(status_code=500, content={"error": {
         "code": "internal_error", "message": "Something went wrong making this plan. Try again in a minute."}})
+
+
+# One shape for every refusal, {"error": {"code", "message"}}, so a
+# customer's code has one thing to read. FastAPI's own were {"detail": ...},
+# a string for 401 and 429 and a list for a malformed field (422), next to
+# this API's {"error": ...} for everything else.
+_CODES = {400: "invalid_request", 401: "unauthorized", 403: "forbidden", 404: "not_found", 405: "method_not_allowed",
+          409: "conflict", 429: "rate_limited", 503: "not_configured"}
+
+
+@app.exception_handler(StarletteHTTPException)
+def http_error_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+    detail = exc.detail
+    if isinstance(detail, dict) and "code" in detail:
+        error = {"code": detail["code"], "message": detail.get("message", "")}
+    else:
+        error = {"code": _CODES.get(exc.status_code, "error"), "message": str(detail)}
+    return JSONResponse(status_code=exc.status_code, content={"error": error}, headers=getattr(exc, "headers", None))
+
+
+@app.exception_handler(RequestValidationError)
+def validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    first = (exc.errors() or [{}])[0]
+    where = ".".join(str(p) for p in first.get("loc", []) if p not in ("body", "query"))
+    message = f"{where}: {first.get('msg', 'invalid')}" if where else first.get("msg", "invalid request")
+    return JSONResponse(status_code=400, content={"error": {"code": "invalid_request", "message": message}})
 
 
 @app.exception_handler(ValueError)
@@ -138,13 +177,16 @@ def create_shift_plan(
 
 
 @app.get("/v1/usage", response_model=UsageResponse)
-def get_usage(_auth=Depends(auth_and_rate_limit)) -> UsageResponse:
+def get_usage(_auth=Depends(api_key_rate_limited)) -> UsageResponse:
     """
-    Returns the calling key's own served-call count. Requires the same
-    auth as /v1/shift-plan. Does not expose other keys' counts or any
-    cross-account data.
+    The calling key's own plans served this month, its plan and what is left.
+    Answers even when the month's quota is used up. Does not expose other
+    keys' counts or any cross-account data.
     """
-    return UsageResponse(call_count=get_call_count(_auth.key_hash))
+    used = get_call_count(_auth.key_hash)
+    quota = PLANS[_auth.plan]["monthly_plans"]
+    return UsageResponse(call_count=used, period=month_of(), plan=_auth.plan, monthly_plans=quota,
+                         remaining=max(0, quota - used))
 
 
 @app.get("/health")
@@ -639,6 +681,8 @@ def privacy_page(request: Request):
     page = PRIVACY_PAGE.read_text(encoding="utf-8").replace("{{CONTACT}}", contact)
     return HTMLResponse(page.replace("{{BASE_URL}}", _public_base(request)), headers={"Cache-Control": "no-cache"})
 
+
+app.include_router(developers.router)
 
 # The consumer app itself. Mounted last so every route above wins.
 if WEB_DIR.is_dir():

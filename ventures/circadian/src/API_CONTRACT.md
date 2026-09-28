@@ -1,15 +1,51 @@
-# CircadianAPI — API Contract (v1)
+# CircadianAPI — API Contract
 
-Base path: `/v1`. All request/response bodies are JSON. `/health` is open,
-no auth. `/v1/shift-plan` requires an API key and is rate-limited.
+All request/response bodies are JSON. `/health` is open, no auth.
+`/v1/shift-plan` and `/v2/plan` require an API key; each call counts
+against the key's plan. The public page for developers, with the plans and
+a form for a free key, is `/developers`. The schema is `/openapi.json`.
 
 ## Authentication
 
 `Authorization: Bearer ca_live_<token>`
 
-Missing/malformed header or unknown/inactive key -> `401`.
-Rate limit exceeded (60 requests / 60s per key) -> `429` with a
-`Retry-After` header.
+A key comes from the developer page (a free key, once per email address),
+from the owner (`/admin/api-keys`, after a paid plan is paid), or from the
+`CIRCADIAN_API_KEYS` variable (Starter). Keys are stored by hash only and
+survive a redeploy.
+
+## Plans and limits
+
+| Plan | Price | Plans a month | Requests a minute |
+|---|---|---|---|
+| Free | $0 | 100 | 10 |
+| Starter | $29 a month | 5,000 | 60 |
+| Scale | by arrangement | 100,000 | 300 |
+
+A plan is one successful request to `/v2/plan` or `/v1/shift-plan`,
+however many flights it covers. The month is the calendar month in UTC.
+Every plan response carries `X-Plan`, `X-Quota-Limit` and
+`X-Quota-Remaining`. `GET /v1/usage` answers even past the quota:
+
+```json
+{ "call_count": 37, "period": "2026-10", "plan": "free", "monthly_plans": 100, "remaining": 63 }
+```
+
+## Errors
+
+Every refusal has one shape, whatever the status:
+
+```json
+{ "error": { "code": "quota_exceeded", "message": "This key has used the 100 plans..." } }
+```
+
+| Status | `code` | When |
+|---|---|---|
+| 400 | `invalid_request` | A field is missing, malformed or impossible; the message names it |
+| 401 | `unauthorized` | Missing or malformed header, or an unknown or switched-off key |
+| 429 | `rate_limited` | Over the plan's requests a minute; `Retry-After` says when to retry |
+| 429 | `quota_exceeded` | The month's plans are used; resets on the 1st (UTC) |
+| 500 | `internal_error` | A bug on our side |
 
 ## POST /v1/shift-plan
 
@@ -192,8 +228,10 @@ Open, 20 requests a minute per IP, keyed by a device id the phone generates
 
 ## Pricing
 
-Flat **$29.00/month** per API key. This is the only pricing tier — there
-is no per-unit/per-call rate, no higher-volume tier, and no free trial.
+See *Plans and limits* above; the same table is on `/developers`, filled
+from the same numbers the server enforces (`PLANS` in `auth.py`). Money is
+taken by a Stripe payment link; the key is moved to the paid plan when it
+is paid.
 
 ## Non-medical disclaimer
 

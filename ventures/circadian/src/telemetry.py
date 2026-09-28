@@ -1,17 +1,12 @@
 """
-Per-API-key call telemetry for CircadianAPI.
+Per-API-key call counts for CircadianAPI, by month.
 
-Exists to answer one question: is anyone actually calling this API.
-Before this, the product had zero usage instrumentation -- pricing and
-listings existed on paper with no way to confirm a single real call
-ever happened.
-
-v1 storage is in-memory, same tradeoff as auth.py's key store and rate
-limiter: counts reset on process restart and are not shared across
-instances. That is fine for answering "nonzero calls happened" on a
-single instance; replace with a persistent/shared store (Redis, a DB
-table) before running multiple instances or needing history that
-survives a restart.
+Answers two questions: is anyone calling this API, and how many plans has
+each customer used this month. The second is what a plan's quota is checked
+against and what a customer is billed by, so the count lives in the database
+(store.py, collection "api_usage", one row per key and month) and survives a
+redeploy. It lived in memory until a paying customer was a possibility; a
+redeploy then reset everyone's month to zero.
 
 Keyed by key_hash (the same sha256 hash auth.py already computes and
 stores) -- never the raw key, so telemetry cannot become a second place
@@ -20,42 +15,40 @@ a live key could leak from.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Dict
+import time
+from typing import Optional
+
+from src import store
+
+USAGE = "api_usage"
 
 
-@dataclass
-class KeyUsage:
-    call_count: int = 0
+def month_of(now: Optional[float] = None) -> str:
+    return time.strftime("%Y-%m", time.gmtime(now))
 
 
-_USAGE: Dict[str, KeyUsage] = {}
-
-
-def record_call(key_hash: str) -> None:
+def record_call(key_hash: str, now: Optional[float] = None) -> None:
     """
-    Increment the call counter for this key hash.
+    One served plan for this key, this month.
 
     Call exactly once per successfully-served request, after auth and
     rate limiting have both passed -- this counts real served calls,
     not every inbound attempt (a failed-auth request tells you nothing
     about a caller you'd bill or support).
     """
-    usage = _USAGE.setdefault(key_hash, KeyUsage())
-    usage.call_count += 1
+    store.update_record(USAGE, f"{key_hash}:{month_of(now)}", lambda n: (n or 0) + 1)
+
+
+def calls_this_month(key_hash: str, now: Optional[float] = None) -> int:
+    return store.get(USAGE, f"{key_hash}:{month_of(now)}", 0)
 
 
 def get_call_count(key_hash: str) -> int:
-    """Calls served for this specific key hash. 0 if never seen."""
-    usage = _USAGE.get(key_hash)
-    return usage.call_count if usage else 0
+    """Calls served for this key this month. 0 if never seen."""
+    return calls_this_month(key_hash)
 
 
-def total_calls() -> int:
-    """Sum of served calls across all keys -- the aggregate liveness signal."""
-    return sum(u.call_count for u in _USAGE.values())
-
-
-def active_key_count() -> int:
-    """How many distinct keys have made at least one served call."""
-    return sum(1 for u in _USAGE.values() if u.call_count > 0)
+def total_calls(now: Optional[float] = None) -> int:
+    """Sum of served calls across all keys this month -- the aggregate liveness signal."""
+    month = month_of(now)
+    return sum(n for k, n in store.items(USAGE) if k.endswith(":" + month))

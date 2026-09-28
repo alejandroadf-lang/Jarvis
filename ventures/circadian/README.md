@@ -17,7 +17,9 @@ own; changes made here are not copied back there.
 How it is built, where its data lives (one SQLite file on the volume), what
 it costs as travellers grow and what to change at each size: `ARCHITECTURE.md`.
 
-The current plan for getting it to its first paying travellers: `LAUNCH_PLAN.md`.
+The 30-day plan for finding who pays (travellers, companies through the API, or
+WHOOP): `LAUNCH_PLAN.md`. The pitch to WHOOP: `WHOOP_PITCH.md`. The page
+companies see is `/developers`; the API contract is `src/API_CONTRACT.md`.
 
 ## Run the tests
 

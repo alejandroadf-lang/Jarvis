@@ -170,8 +170,24 @@
       if (Math.abs(shift) > MAX_SHIFT_MINUTES) return; // mid-way through typing a year
       before = dep.value;
       if (!shift) return; // also the first date put into an empty field
-      for (const input of journey.querySelectorAll(".arrival, .stop-arrival, .stop-departure")) {
-        if (input.value) input.value = fromMinutes(asMinutes(input.value) + shift);
+      const moveBy = (node, selector) => {
+        for (const input of node.querySelectorAll(selector)) {
+          if (input.value) input.value = fromMinutes(asMinutes(input.value) + shift);
+        }
+      };
+      moveBy(journey, ".arrival, .stop-arrival, .stop-departure");
+      // A return that now leaves before the outbound lands moves with it, the
+      // stay kept the same length. Without this, the first thing a new
+      // traveller did (put their own dates into the example, which is a
+      // return two weeks out) failed for any trip after the example's return.
+      // A return that is still after the landing was chosen, and stays put.
+      const [out, back] = journeyNodes();
+      if (mode() === "return" && journey === out && back) {
+        const landing = asMinutes(val(out, "arrival"));
+        const leaves = asMinutes(val(back, "departure"));
+        if (Number.isFinite(landing) && Number.isFinite(leaves) && leaves < landing) {
+          moveBy(back, ".departure, .arrival, .stop-arrival, .stop-departure");
+        }
       }
     };
     dep.addEventListener("input", follow);
