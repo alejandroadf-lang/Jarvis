@@ -14,6 +14,9 @@ README's "Circadian at /circadian" section). It came from the
 `alejandroadf-lang/circadian-api` repository, which can still deploy it on its
 own; changes made here are not copied back there.
 
+How it is built, where its data lives (one SQLite file on the volume), what
+it costs as travellers grow and what to change at each size: `ARCHITECTURE.md`.
+
 ## Run the tests
 
 ```

@@ -55,6 +55,7 @@ API = "https://api.prod.whoop.com/developer/v2"
 REVOKE_URL = f"{API}/user/access"
 SCOPES = "read:sleep read:recovery offline"
 COLLECTION = "whoop"
+USERS = "whoop_users"    # WHOOP user id -> device, for the webhook
 STATE_MAX_AGE = 600
 ON_TRACK_MINUTES = 60
 LOW_RECOVERY = 34          # WHOOP's red band
@@ -232,25 +233,25 @@ def _save_tokens(device: str, body: dict, now: float) -> None:
     # hourly refresh dropped the id, and WHOOP's "night scored" webhook was
     # ignored as "member not connected here" until a page load happened to
     # record it again; the morning check-in fell back to the slower sweep.
-    def change(all_):
-        old = all_.get(device, {})
-        all_[device] = {
+    def change(old):
+        old = old or {}
+        return {
             **old,
             "access_token": body["access_token"],
             "refresh_token": body.get("refresh_token") or old.get("refresh_token"),
             "expires_at": now + int(body.get("expires_in", 3600)) - 60,
         }
-        return all_
-    store.update(COLLECTION, {}, change)
+    store.update_record(COLLECTION, device, change)
     invalidate(device)
 
 
 def _forget(device: str) -> None:
     invalidate(device)
-    def change(all_):
-        all_.pop(device, None)
-        return all_
-    store.update(COLLECTION, {}, change)
+    with store.transaction():
+        entry = store.get(COLLECTION, device)
+        store.delete(COLLECTION, device)
+        if entry and entry.get("user_id") is not None:
+            store.delete(USERS, str(entry["user_id"]))
 
 
 def exchange_code(device: str, code: str, redirect_uri: str, now: Optional[float] = None) -> None:
@@ -304,7 +305,7 @@ def _refresh_lock(device: str) -> threading.Lock:
 def _refresh(device: str, now: float, stale: Optional[str] = None) -> str:
     """A fresh access token. `stale` is the token the caller found wanting."""
     with _refresh_lock(device):
-        tok = store.read(COLLECTION, {}).get(device)
+        tok = store.get(COLLECTION, device)
         if tok and tok.get("access_token") != stale and now < tok.get("expires_at", 0):
             return tok["access_token"]   # refreshed by another request while this one waited
         return _refresh_now(device, now, tok)
@@ -330,7 +331,7 @@ def _refresh_now(device: str, now: float, tok: Optional[dict]) -> str:
 
 
 def _token(device: str, now: float) -> str:
-    tok = store.read(COLLECTION, {}).get(device)
+    tok = store.get(COLLECTION, device)
     if not tok:
         raise NotConnected()
     if now >= tok["expires_at"]:
@@ -437,23 +438,37 @@ def _remember_user_id(device: str, records: List[dict]) -> None:
     if not uid:
         return
 
-    def change(all_):
-        entry = all_.get(device)
-        if entry is not None and entry.get("user_id") != uid:
-            entry["user_id"] = uid
-        return all_
-
-    store.update(COLLECTION, {}, change)
+    with store.transaction():
+        entry = store.get(COLLECTION, device)
+        if entry is None:
+            return
+        if entry.get("user_id") != uid:
+            store.put(COLLECTION, device, {**entry, "user_id": uid})
+        store.put(USERS, str(uid), device)
 
 
 def device_for_user(user_id) -> Optional[str]:
-    return next((d for d, e in store.read(COLLECTION, {}).items() if e.get("user_id") == user_id), None)
+    """
+    The device a WHOOP member connected from, by the index _remember_user_id
+    keeps. Connections made before the index existed are found by a scan once
+    and indexed then, so the webhook stays one lookup as members grow.
+    """
+    if user_id is None:
+        return None
+    device = store.get(USERS, str(user_id))
+    if device and (store.get(COLLECTION, device) or {}).get("user_id") == user_id:
+        return device
+    for d, e in store.items(COLLECTION):
+        if e.get("user_id") == user_id:
+            store.put(USERS, str(user_id), d)
+            return d
+    return None
 
 
 # --- what the app calls -------------------------------------------------------------------
 
 def status(device: str) -> dict:
-    return {"configured": is_configured(), "connected": bool(store.read(COLLECTION, {}).get(check_device(device)))}
+    return {"configured": is_configured(), "connected": store.get(COLLECTION, check_device(device)) is not None}
 
 
 def disconnect(device: str, now: Optional[float] = None) -> None:
@@ -474,7 +489,7 @@ def baseline(device: str, now: Optional[datetime] = None) -> dict:
     first line. Clock times are taken on the zone each night was slept in.
     """
     check_device(device)
-    if not store.read(COLLECTION, {}).get(device):
+    if store.get(COLLECTION, device) is None:
         raise NotConnected()
     now = now or datetime.now(UTC)
     t = now.timestamp()
@@ -568,7 +583,7 @@ def progress(device: str, plan: TripPlan, now: Optional[datetime] = None) -> dic
     back on local time yet.
     """
     check_device(device)
-    if not store.read(COLLECTION, {}).get(device):
+    if store.get(COLLECTION, device) is None:
         raise NotConnected()
     now = now or datetime.now(UTC)
     t = now.timestamp()

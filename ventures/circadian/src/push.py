@@ -86,6 +86,26 @@ def reminders_from_plan(plan: TripPlan, now: Optional[datetime] = None) -> List[
     return out
 
 
+def wakes_from_plan(plan: TripPlan) -> List[dict]:
+    """
+    Each planned night in a bed, as the morning check-in sweep needs it: when
+    it starts and ends, and on which clock. Kept with the subscription so the
+    sweep can tell which travellers are due without rebuilding every plan
+    each minute; rebuilding them was most of the sweep's cost, and at a few
+    thousand travellers the minute tick ran longer than a minute.
+    """
+    out = []
+    for e in plan.events:
+        if e.type != "sleep" or e.where not in ("home", "destination") or e.end is None:
+            continue
+        out.append({
+            "start": e.start.astimezone(UTC).isoformat(),
+            "end": e.end.astimezone(UTC).isoformat(),
+            "tz": e.tz or (plan.home_tz if e.where == "home" else plan.destination_tz),
+        })
+    return out
+
+
 def subscribe(device: str, subscription: dict, plan: TripPlan, trip: Optional[dict] = None) -> int:
     """
     trip: the request the plan was made from, kept so the morning check-in
@@ -99,30 +119,22 @@ def subscribe(device: str, subscription: dict, plan: TripPlan, trip: Optional[di
     if not keys.get("p256dh") or not keys.get("auth"):
         raise ValueError("a push subscription needs its p256dh and auth keys")
     reminders = reminders_from_plan(plan)
+    wakes = wakes_from_plan(plan)
 
-    def change(all_):
-        old = all_.get(device) or {}
-        all_[device] = {"subscription": subscription, "reminders": reminders, "trip": trip,
-                        "checkins": old.get("checkins") or {}}
-        return all_
+    def change(old):
+        return {"subscription": subscription, "reminders": reminders, "trip": trip, "wakes": wakes,
+                "checkins": (old or {}).get("checkins") or {}}
 
-    store.update(COLLECTION, {}, change)
+    store.update_record(COLLECTION, device, change)
     return len(reminders)
 
 
 def unsubscribe(device: str) -> bool:
-    removed = {"hit": False}
-
-    def change(all_):
-        removed["hit"] = all_.pop(device, None) is not None
-        return all_
-
-    store.update(COLLECTION, {}, change)
-    return removed["hit"]
+    return store.delete(COLLECTION, device)
 
 
 def status(device: str) -> dict:
-    entry = store.read(COLLECTION, {}).get(device)
+    entry = store.get(COLLECTION, device)
     if not entry:
         return {"subscribed": False, "pending": 0}
     pending = [r for r in entry["reminders"] if not r["sent"]]
@@ -156,7 +168,7 @@ def send_webpush(subscription: dict, payload: dict) -> None:
 
 def send_to(device: str, payload: dict, send: Callable[[dict, dict], None] = None) -> bool:
     """One push to a device now, outside the reminder list. False if it has no subscription, or a gone one."""
-    entry = store.read(COLLECTION, {}).get(device)
+    entry = store.get(COLLECTION, device)
     if not entry:
         return False
     try:
@@ -172,25 +184,24 @@ def dispatch(now: Optional[datetime] = None, send: Callable[[dict, dict], None] 
     now = now or datetime.now(UTC)
     send = send or send_webpush
     counts = {"sent": 0, "skipped": 0, "gone": 0, "failed": 0}
-    snapshot = store.read(COLLECTION, {})
     outcomes = {}
-    for device, entry in snapshot.items():
-        for i, r in enumerate(entry["reminders"]):
+    for device, entry in store.items(COLLECTION):
+        for r in entry["reminders"]:
             if r["sent"]:
                 continue
             at = datetime.fromisoformat(r["at"])
             if at > now:
                 break
             if now - at > MAX_LATE:
-                outcomes.setdefault(device, {})[i] = "skipped"
+                outcomes.setdefault(device, set()).add((r["at"], r["kind"]))
                 counts["skipped"] += 1
                 continue
             try:
                 send(entry["subscription"], {"title": r["title"], "body": r["body"], "kind": r["kind"]})
-                outcomes.setdefault(device, {})[i] = "sent"
+                outcomes.setdefault(device, set()).add((r["at"], r["kind"]))
                 counts["sent"] += 1
             except Gone:
-                outcomes[device] = "gone"
+                outcomes[device] = ("gone", entry["subscription"]["endpoint"])
                 counts["gone"] += 1
                 break
             except Exception as err:  # a flaky push service must not stop the loop
@@ -198,20 +209,26 @@ def dispatch(now: Optional[datetime] = None, send: Callable[[dict, dict], None] 
                 counts["failed"] += 1
                 break
 
-    if outcomes:
-        def change(all_):
-            for device, result in outcomes.items():
-                if device not in all_:
-                    continue
-                if result == "gone":
-                    all_.pop(device)
-                    continue
-                for i in result:
-                    if i < len(all_[device]["reminders"]):
-                        all_[device]["reminders"][i]["sent"] = True
-            return all_
+    # Written back one record at a time, re-read under the lock, and matched by
+    # time and kind rather than position: a traveller who re-planned while the
+    # pushes went out keeps the new list, and only what this pass handled is
+    # marked in it.
+    for device, result in outcomes.items():
+        if isinstance(result, tuple):
+            # Gone, unless the phone subscribed again with a new endpoint meanwhile.
+            store.update_record(COLLECTION, device, lambda e, gone=result[1]:
+                                None if e is None or e["subscription"]["endpoint"] == gone else e)
+            continue
 
-        store.update(COLLECTION, {}, change)
+        def mark(entry, result=result):
+            if entry is None:
+                return None
+            for r in entry["reminders"]:
+                if (r["at"], r["kind"]) in result:
+                    r["sent"] = True
+            return entry
+
+        store.update_record(COLLECTION, device, mark)
     return counts
 
 
