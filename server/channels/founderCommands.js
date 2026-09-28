@@ -61,7 +61,12 @@ import { listIssues, addIssue, removeIssue, describeSupportDesk, listTickets } f
 
 const COMMANDS = [
   { kind: 'help', re: /^(help|commands|\?)$/i },
-  { kind: 'halt', re: /^(halt|stop|freeze)(?:\s+[:,\-–—]?\s*(.+))?$/i, arg: 'reason' },
+  // The separator is either a space or punctuation, with or without a space
+  // before it: "HALT: reason" (colon straight after the word) used to miss,
+  // and a missed HALT is handed to the company turn as an ordinary message,
+  // which is the one thing these commands exist to prevent. Still anchored,
+  // so "halted" and "stopping by" are sentences, not commands.
+  { kind: 'halt', re: /^(halt|stop|freeze)(?:(?:\s*[:,\-–—]|\s)\s*(.+))?$/i, arg: 'reason' },
   { kind: 'resume', re: /^(resume|unhalt|go\s+live)$/i },
   { kind: 'spend', re: /^(spend|cost|budget)$/i },
   { kind: 'integrations', re: /^(integrations|connections|health)$/i },
