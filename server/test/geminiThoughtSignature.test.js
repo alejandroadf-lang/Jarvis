@@ -157,3 +157,40 @@ test('when a cheaper provider refuses a request, the turn moves to Claude, with 
   assert.ok(use, 'the Gemini round is in the history Claude continues from');
   assert.equal('extra_content' in use, false, 'without the Gemini-only field Claude would refuse');
 });
+
+// The real API refuses a top-level field it does not know, with a 400. The
+// fallback above passed only because its fake Claude accepted anything; the
+// founder's WhatsApp got "effort: Extra inputs are not permitted" instead.
+const API_FIELDS = new Set([
+  'model', 'messages', 'system', 'max_tokens', 'tools', 'tool_choice', 'thinking', 'output_config',
+  'metadata', 'stop_sequences', 'temperature', 'top_p', 'top_k', 'stream', 'mcp_servers', 'betas',
+  'container', 'context_management', 'service_tier',
+]);
+
+function strictClaude(calls) {
+  return {
+    messages: {
+      create: async (params) => {
+        const extra = Object.keys(params).filter((k) => !API_FIELDS.has(k));
+        if (extra.length) {
+          const e = new Error(`400 {"type":"error","error":{"type":"invalid_request_error","message":"${extra[0]}: Extra inputs are not permitted"}}`);
+          e.status = 400;
+          throw e;
+        }
+        calls.push(params);
+        const isCeo = JSON.stringify(params.system).includes('You lead.');
+        return { stop_reason: 'end_turn', content: [{ type: 'text', text: isCeo ? 'Answered on Claude.' : 'Fine.' }], usage: { input_tokens: 1, output_tokens: 1 } };
+      },
+    },
+  };
+}
+
+test('a turn that falls back to Claude sends only fields the API accepts, with the effort level kept', async () => {
+  global.fetch = async () => ({ ok: false, status: 400, text: async () => 'refused' });
+  const calls = [];
+  const { text } = await runAgent({ anthropic: strictClaude(calls), agents: TEAM, agentId: 'ceo', messages: [{ role: 'user', content: 'daily sync' }] });
+  assert.equal(text, 'Answered on Claude.');
+  const ceo = calls.find((p) => JSON.stringify(p.system).includes('You lead.'));
+  assert.equal('effort' in ceo, false);
+  assert.ok(ceo.output_config?.effort, 'the orchestrator still thinks at its own effort level');
+});
