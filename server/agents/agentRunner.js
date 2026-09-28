@@ -26,6 +26,7 @@ import { agentSpan, toolSpan, newTraceId } from '../telemetry.js';
 import { recordSearchesFrom } from '../searchLog.js';
 import { getAgent } from './registry.js';
 import { assertUnderDailyCap, recordSpend } from '../spend.js';
+import { forAnthropic } from './toolTranslation.js';
 import { priceUsage, emptyUsage } from '../usage.js';
 import {
   resolveModelForAgent,
@@ -286,8 +287,20 @@ function isMissingModel(err) {
   return err?.status === 404 || /model[^.]*(not found|no longer available|does not exist)/i.test(err?.message || '');
 }
 
+// Any refusal of the request itself (4xx) from a tier provider. The second
+// case after the retired model: Gemini answered 400 "Function call is missing
+// a thought_signature" and the founder's WhatsApp question failed after 21 s.
+// The cause is fixed in toolTranslation.js, but the lesson is general: a
+// cheaper provider's rules for tools, formats and models change on its own
+// schedule, and each change should cost a cheaper model for that turn, not
+// the answer. Claude gets the same request; if Claude refuses it too, that
+// error is the one surfaced.
+function tierRefusedRequest(err) {
+  return (err?.status >= 400 && err?.status < 500) || isMissingModel(err);
+}
+
 async function failOverToBackup(anthropic, modelSpec, params, err) {
-  const tierCannotServe = modelSpec.provider !== 'anthropic' && isMissingModel(err);
+  const tierCannotServe = modelSpec.provider !== 'anthropic' && tierRefusedRequest(err);
   if (!isProviderOutage(err) && !tierCannotServe) throw err;
 
   // A tiered agent whose cheaper provider is refusing us. models.js already
@@ -308,6 +321,7 @@ async function failOverToBackup(anthropic, modelSpec, params, err) {
     try {
       const response = await anthropic.messages.create({
         ...params,
+        messages: forAnthropic(params.messages),
         model: fallback.model,
         thinking: { type: 'adaptive' },
       });
@@ -432,6 +446,7 @@ export async function createMessage(anthropic, modelSpec, params) {
     const endpoint = rest.betas?.length ? anthropic.beta.messages : anthropic.messages;
     return endpoint.create({
       ...rest,
+      messages: forAnthropic(rest.messages),
       model: modelSpec.model,
       // Adaptive thinking with a per-role effort level. A leaf answering a
       // bounded question does not need to deliberate; an orchestrator
