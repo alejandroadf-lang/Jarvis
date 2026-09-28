@@ -599,6 +599,17 @@
     return Uint8Array.from(raw, (c) => c.charCodeAt(0));
   }
 
+  // Whether reminders are on, asked once per page load rather than on every
+  // draw of the page, and again after the traveller switches them.
+  let pushStatusPromise = null;
+  function pushStatus() {
+    if (!pushStatusPromise) {
+      pushStatusPromise = api(`app/push/status?device=${device()}`);
+      pushStatusPromise.catch(() => { pushStatusPromise = null; });
+    }
+    return pushStatusPromise;
+  }
+
   async function renderReminders(container, tripReq) {
     const card = el("div", "card");
     card.appendChild(el("h2", "", "Reminders"));
@@ -621,12 +632,13 @@
     }
     const setOn = (n) => { button.textContent = "Turn off reminders"; text.innerHTML = ""; text.append(el("span", "ok", `On: ${n} reminder${n === 1 ? "" : "s"} scheduled for this trip.`)); button.dataset.on = "1"; };
     try {
-      const st = await api(`app/push/status?device=${device()}`);
+      const st = await pushStatus();
       if (st.subscribed) setOn(st.pending);
     } catch { /* offline */ }
 
     button.addEventListener("click", async () => {
       button.disabled = true;
+      pushStatusPromise = null;
       try {
         const reg = await navigator.serviceWorker.ready;
         if (button.dataset.on) {
@@ -657,10 +669,23 @@
   // The WHOOP button in the header: always visible, so connecting doesn't
   // depend on finding a card below a plan. Its label says what a tap does.
   let lastWhoopStatus = null;
+  // One status request per page load, shared by the header button and the
+  // WHOOP card: the page is drawn more than once on a load (the saved plan,
+  // then the fresh one, then again with WHOOP's nights), and each draw used to
+  // ask again. Asked afresh only when it can have changed: coming back to the
+  // page, and after disconnecting.
+  let whoopStatusPromise = null;
+  function whoopStatus(fresh = false) {
+    if (fresh || !whoopStatusPromise) {
+      whoopStatusPromise = api(`app/whoop/status?device=${device()}`);
+      whoopStatusPromise.catch(() => { whoopStatusPromise = null; });
+    }
+    return whoopStatusPromise;
+  }
   async function refreshWhoopButton() {
     const button = $("whoop-button"), label = $("whoop-label");
     let st;
-    try { st = await api(`app/whoop/status?device=${device()}`); } catch { return null; }
+    try { st = await whoopStatus(true); } catch { return null; }
     lastWhoopStatus = st;
     button.classList.toggle("connected", !!st.connected);
     button.classList.toggle("ready", !!st.configured && !st.connected);
@@ -685,7 +710,7 @@
 
     let st;
     // The redraw after WHOOP moved the plan already knows the status.
-    try { st = (progress && lastWhoopStatus) || await api(`app/whoop/status?device=${device()}`); } catch { return; }
+    try { st = (progress && lastWhoopStatus) || await whoopStatus(); } catch { return; }
     if (!st.configured) { text.textContent = "WHOOP is coming soon to Circadian."; button.hidden = true; return; }
     if (!st.connected) {
       if (example) text.textContent = "Connect WHOOP now; once you plan your own trip, each night you actually slept shows up here next to the plan.";

@@ -487,3 +487,103 @@ def test_a_green_morning_and_a_feverish_one_read_differently(fake):
     out = whoop.progress(DEVICE, plan, now=nights[1].end + timedelta(hours=2))
     assert "resting heart rate 63 against your usual 54" in out["insight"]
     assert out["insight"].endswith("A raised temperature or heart rate can also be a cold coming on; if you feel off, that is not the jet lag.")
+
+
+# --- concurrency and caching ----------------------------------------------------------
+
+def test_two_requests_with_an_expired_token_refresh_once_and_stay_connected(fake, monkeypatch):
+    """
+    The page asks for the baseline and the progress at once, on two threads.
+    With an expired token both used to refresh with the same refresh token;
+    WHOOP rotates it, so the second refresh was refused and the device was
+    forgotten: the first load after an hour disconnected WHOOP.
+    """
+    import threading
+    import time as _time
+    connect(fake, now=1_000_000.0)
+    later = 1_000_000.0 + 7200                    # the hour-long token has expired
+    used = set()
+
+    def rotating(method, url, headers=None, form=None):
+        if url == whoop.TOKEN_URL and form.get("grant_type") == "refresh_token":
+            _time.sleep(0.05)                     # long enough for the other thread to arrive
+            if form["refresh_token"] in used:     # WHOOP refuses a refresh token used once
+                return 400, {"error": "invalid_grant"}
+            used.add(form["refresh_token"])
+        return fake(method, url, headers, form)
+
+    monkeypatch.setattr(whoop, "_http", rotating)
+    tokens, errors = [], []
+
+    def ask():
+        try:
+            tokens.append(whoop._token(DEVICE, later))
+        except Exception as err:                  # noqa: BLE001 - the failure is the point
+            errors.append(err)
+
+    threads = [threading.Thread(target=ask) for _ in range(2)]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join()
+    assert errors == []
+    assert len(tokens) == 2 and tokens[0] == tokens[1]
+    assert len([c for c in fake.calls if c[1] == whoop.TOKEN_URL and c[3].get("grant_type") == "refresh_token"]) == 1
+    assert whoop.status(DEVICE)["connected"] is True
+
+
+def test_a_token_refresh_keeps_the_whoop_member_id_the_webhook_needs(fake):
+    connect(fake, now=1_000_000.0)
+    whoop._remember_user_id(DEVICE, [{"user_id": 10129}])
+    assert whoop.device_for_user(10129) == DEVICE
+    whoop._refresh(DEVICE, 1_000_000.0 + 7200)
+    assert whoop.device_for_user(10129) == DEVICE, "the hourly refresh no longer drops the id"
+
+
+def _gets(fake):
+    return [c for c in fake.calls if c[0] == "GET"]
+
+
+def test_the_two_weeks_are_fetched_once_for_the_form_and_the_advice(fake):
+    connect(fake)
+    now = datetime(2026, 10, 1, 9, 0, tzinfo=timezone.utc)
+    whoop.baseline(DEVICE, now=now)
+    whoop.baseline(DEVICE, now=now + timedelta(minutes=1))
+    assert len(_gets(fake)) == 2, "sleep and recovery once, not twice each"
+    # Ten minutes on, it is fetched again.
+    whoop.baseline(DEVICE, now=now + timedelta(minutes=11))
+    assert len(_gets(fake)) == 4
+
+
+def test_a_scored_night_or_a_disconnect_clears_the_cached_weeks(fake):
+    connect(fake)
+    now = datetime(2026, 10, 1, 9, 0, tzinfo=timezone.utc)
+    whoop.baseline(DEVICE, now=now)
+    whoop.invalidate(DEVICE)                      # what the webhook does (checkin.handle_webhook)
+    whoop.baseline(DEVICE, now=now)
+    assert len(_gets(fake)) == 4
+    whoop.disconnect(DEVICE)
+    with pytest.raises(whoop.NotConnected):
+        whoop.baseline(DEVICE, now=now)
+
+
+def test_sleep_and_recovery_are_fetched_at_the_same_time(fake, monkeypatch):
+    import threading
+    import time as _time
+    connect(fake)
+    in_flight, overlap = [0], [False]
+    lock = threading.Lock()
+
+    def slow(method, url, headers=None, form=None):
+        if method == "GET":
+            with lock:
+                in_flight[0] += 1
+                overlap[0] = overlap[0] or in_flight[0] > 1
+            _time.sleep(0.05)
+            with lock:
+                in_flight[0] -= 1
+        return fake(method, url, headers, form)
+
+    monkeypatch.setattr(whoop, "_http", slow)
+    whoop.baseline(DEVICE, now=datetime(2026, 10, 1, 9, 0, tzinfo=timezone.utc))
+    assert overlap[0] is True
