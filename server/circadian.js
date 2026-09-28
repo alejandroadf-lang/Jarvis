@@ -40,7 +40,7 @@ const MAX_BACKOFF_MS = 30_000;
 
 // What the child inherits. Proxy and certificate variables are here because
 // WHOOP and the push services are reached over HTTPS from inside it.
-const PASSED_ENV = /^(CIRCADIAN_|WHOOP_|VAPID_|POSTHOG_)|^(PATH|HOME|LANG|LC_ALL|TZ|SSL_CERT_FILE|SSL_CERT_DIR|REQUESTS_CA_BUNDLE|HTTPS?_PROXY|NO_PROXY|https?_proxy|no_proxy)$/;
+const PASSED_ENV = /^(CIRCADIAN_|WHOOP_|VAPID_|POSTHOG_|AERODATABOX_)|^(PATH|HOME|LANG|LC_ALL|TZ|SSL_CERT_FILE|SSL_CERT_DIR|REQUESTS_CA_BUNDLE|HTTPS?_PROXY|NO_PROXY|https?_proxy|no_proxy)$/;
 
 const state = {
   child: null,
