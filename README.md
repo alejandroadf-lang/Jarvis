@@ -72,6 +72,7 @@ Copy `server/.env.example` to `server/.env` and set `ANTHROPIC_API_KEY`.
 ```bash
 npm test    # runs the server's unit tests (server/test/, Node's built-in test runner)
 npm run lint  # lints the client
+npm run test:happycompany  # the Forge app in ventures/happycompany, Node only
 ```
 
 The server tests cover the pure data-layer logic — the ledger, ventures
@@ -173,6 +174,14 @@ connections) goes in `circadian/` inside the volume from step 2.
   counted.
 
 The code lives in `ventures/circadian/`, and that copy is what is deployed.
+
+### Happy Company, on the Atlassian Marketplace
+
+`ventures/happycompany/` is a Forge app, not something this server hosts:
+Atlassian runs it inside Jira Cloud and Confluence Cloud and bills for it.
+It grades a team's working hours and workload from Jira and Confluence
+activity, mapped to ISO 45003, with no per-person data. Its README has the
+deploy steps and its PLAN.md the route to Marketplace revenue.
 
 ### Voice experience
 
