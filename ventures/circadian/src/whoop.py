@@ -34,8 +34,10 @@ import hashlib
 import hmac
 import os
 import re
+import threading
 import time
 import urllib.parse
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from statistics import median
 from typing import Dict, List, Optional, Tuple
@@ -225,18 +227,26 @@ def reachability() -> str:
 # --- tokens -----------------------------------------------------------------------------
 
 def _save_tokens(device: str, body: dict, now: float) -> None:
+    # The rest of the record (the WHOOP user id the webhook finds the
+    # traveller by) is kept. It was rebuilt from the tokens alone, so every
+    # hourly refresh dropped the id, and WHOOP's "night scored" webhook was
+    # ignored as "member not connected here" until a page load happened to
+    # record it again; the morning check-in fell back to the slower sweep.
     def change(all_):
         old = all_.get(device, {})
         all_[device] = {
+            **old,
             "access_token": body["access_token"],
             "refresh_token": body.get("refresh_token") or old.get("refresh_token"),
             "expires_at": now + int(body.get("expires_in", 3600)) - 60,
         }
         return all_
     store.update(COLLECTION, {}, change)
+    invalidate(device)
 
 
 def _forget(device: str) -> None:
+    invalidate(device)
     def change(all_):
         all_.pop(device, None)
         return all_
@@ -274,8 +284,33 @@ def _why_refused(status: int, body) -> ConnectFailed:
     return ConnectFailed("whoop", detail, status)
 
 
-def _refresh(device: str, now: float) -> str:
-    tok = store.read(COLLECTION, {}).get(device)
+# One refresh at a time per device. The page asks for the baseline and the
+# progress at the same moment, and FastAPI runs them on two threads; once the
+# hour-long access token had expired, both refreshed with the same refresh
+# token. WHOOP issues a new refresh token each time and refuses the old one,
+# so the second refresh failed, which reads exactly like "the traveller
+# revoked access", and the connection was deleted. The first page load after
+# an hour could disconnect WHOOP. Now the second caller waits, finds the token
+# the first one got, and uses it.
+_refresh_locks: Dict[str, threading.Lock] = {}
+_refresh_locks_guard = threading.Lock()
+
+
+def _refresh_lock(device: str) -> threading.Lock:
+    with _refresh_locks_guard:
+        return _refresh_locks.setdefault(device, threading.Lock())
+
+
+def _refresh(device: str, now: float, stale: Optional[str] = None) -> str:
+    """A fresh access token. `stale` is the token the caller found wanting."""
+    with _refresh_lock(device):
+        tok = store.read(COLLECTION, {}).get(device)
+        if tok and tok.get("access_token") != stale and now < tok.get("expires_at", 0):
+            return tok["access_token"]   # refreshed by another request while this one waited
+        return _refresh_now(device, now, tok)
+
+
+def _refresh_now(device: str, now: float, tok: Optional[dict]) -> str:
     if not tok or not tok.get("refresh_token"):
         _forget(device)
         raise NotConnected()
@@ -299,7 +334,7 @@ def _token(device: str, now: float) -> str:
     if not tok:
         raise NotConnected()
     if now >= tok["expires_at"]:
-        return _refresh(device, now)
+        return _refresh(device, now, stale=tok["access_token"])
     return tok["access_token"]
 
 
@@ -308,13 +343,41 @@ def _get(device: str, path: str, params: dict, now: float) -> dict:
     token = _token(device, now)
     status, body = _http("GET", url, headers={"Authorization": f"Bearer {token}"})
     if status == 401:
-        token = _refresh(device, now)
+        token = _refresh(device, now, stale=token)
         status, body = _http("GET", url, headers={"Authorization": f"Bearer {token}"})
     if status == 429:
         raise ValueError("WHOOP is rate-limiting requests; try again in a minute")
     if status != 200 or body is None:
         raise ValueError(f"WHOOP returned HTTP {status}")
     return body
+
+
+def _both(device: str, sleep_range: Tuple[datetime, datetime], recovery_range: Tuple[datetime, datetime], now: float):
+    """
+    Sleeps and recoveries, fetched at the same time rather than one after the
+    other: each is a round trip to WHOOP (from Singapore, several hundred ms),
+    and a page load waited for them in series twice over. Safe to run in
+    parallel because a token refresh is serialised per device (_refresh).
+    """
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        sleeps = pool.submit(_collection, device, "/activity/sleep", *sleep_range, now)
+        recoveries = pool.submit(_collection, device, "/recovery", *recovery_range, now)
+        return sleeps.result(), recoveries.result()
+
+
+# The last two weeks on WHOOP, kept for a few minutes per device. The page asks
+# for the baseline twice on one load (the form's usual bedtime, and the advice
+# before the trip), and again on every reload; a two-week median does not move
+# in ten minutes. Cleared when WHOOP says a night or recovery was scored (the
+# webhook, checkin.py), when tokens change, and on disconnect.
+BASELINE_CACHE_SECONDS = 600
+_baseline_cache: Dict[str, Tuple[float, list, list]] = {}
+_baseline_cache_lock = threading.Lock()
+
+
+def invalidate(device: str) -> None:
+    with _baseline_cache_lock:
+        _baseline_cache.pop(device, None)
 
 
 def _collection(device: str, path: str, start: datetime, end: datetime, now: float) -> List[dict]:
@@ -416,9 +479,16 @@ def baseline(device: str, now: Optional[datetime] = None) -> dict:
     now = now or datetime.now(UTC)
     t = now.timestamp()
     start = now - timedelta(days=BASELINE_DAYS)
-    sleeps = [x for x in _collection(device, "/activity/sleep", start, now, t)
-              if not x.get("nap") and x.get("start") and x.get("end")]
-    recoveries = [r for r in _collection(device, "/recovery", start, now, t)
+    with _baseline_cache_lock:
+        hit = _baseline_cache.get(device)
+    if hit and 0 <= t - hit[0] < BASELINE_CACHE_SECONDS:
+        raw_sleeps, raw_recoveries = hit[1], hit[2]
+    else:
+        raw_sleeps, raw_recoveries = _both(device, (start, now), (start, now), t)
+        with _baseline_cache_lock:
+            _baseline_cache[device] = (t, raw_sleeps, raw_recoveries)
+    sleeps = [x for x in raw_sleeps if not x.get("nap") and x.get("start") and x.get("end")]
+    recoveries = [r for r in raw_recoveries
                   if r.get("score_state") == "SCORED" and (r.get("score") or {}).get("recovery_score") is not None]
     _remember_user_id(device, sleeps + recoveries)
     out = {"days": BASELINE_DAYS, "nights": len(sleeps), "bed": None, "wake": None, "recovery": None,
@@ -509,11 +579,10 @@ def progress(device: str, plan: TripPlan, now: Optional[datetime] = None) -> dic
 
     start = min(e.start for e in planned) - timedelta(hours=12)
     end = min(now, max(e.end for e in planned) + timedelta(hours=12))
-    sleeps = [s for s in _collection(device, "/activity/sleep", start, end, t)
-              if not s.get("nap") and s.get("start") and s.get("end")]
     # Recoveries from two weeks before the first night too: the pre-trip
     # median is what "recovered" is measured against after arrival.
-    recoveries = _collection(device, "/recovery", start - timedelta(days=BASELINE_DAYS), end + timedelta(hours=12), t)
+    raw_sleeps, recoveries = _both(device, (start, end), (start - timedelta(days=BASELINE_DAYS), end + timedelta(hours=12)), t)
+    sleeps = [s for s in raw_sleeps if not s.get("nap") and s.get("start") and s.get("end")]
     _remember_user_id(device, sleeps + recoveries)
     recovery_by_sleep: Dict[str, dict] = {}
     before_trip: List[dict] = []

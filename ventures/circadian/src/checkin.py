@@ -79,6 +79,7 @@ def handle_webhook(body: bytes, now: Optional[datetime] = None, send=None) -> st
     device = whoop.device_for_user(payload.get("user_id"))
     if not device:
         return "ignored: member not connected here"
+    whoop.invalidate(device)   # a night or recovery was just scored: the cached two weeks are out of date
     return run(device, now=now, send=send)
 
 
