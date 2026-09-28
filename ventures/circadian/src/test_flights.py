@@ -153,3 +153,14 @@ def test_the_route_returns_the_legs_and_refusals_in_the_apps_error_shape(configu
     bad = client.get("/app/flight", params={"number": "London", "date": "2026-10-06"})
     assert bad.status_code == 400 and bad.json()["error"]["code"] == "bad_flight_number"
     assert client.get("/app/flight", params={"number": "QF1", "date": "not-a-date"}).status_code == 422
+
+
+def test_the_ceiling_keeps_the_free_tier_for_the_whole_month_and_a_paid_tier_can_raise_it(configured, monkeypatch):
+    # 600 free lookups a month; the old 150 a day spent them in four days.
+    monkeypatch.delenv("AERODATABOX_LOOKUPS_PER_DAY", raising=False)
+    assert flights.lookups_per_day() * 30 <= 600
+    monkeypatch.setenv("AERODATABOX_LOOKUPS_PER_DAY", "200")
+    assert flights.lookups_per_day() == 200
+    for bad in ("0", "-3", "lots"):
+        monkeypatch.setenv("AERODATABOX_LOOKUPS_PER_DAY", bad)
+        assert flights.lookups_per_day() == flights.LOOKUPS_PER_DAY
