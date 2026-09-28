@@ -179,6 +179,7 @@ class RateLimiter:
         the current fixed window.
         """
         now = time.time()
+        self._forget_expired(now)
         state = self._state.get(key_hash)
 
         if state is None or (now - state.window_start) >= self.window_seconds:
@@ -194,6 +195,25 @@ class RateLimiter:
             )
 
         state.count += 1
+
+    # Windows that have closed are dropped, at most once a window, so the
+    # table holds only callers seen in the last window. Keyed by IP for the
+    # consumer app (app.py), the table otherwise grew by one entry per
+    # address for the life of the process: a few bytes a visitor, never
+    # given back, on a server that stays up for weeks.
+    _swept_at: float = 0.0
+
+    def _forget_expired(self, now: float) -> None:
+        if now - self._swept_at < self.window_seconds:
+            return
+        self._swept_at = now
+        for key, state in list(self._state.items()):
+            if now - state.window_start >= self.window_seconds:
+                del self._state[key]
+
+    def tracked(self) -> int:
+        """How many callers the limiter is holding state for (for tests and logs)."""
+        return len(self._state)
 
 
 _RATE_LIMITER = RateLimiter()

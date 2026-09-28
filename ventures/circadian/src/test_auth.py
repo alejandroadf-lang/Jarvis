@@ -152,6 +152,25 @@ def test_rate_limiter_resets_after_window_elapses(monkeypatch):
 from src.auth import load_keys_from_env, register_key, _lookup_key
 
 
+def test_rate_limiter_forgets_callers_whose_window_has_closed(monkeypatch):
+    import src.auth as auth_module
+    limiter = RateLimiter(max_requests=5, window_seconds=60)
+    now = 1_000.0
+    monkeypatch.setattr(auth_module.time, "time", lambda: now)
+    for i in range(100):
+        limiter.check(f"visitor-{i}")
+    assert limiter.tracked() == 100
+    # Still inside the window: nothing is forgotten, and a busy caller keeps its count.
+    now = 1_030.0
+    limiter.check("visitor-0")
+    assert limiter.tracked() == 100
+    # A window later, the first sweep drops everyone whose window has closed.
+    now = 1_061.0
+    limiter.check("visitor-new")
+    assert limiter.tracked() == 1
+    assert "visitor-new" in limiter._state
+
+
 def test_keys_listed_in_env_are_accepted_by_hash():
     good = "ca_live_" + "k" * 30
     other = "ca_live_" + "z" * 30
