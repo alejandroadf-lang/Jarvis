@@ -41,4 +41,8 @@ COPY ventures/circadian/ ./ventures/circadian/
 
 ENV NODE_ENV=production
 EXPOSE 3001
-CMD ["node", "server/index.js"]
+# Starts as root, hands the data directories to the image's "node" user and
+# drops to it before the app loads (server/privileges.js). Not a USER line:
+# Railway mounts volumes owned by root, and an app that starts unprivileged
+# cannot write to its own data. RUN_AS_ROOT=true skips the drop.
+CMD ["node", "server/boot.js"]
