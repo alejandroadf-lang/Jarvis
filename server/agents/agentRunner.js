@@ -299,6 +299,34 @@ function tierRefusedRequest(err) {
   return (err?.status >= 400 && err?.status < 500) || isMissingModel(err);
 }
 
+/**
+ * One Messages API call to Claude, built the same way on every path.
+ *
+ * `params` carries this app's own fields next to the API's. `effort` is one:
+ * the API takes it as output_config.effort and refuses it at the top level
+ * ("effort: Extra inputs are not permitted"). The main path translated it;
+ * the fallback from a refusing Gemini or DeepSeek tier spread `params` as-is,
+ * so every turn that fell back to Claude failed with a 400 after the cheaper
+ * provider had already failed (the founder's WhatsApp, 2026-09-28, "Failed
+ * after 56s"). Both paths build the request here so they cannot drift again.
+ */
+function sendToAnthropic(anthropic, params, model) {
+  const { effort, ...rest } = params;
+  // MCP requires the beta endpoint and its flag; everything else uses the
+  // stable one, so a company with no MCP servers is unaffected by it.
+  const endpoint = rest.betas?.length ? anthropic.beta.messages : anthropic.messages;
+  return endpoint.create({
+    ...rest,
+    messages: forAnthropic(rest.messages),
+    model,
+    // Adaptive thinking with a per-role effort level. A leaf answering a
+    // bounded question does not need to deliberate; an orchestrator
+    // deciding what the company does is where thinking earns its cost.
+    thinking: { type: 'adaptive' },
+    ...(effort ? { output_config: { effort } } : {}),
+  });
+}
+
 async function failOverToBackup(anthropic, modelSpec, params, err) {
   const tierCannotServe = modelSpec.provider !== 'anthropic' && tierRefusedRequest(err);
   if (!isProviderOutage(err) && !tierCannotServe) throw err;
@@ -319,12 +347,7 @@ async function failOverToBackup(anthropic, modelSpec, params, err) {
       `${modelSpec.provider} rejected the request (${err.message}); running this agent on ${fallback.model} instead.`
     );
     try {
-      const response = await anthropic.messages.create({
-        ...params,
-        messages: forAnthropic(params.messages),
-        model: fallback.model,
-        thinking: { type: 'adaptive' },
-      });
+      const response = await sendToAnthropic(anthropic, params, fallback.model);
       response.__pricedAs = fallback;
       // The expensive silent case: this succeeds, so nothing surfaces it.
       // Costed as the difference between what ran and what was meant to, on
@@ -403,7 +426,6 @@ export async function createMessage(anthropic, modelSpec, params) {
   // sets the same `.status` the Anthropic SDK does.
   // Only Anthropic understands content blocks and cache_control; the others
   // take a plain string, so the same prompt is flattened for them.
-  const { effort, ...rest } = params;
   const flat = {
     model: modelSpec.model,
     system: systemBlocksToText(params.system),
@@ -441,19 +463,7 @@ export async function createMessage(anthropic, modelSpec, params) {
       }
       return client(flat);
     }
-    // MCP requires the beta endpoint and its flag; everything else uses the
-    // stable one, so a company with no MCP servers is unaffected by it.
-    const endpoint = rest.betas?.length ? anthropic.beta.messages : anthropic.messages;
-    return endpoint.create({
-      ...rest,
-      messages: forAnthropic(rest.messages),
-      model: modelSpec.model,
-      // Adaptive thinking with a per-role effort level. A leaf answering a
-      // bounded question does not need to deliberate; an orchestrator
-      // deciding what the company does is where thinking earns its cost.
-      thinking: { type: 'adaptive' },
-      ...(effort ? { output_config: { effort } } : {}),
-    });
+    return sendToAnthropic(anthropic, params, modelSpec.model);
   };
 
   let response;
