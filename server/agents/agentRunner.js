@@ -23,7 +23,7 @@
 // the dispatch loop below doesn't need to know these tools exist.
 
 import { agentSpan, toolSpan, newTraceId } from '../telemetry.js';
-import { recordSearchesFrom } from '../searchLog.js';
+import { recordSearchesFrom, recordSearch } from '../searchLog.js';
 import { getAgent } from './registry.js';
 import { assertUnderDailyCap, recordSpend } from '../spend.js';
 import { forAnthropic } from './toolTranslation.js';
@@ -34,6 +34,7 @@ import {
   OPENAI_TIER,
   GEMINI_TIER,
   DEEPSEEK_TIER,
+  GROK_TIER,
   DEFAULT_TIER,
   CHEAP_TIER,
 } from './models.js';
@@ -49,6 +50,7 @@ import {
 } from './deepseek.js';
 import { createCompletion as createOpenAiCompletion, isOpenAIConfigured, fallbackModel } from './openai.js';
 import { createCompletion as createGeminiCompletion, isGeminiConfigured, geminiModel } from './gemini.js';
+import { createCompletion as grokCompletion, isGrokConfigured, grokModel, X_SEARCH_TOOL, searchX } from './xai.js';
 
 // 1024 was far too tight and produced a specific, baffling failure: the CEO
 // would spend its whole budget writing four delegation requests, get cut off
@@ -251,6 +253,14 @@ function backupProviders() {
       tier: DEEPSEEK_TIER,
     },
     {
+      name: 'Grok',
+      provider: 'xai',
+      available: isGrokConfigured,
+      model: grokModel,
+      send: grokCompletion,
+      tier: GROK_TIER,
+    },
+    {
       name: 'OpenRouter',
       provider: 'openrouter',
       available: isOpenRouterConfigured,
@@ -451,6 +461,7 @@ export async function createMessage(anthropic, modelSpec, params) {
     openai: createOpenAiCompletion,
     gemini: createGeminiCompletion,
     deepseek: deepSeekCompletion,
+    xai: grokCompletion,
   };
 
   const send = () => {
@@ -576,7 +587,12 @@ function buildTools(agents, agent) {
   // connection half travels separately on the request (see mcp.js).
   const { mcpTools = [] } = mcpRequestFields(agent);
 
-  return [...delegationTools, ...actionTools, ...skillTools, ...mcpTools, ...serverTools];
+  // X search runs here, not at xAI's end of the agent's own turn, so an agent
+  // on Claude can have it (see agents/xai.js). Offered only when it can work:
+  // a tool that always answers "not configured" is a round spent learning so.
+  const xSearchTools = agent.xSearch && isGrokConfigured() ? [X_SEARCH_TOOL] : [];
+
+  return [...delegationTools, ...actionTools, ...skillTools, ...xSearchTools, ...mcpTools, ...serverTools];
 }
 
 /**
@@ -787,6 +803,33 @@ export async function runAgent({
         resultText = skill
           ? skill.body
           : `No skill called "${toolUse.input?.name}" is available to you. Work from what you know rather than guessing at another name.`;
+      } else if (toolUse.name === 'x_search' && agent.xSearch) {
+        // Read-only like load_skill, so no scope governs it, but it is billed:
+        // checked against the daily cap first, and metered into it after.
+        const searchStarted = Date.now();
+        try {
+          assertUnderDailyCap();
+          recordSearch({ agentId: agent.id, query: `[X] ${toolUse.input?.question || ''}` });
+          resultText = await searchX(toolUse.input || {}, {
+            pricing: MODELS[GROK_TIER],
+            meter: (usd, tokens) => {
+              recordSpend(usd, tokens);
+              usage.costUsd = (usage.costUsd || 0) + usd;
+            },
+          });
+        } catch (err) {
+          resultText = `X search was not run: ${err.message}`;
+        }
+        const searched = !/^X search (failed|did not|was not|is not|needs)/.test(resultText);
+        trace.push({
+          kind: 'action',
+          title: `${searched ? '🔎' : '⚠'} x_search`,
+          agentId: agent.id,
+          tool: 'x_search',
+          ok: searched,
+          depth,
+          ms: Date.now() - searchStarted,
+        });
       } else if (actionHandlers[toolUse.name]) {
         const actionStarted = Date.now();
         let ok = true;

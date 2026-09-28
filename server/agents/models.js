@@ -27,6 +27,7 @@ export const CHEAP_TIER = 'specialist';
 export const OPENAI_TIER = 'assistant';
 export const GEMINI_TIER = 'analyst';
 export const DEEPSEEK_TIER = 'reasoner';
+export const GROK_TIER = 'grok';
 
 // Prices are per million tokens and are pinned by hand — same convention as
 // the rest of this app. Anthropic's published pricing for claude-sonnet-5
@@ -85,6 +86,22 @@ export const MODELS = {
     },
     get outputPricePerMTok() {
       return numberFromEnv('DEEPSEEK_OUTPUT_PRICE_PER_MTOK', 0.42);
+    },
+  },
+  // xAI's Grok. Here mainly so X search has a key to run on (agents/xai.js),
+  // and usable as a tier like the others once XAI_API_KEY is set. Prices are
+  // xAI's for the default model when this was written; a different XAI_MODEL
+  // needs its own prices set beside it, or the spend cap meters it wrong.
+  [GROK_TIER]: {
+    provider: 'xai',
+    get model() {
+      return (process.env.XAI_MODEL || '').trim() || 'grok-4.3';
+    },
+    get inputPricePerMTok() {
+      return numberFromEnv('XAI_INPUT_PRICE_PER_MTOK', 1.25);
+    },
+    get outputPricePerMTok() {
+      return numberFromEnv('XAI_OUTPUT_PRICE_PER_MTOK', 2.5);
     },
   },
   // Read at call time for the same reason as the OpenAI tier above.
@@ -248,7 +265,7 @@ export function setModelMode(mode) {
 }
 
 // The alternative tiers, in the order they are tried when two cost the same.
-const ALTERNATIVE_TIERS = [DEEPSEEK_TIER, CHEAP_TIER, GEMINI_TIER, OPENAI_TIER];
+const ALTERNATIVE_TIERS = [DEEPSEEK_TIER, CHEAP_TIER, GEMINI_TIER, OPENAI_TIER, GROK_TIER];
 
 /**
  * The cheapest tier whose provider has a key, by input plus output price, or
@@ -333,5 +350,6 @@ function isProviderAvailable(provider, openRouterAvailable) {
   if (provider === 'openai') return hasSecret('OPENAI_API_KEY');
   if (provider === 'gemini') return hasSecret('GEMINI_API_KEY');
   if (provider === 'deepseek') return hasSecret('DEEPSEEK_API_KEY');
+  if (provider === 'xai') return hasSecret('XAI_API_KEY');
   return openRouterAvailable;
 }
