@@ -453,6 +453,9 @@ def test_this_morning_is_read_against_the_travellers_own_baseline(fake):
     assert w["rem_hours"] == 1.1 and w["deep_hours"] == 1.4 and w["disturbances"] == 9
     assert w["hrv"] == 31 and w["rhr"] == 60 and w["spo2"] == 96.2 and w["skin_temp"] == 33.7
     assert w["consistency"] == 61 and w["efficiency"] == 90 and w["resp_rate"] == 15.8
+    # Each tile's word, against the traveller's own medians: 52 is within 10 of 61, HRV 31 is
+    # under 85% of 45, heart rate 60 is 5 over 54, and 6 h is more than an hour short of 9 h.
+    assert out["nights"][-1]["states"] == {"recovery": "typical", "hrv": "below", "rhr": "above", "sleep": "short"}
     assert out["insight"] == ("Recovery 52%, HRV 31 ms against your usual 45 and resting heart rate 60 against your usual 54: "
                               "your body is still working through the shift. Today the light window and the nap matter more "
                               "than usual; keep training easy. You slept 6 h of the 9 h WHOOP says you needed.")
