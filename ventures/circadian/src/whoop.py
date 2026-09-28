@@ -578,6 +578,8 @@ def progress(device: str, plan: TripPlan, now: Optional[datetime] = None) -> dic
         nights.append(row)
 
     tracked = [n for n in nights if n["tracked"]]
+    for n in tracked:
+        n["states"] = _states(n, baseline)
     on_track = [n for n in tracked if n["on_track"]]
     latest_recovery = next((n["recovery"] for n in reversed(tracked) if n.get("recovery") is not None), None)
 
@@ -660,6 +662,35 @@ HRV_LOW_FRACTION = 0.85    # HRV this far under the usual reads as a body under 
 RHR_HIGH_BPM = 5
 FEVERISH_BPM = 8
 FEVERISH_TEMP = 0.5
+
+
+def _states(night: dict, baseline: dict) -> dict:
+    """
+    One word per WHOOP number, for the tile under it: "typical" or "outlier"
+    against the traveller's own two-week median, never against other people.
+    The thresholds are the ones _insight reads with (HRV_LOW_FRACTION,
+    RHR_HIGH_BPM, RECOVERY_SLACK), so a tile and the sentence under it can't
+    disagree. Judged here rather than on the page so the numbers never have
+    to be reasoned about twice, in two languages.
+
+    Products that show a number without its range get read as a verdict on
+    the day (WHOOP's tiles are what reviewers call cluttered; Oura leads with
+    one thing and its range). Each state names which way it is out, so the
+    colour band is never the only carrier of the meaning.
+    """
+    w = night.get("whoop") or {}
+    rec = night.get("recovery")
+    out: dict = {}
+    if rec is not None and baseline.get("recovery") is not None:
+        out["recovery"] = ("below" if rec < baseline["recovery"] - RECOVERY_SLACK
+                           else "above" if rec > baseline["recovery"] + RECOVERY_SLACK else "typical")
+    if w.get("hrv") is not None and baseline.get("hrv"):
+        out["hrv"] = "below" if w["hrv"] < HRV_LOW_FRACTION * baseline["hrv"] else "typical"
+    if w.get("rhr") is not None and baseline.get("rhr"):
+        out["rhr"] = "above" if w["rhr"] >= baseline["rhr"] + RHR_HIGH_BPM else "typical"
+    if w.get("asleep_hours") is not None and w.get("need_total_hours") is not None:
+        out["sleep"] = "short" if w["asleep_hours"] < w["need_total_hours"] - 1 else "met"
+    return out
 
 
 def _insight(night: dict, baseline: dict) -> str:

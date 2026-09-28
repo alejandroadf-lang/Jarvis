@@ -44,6 +44,9 @@
        under colour-blindness (checked with the dataviz palette validator). */
     --plan-line: #6F76E6;
     --whoop-dot: #CC7A28;
+    /* The smallest thing a thumb is asked to hit. WCAG 2.5.8 allows 24px;
+       Apple's 44pt is what stops mis-taps on a phone held in one hand. */
+    --tap: 44px;
   }
   * { box-sizing: border-box; }
   /* Component display rules would otherwise beat the hidden attribute. */
@@ -90,7 +93,7 @@
   .cities input { padding-right: 28px; }
   .cities label:last-child input { padding-left: 28px; padding-right: 12px; }
   .swap {
-    position: absolute; left: 50%; bottom: 4px; transform: translateX(-50%); width: 36px; height: 36px; padding: 0;
+    position: absolute; left: 50%; bottom: 4px; transform: translateX(-50%); padding: 0;
     border-radius: 50%; background: var(--surface); color: var(--ink); border: 1px solid var(--rule);
     display: grid; place-items: center; z-index: 1;
   }
@@ -105,6 +108,14 @@
   }
   input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid var(--dawn); outline-offset: 2px; }
   input[type="checkbox"] { width: 20px; height: 20px; padding: 0; accent-color: var(--dawn); appearance: auto; }
+  /* Every control is at least --tap tall; icon buttons are --tap square. Inline
+     text links (button.link) are exempt: min-height does nothing to inline
+     boxes, and they sit in running text. */
+  button, .button, .seg span, .trips-button, input, select { min-height: var(--tap); }
+  .swap { width: var(--tap); height: var(--tap); }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { transition: none !important; animation: none !important; }
+  }
   .check { display: flex; align-items: center; gap: 10px; color: var(--ink); font-size: 15px; }
   details summary { cursor: pointer; color: var(--muted); font-size: 14px; }
   details[open] summary { margin-bottom: 12px; }
@@ -135,7 +146,7 @@
   .event.now { box-shadow: 0 0 0 2px var(--dawn) inset; }
   .t-sleep { border-left-color: var(--dusk); }
   .t-light_seek { border-left-color: var(--dawn); }
-  .t-light_avoid { border-left-color: #4A5277; }
+  .t-light_avoid { border-left-color: var(--rose); }
   .t-melatonin { border-left-color: var(--rose); }
   .t-caffeine_ok { border-left-color: var(--sage); }
   .t-nap { border-left-color: var(--dusk); }
@@ -195,15 +206,28 @@
   .lastnight { display: grid; gap: 2px; padding: 10px 12px; border: 1px solid var(--rule); border-radius: 12px; font-size: 14px; }
   .lastnight small { color: var(--muted); }
   .moments { display: grid; gap: 6px; }
-  .moment { display: grid; grid-template-columns: 76px 1fr auto; align-items: center; gap: 12px; padding: 6px 10px; border-radius: 10px; font-size: 14px; border-left: 3px solid var(--rule); }
+  .moment { display: grid; grid-template-columns: 96px 1fr; align-items: center; gap: 8px 12px; padding: 8px 10px; border-radius: 10px; font-size: 14px; border-left: 3px solid var(--rule); }
   .moment.done > span::after { content: " ✓"; color: var(--sage); }
   .moment.skipped > span { text-decoration: line-through; color: var(--muted); }
-  .mark { display: flex; gap: 6px; }
-  .mark button { font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--rule); background: transparent; color: var(--muted); }
-  .mark button.on { background: var(--surface-2); color: var(--ink); border-color: var(--muted); }
+  .moment.couldnt > span { color: var(--muted); }
+  .moment .fallback { grid-column: 1 / -1; margin: 0; font-size: 13px; color: var(--ink); }
+  /* Rows of choices where one can be on (see choices() in app.js): the
+     answers under a moment, the five faces, the rating after the trip. The
+     chosen one is drawn with the accent ring and says so with aria-pressed. */
+  .mark, .followed, .faces, .rating { display: grid; gap: 6px; }
+  .mark { grid-column: 1 / -1; grid-template-columns: repeat(3, 1fr); }
+  .mark button, .followed button, .faces button, .rating button {
+    padding: 6px 4px; font-size: 14px; border-radius: 10px; border: 1px solid var(--rule); background: var(--surface-2); color: var(--ink); font-weight: 500;
+  }
+  .mark button[aria-pressed="true"], .followed button[aria-pressed="true"], .faces button[aria-pressed="true"], .rating button[aria-pressed="true"] {
+    border-color: var(--dawn); box-shadow: inset 0 0 0 1px var(--dawn); font-weight: 600;
+  }
   .feel { display: grid; gap: 8px; }
   .feel p { margin: 0; font-size: 14px; }
-  .feel-scale button { padding: 8px 4px; font-size: 13px; }
+  .faces { grid-template-columns: repeat(5, 1fr); }
+  .faces button { min-height: 60px; display: grid; gap: 2px; place-items: center; line-height: 1; }
+  .faces button span { font-size: 26px; }
+  .faces button small { font-size: 11px; color: var(--muted); }
   .mornings { margin: 0; font-size: 13px; color: var(--muted); }
   .pretrip { display: grid; gap: 6px; }
   .pretrip h3 { margin: 0; font-size: 16px; }
@@ -225,14 +249,31 @@
   .clockbar { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; font-size: 12px; color: var(--muted); }
   .clockbar .track { height: 8px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
   .clockbar .fill { height: 100%; border-radius: 999px; background: var(--plan-line); transition: width 400ms ease; }
-  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
-  .tile { display: grid; gap: 2px; padding: 10px 8px; border-radius: 12px; background: var(--surface-2); border-top: 3px solid var(--rule); }
+  .tiles { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .tiles.compact { grid-template-columns: repeat(3, 1fr); }
+  .tile { display: grid; gap: 2px; padding: 10px 10px; border-radius: 12px; background: var(--surface-2); border-top: 3px solid var(--rule); align-content: start; }
   .tile small { font-size: 11px; color: var(--muted); letter-spacing: 0.02em; text-transform: uppercase; }
-  .tile b { font-size: 17px; font-variant-numeric: tabular-nums; }
-  .tile span { font-size: 11px; color: var(--muted); }
+  .tile b { font-size: 20px; font-variant-numeric: tabular-nums; line-height: 1.2; }
+  .tile span { font-size: 12px; color: var(--muted); }
+  .tile .state { font-weight: 600; color: var(--ink); }
   .tile.green { border-top-color: var(--sage); }
+  .tile.green .state { color: var(--sage); }
   .tile.yellow { border-top-color: var(--dawn); }
+  .tile.yellow .state { color: var(--dawn); }
   .tile.red { border-top-color: var(--danger); }
+  .tile.red .state { color: var(--danger); }
+  /* The rest of the morning's numbers, one tap down. */
+  .more-whoop > summary { cursor: pointer; color: var(--muted); font-size: 14px; list-style: none; min-height: var(--tap); display: flex; align-items: center; }
+  .more-whoop > summary::-webkit-details-marker { display: none; }
+  .more-whoop > summary::after { content: " +"; margin-left: 4px; }
+  .more-whoop[open] > summary::after { content: " −"; }
+  .more-whoop[open] { display: grid; gap: 8px; }
+  /* The iPhone card: add to the Home Screen before anything asks for notifications. */
+  .install { display: grid; gap: 8px; border: 1px dashed var(--rule); border-radius: 12px; padding: 12px; font-size: 14px; }
+  .install h3 { margin: 0; font-size: 15px; }
+  .install p { margin: 0; color: var(--muted); }
+  .install ol { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
+  .install .link { justify-self: start; }
   .night-line { margin: 0; font-size: 13px; color: var(--muted); }
   .night-line a { color: var(--dawn); }
   .insight { margin: 0; font-size: 15px; color: var(--ink); }
@@ -245,7 +286,7 @@
   .fold[open] { display: grid; gap: 12px; padding-bottom: 16px; }
   .fold .card { border: 0; padding: 0; background: transparent; }
   .graph { display: grid; gap: 8px; }
-  @media (max-width: 360px) { .tiles { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 360px) { .tiles.compact { grid-template-columns: repeat(2, 1fr); } }
   .verdict { font-size: 14px; }
   .verdict b { color: var(--sage); }
   .pill { font-size: 12px; font-weight: 600; border-radius: 999px; padding: 2px 10px; align-self: start; }
@@ -268,9 +309,8 @@
   .pill.grade-weak { background: var(--surface-2); color: var(--muted); }
   .pill.grade-none { background: #3A1F28; color: var(--rose); }
   /* After the trip, and the facts. */
-  .rating { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
-  .rating button, .followed button { padding: 10px 4px; font-size: 13px; }
-  .followed { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .rating { grid-template-columns: repeat(5, 1fr); }
+  .followed { grid-template-columns: repeat(3, 1fr); }
   .facts summary { list-style: none; cursor: pointer; }
   .facts summary::-webkit-details-marker { display: none; }
   .facts summary h2 { display: inline; }

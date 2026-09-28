@@ -513,13 +513,19 @@ class FeedbackRequest(BaseModel):
 
 
 ACTIONABLE = ("light_seek", "light_avoid", "caffeine_ok", "melatonin", "nap")
+MOMENT_ANSWERS = ("done", "skipped", "couldnt")
 
 
 class LogRequest(BaseModel):
     """
-    One tap on Today: a moment marked done or skipped, or the morning's
-    "how sharp do you feel" 1-5. Kept on the phone; counted here so what
+    One tap on Today: a moment marked done, skipped or couldn't, or the
+    morning's "how do you feel" 1-5. Kept on the phone; counted here so what
     people follow and how they feel can be set against what WHOOP measured.
+
+    "Couldn't" is kept apart from "skipped": one is a plan the traveller
+    chose not to follow, the other a plan the day did not allow (a meeting
+    through the light window). They call for different fixes, and habit
+    apps that fold them together lose people who had no choice.
     """
     device: str
     kind: str = Field(..., pattern="^(moment|feel)$")
@@ -534,8 +540,8 @@ class LogRequest(BaseModel):
 def app_log(req: LogRequest, request: Request, _limit=Depends(app_rate_limit)):
     whoop.check_device(req.device)
     if req.kind == "moment":
-        if req.type is None or req.value not in ("done", "skipped"):
-            raise ValueError("a moment log needs its type and done or skipped")
+        if req.type is None or req.value not in MOMENT_ANSWERS:
+            raise ValueError("a moment log needs its type and one of " + ", ".join(MOMENT_ANSWERS))
         analytics.track("moment_logged", _as_device(request, req.device),
                         {"type": req.type, "value": req.value, "day_number": req.day_number})
     else:

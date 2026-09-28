@@ -226,7 +226,7 @@
     const from = val(journeyNodes().at(-1), "to");
     const node = addJourney({ legs: [{ from, to: firstFrom() === from ? "" : firstFrom() }] });
     node.querySelector(".departure").focus();
-    node.scrollIntoView({ behavior: "smooth", block: "center" });
+    node.scrollIntoView({ behavior: scrollMode, block: "center" });
   });
 
   $("chronotype").addEventListener("change", () => {
@@ -342,6 +342,44 @@
 
   const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text !== undefined) n.textContent = text; return n; };
   const hm = (local) => (local ? local.slice(11, 16) : "");
+  // People who asked for less motion get instant scrolling; the CSS option
+  // does not reach a scroll asked for from here.
+  const scrollMode = matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+
+  // The two pieces Today is built from, so every tile and every row of
+  // answers is the same size, reads the same to a screen reader, and changes
+  // in one place. Not a component system: two functions.
+  //
+  // A tile: label, the number, and under it the word that says what the
+  // number is (typical for you, short of need) and its range. `band` colours
+  // the top rule; `state` is that word. Colour is never the only carrier of
+  // the meaning (WCAG 1.4.1), which is why a band without a state is only used
+  // where the label already says it.
+  function tile(label, value, sub, { band = "", state = "" } = {}) {
+    const d = el("div", `tile${band ? " " + band : ""}`);
+    d.append(el("small", "", label), el("b", "", value));
+    if (state) d.appendChild(el("span", "state", state));
+    if (sub) d.appendChild(el("span", "", sub));
+    return d;
+  }
+
+  // A row of answers where one can be chosen: Done / Skipped / Couldn't under
+  // a moment, the five faces, the rating after the trip. Real buttons, at
+  // least 44px tall (index.html), the chosen one marked with aria-pressed so
+  // the state is read out and not only drawn. A face is a symbol with its
+  // word under it; the word is the accessible name.
+  function choices(options, current, onPick, cls = "") {
+    const row = el("div", cls);
+    for (const o of options) {
+      const b = el("button"); b.type = "button";
+      if (o.face) { b.append(el("span", "", o.face), el("small", "", o.label)); b.setAttribute("aria-label", o.label); }
+      else b.textContent = o.label;
+      b.setAttribute("aria-pressed", String(o.value === current));
+      b.addEventListener("click", () => onPick(o.value));
+      row.appendChild(b);
+    }
+    return row;
+  }
 
   // With `now`, today and tomorrow are named as such, judged on that city's clock.
   function dayTitle(local, zone, now) {
@@ -462,6 +500,9 @@
     card.appendChild(button);
     container.appendChild(card);
 
+    // iPhone allows Web Push only to an app opened from the Home Screen (iOS
+    // 16.4+), and not at all in the EU since iOS 17.4, where PushManager is
+    // simply absent: the message below is what those travellers see too.
     if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
       if (isIOS && !standalone) text.textContent = "On iPhone: tap Share, then Add to Home Screen, and open Circadian from there to turn on reminders. Meanwhile, Add to calendar gives you alarms.";
       else text.textContent = "This browser cannot show reminders. Use Add to calendar for alarms instead.";
@@ -554,9 +595,11 @@
     text.textContent = "Checking your sleep…";
     try {
       const p = progress || await api("app/whoop/progress", { device: device(), trip: tripReq });
-      // Last night says the clock is off the plan: draw the whole page again
-      // with the plan moved, once, rather than patching times in place.
-      if (!progress && p.adjustment?.minutes && rerender) { rerender(p); return; }
+      // Today is drawn before WHOOP answers. Once it has, draw the whole page
+      // again with what WHOOP said, once: the plan moved if last night was off
+      // it, and the morning's tiles either way. (Redrawing only when the plan
+      // moved left an adapted traveller's last mornings without their tiles.)
+      if (!progress && rerender) { rerender(p); return; }
       text.textContent = p.summary;
       for (const n of p.nights) {
         const row = el("div", "night");
@@ -672,21 +715,46 @@
   // A tap on the dimmed area outside the sheet closes it, as on any phone sheet.
   $("trips-dialog").addEventListener("click", (e) => { if (e.target === $("trips-dialog")) $("trips-dialog").close(); });
 
+  // Trips and plans live only in this browser's storage, and WebKit may clear
+  // a site's script-writable storage after seven days without a visit. Asking
+  // for persistence stops that where the browser agrees (Safari: installed
+  // apps and sites used often; Chrome: after enough engagement). When it does
+  // not, the iPhone card on Today says what to do; no other prompt, since a
+  // refusal on a desktop browser costs nothing.
+  function persistStorage() {
+    try { navigator.storage?.persist?.().catch(() => {}); } catch { /* not supported */ }
+  }
+
   function remember(trip) {
     const key = tripInfo(trip).key;
     const all = savedTrips().filter((t) => tripInfo(t).key !== key);
     all.unshift(trip);
     save(K.trips, all.slice(0, 10));
     save(K.current, trip);
+    persistStorage();
     renderTrips();
   }
 
   // --- submit -----------------------------------------------------------------------------
 
+  const PLANS = "circadian.plans.v3";
+  function showError(message) {
+    const error = $("error");
+    error.textContent = message; error.className = "error"; error.hidden = false;
+    // The form is long; the message is put in view rather than left below the fold.
+    error.scrollIntoView({ behavior: scrollMode, block: "center" });
+  }
+
   async function makePlan(trip, { quiet = false } = {}) {
-    const error = $("error"); error.hidden = true;
+    $("error").hidden = true;
     let req;
-    try { req = toRequest(trip); } catch (err) { if (!quiet) { error.textContent = err.message; error.hidden = false; } return; }
+    try { req = toRequest(trip); } catch (err) { if (!quiet) showError(err.message); return; }
+    // Opening the app shows the plan it made last time at once, when it is for
+    // this same trip; the fresh one replaces it only if it differs. On a plane
+    // or a slow network the screen is never blank, and nothing is drawn twice.
+    const cached = load(PLANS, null);
+    const sameTrip = cached && JSON.stringify(cached.req) === JSON.stringify(req);
+    if (quiet && sameTrip) show(cached.plans, trip, cached.req, cached.supplements);
     const button = $("go"); button.disabled = true; button.textContent = "Making your plan…";
     try {
       const { journeys, supplements } = await api("app/itinerary", req, quiet ? {} : { "x-circadian-intent": "submit" });
@@ -694,12 +762,14 @@
         title: (journeys.length > 1 ? `Flight ${i + 1}: ` : "") + `${cityOf(plan.home_tz)} to ${cityOf(plan.destination_tz)}`,
         plan,
       }));
-      save("circadian.plans.v3", { req, plans, supplements });
+      const fresh = { req, plans, supplements };
+      if (quiet && sameTrip && JSON.stringify(fresh) === JSON.stringify(cached)) return;
+      save(PLANS, fresh);
       show(plans, trip, req, supplements);
     } catch (err) {
-      const cached = load("circadian.plans.v3", null);
+      if (quiet && sameTrip) return; // the saved plan is on screen
       if (cached && !navigator.onLine) show(cached.plans, trip, cached.req, cached.supplements);
-      else if (!quiet) { error.textContent = err.message; error.hidden = false; }
+      else if (!quiet) showError(err.message);
     } finally {
       button.disabled = false; button.textContent = "Make my plan";
     }
@@ -743,12 +813,13 @@
     card.appendChild(el("h2", "", "How was your jet lag?"));
     const text = el("p", "", `Your ${tripInfo(trip).route} trip is over. Two taps help us check the plans work.`);
     card.appendChild(text);
-    const scale = el("div", "rating");
     // What was logged day by day on this trip answers "how much did you follow".
     const pts = clockPoints(plans);
     const inTrip = (d) => pts.length && new Date(d + "T12:00:00Z").getTime() >= pts[0].t - DAY_MS && new Date(d + "T12:00:00Z").getTime() <= pts.at(-1).t + DAY_MS;
     const logged = Object.entries(load(LOG, {})).filter(([k]) => inTrip(k.split("|")[1]));
-    const counts = { done: logged.filter(([, v]) => v === "done").length, skipped: logged.filter(([, v]) => v === "skipped").length };
+    // For "how much was followed", couldn't counts with skipped: either way the
+    // moment did not happen. The per-tap log keeps them apart (app/log).
+    const counts = { done: logged.filter(([, v]) => v === "done").length, skipped: logged.filter(([, v]) => v !== "done").length };
     const done = (rating, followed) => {
       const first = plans[0].plan;
       api("app/feedback", { device: device(), rating, followed, shift_hours: first.shift_hours || null, strategy: first.strategy || null,
@@ -756,25 +827,16 @@
       save(RATED, [...load(RATED, []), key].slice(-50));
       card.replaceChildren(el("h2", "", "Thanks"), el("p", "", "That's how we know whether the plans work."));
     };
-    ["None", "Mild", "Moderate", "Bad", "Severe"].forEach((label, i) => {
-      const b = el("button", "secondary", label); b.type = "button";
-      b.addEventListener("click", () => {
-        if (counts.done + counts.skipped >= 3) {
-          const share = counts.done / (counts.done + counts.skipped);
-          done(i + 1, share >= 0.7 ? "mostly" : share >= 0.3 ? "partly" : "hardly");
-          return;
-        }
-        text.textContent = "And how much of the plan did you follow?";
-        const f = el("div", "followed");
-        for (const [value, words] of [["mostly", "Most of it"], ["partly", "Some of it"], ["hardly", "Hardly any"]]) {
-          const fb = el("button", "secondary", words); fb.type = "button";
-          fb.addEventListener("click", () => done(i + 1, value));
-          f.appendChild(fb);
-        }
-        scale.replaceWith(f);
-      });
-      scale.appendChild(b);
-    });
+    const scale = choices(["None", "Mild", "Moderate", "Bad", "Severe"].map((label, i) => ({ value: i + 1, label })), null, (rating) => {
+      if (counts.done + counts.skipped >= 3) {
+        const share = counts.done / (counts.done + counts.skipped);
+        done(rating, share >= 0.7 ? "mostly" : share >= 0.3 ? "partly" : "hardly");
+        return;
+      }
+      text.textContent = "And how much of the plan did you follow?";
+      const followed = [["mostly", "Most of it"], ["partly", "Some of it"], ["hardly", "Hardly any"]].map(([value, label]) => ({ value, label }));
+      scale.replaceWith(choices(followed, null, (value) => done(rating, value), "followed"));
+    }, "rating");
     card.appendChild(scale);
     container.appendChild(card);
   }
@@ -844,8 +906,26 @@
   // The day-by-day log, on the phone: moments marked done or skipped, keyed by
   // type and local date (stable when the day's times move), and each morning's
   // "how sharp" 1-5, keyed by local date. Each tap is also counted server-side.
-  const LOG = "circadian.log.v1", FEEL = "circadian.feel.v1";
+  const LOG = "circadian.log.v1", FEEL = "circadian.feel.v1", INSTALL = "circadian.install.v1";
   const ACTIONABLE = ["light_seek", "light_avoid", "caffeine_ok", "melatonin", "nap"];
+  // Three answers, not two. "Skipped" is a choice; "Couldn't" is a day that
+  // did not allow it (a meeting through the light window), and it gets the
+  // next-best thing on the same line. Habit apps that fold the two together
+  // lose the people who had no choice, and a plan that only says "missed"
+  // gives nothing to do about it.
+  const ANSWERS = [{ value: "done", label: "Done" }, { value: "skipped", label: "Skipped" }, { value: "couldnt", label: "Couldn't" }];
+  const NEXT_BEST = {
+    light_seek: "Next best: the brightest lamp you can find, close, for as long as you can; or the next window of daylight.",
+    light_avoid: "Next best: sunglasses from now, dim rooms until bed.",
+    caffeine_ok: "Next best: make that the last one, and keep the planned bedtime even if sleep comes later.",
+    melatonin: "Next best: leave it tonight rather than take it late; late melatonin nudges the clock the wrong way.",
+    nap: "Next best: an early night; no napping in the evening, which would take from it.",
+  };
+  // The morning's one question, as faces: a numbered 1-5 wears people out
+  // faster than a picture scale does, and the value kept is still 1-5.
+  const FACES = [["😩", "Foggy"], ["😕", "Rough"], ["😐", "OK"], ["🙂", "Good"], ["😃", "Sharp"]].map(([face, label], i) => ({ value: i + 1, face, label }));
+  // The word under each WHOOP number, from whoop.py's _states.
+  const STATE_WORDS = { typical: "typical for you", above: "above your usual", below: "below your usual", short: "short of need", met: "need met" };
   const momentKey = (e) => `${e.type}|${e.start_local.slice(0, 10)}`;
   const nextDay = (iso) => new Date(new Date(iso + "T12:00:00Z").getTime() + DAY_MS).toISOString().slice(0, 10);
   // The morning a night belongs to: night_of is the date the sleep started, so
@@ -907,7 +987,9 @@
     const nights = (progress?.nights || []).filter((n) => n.tracked && n.clock_measured != null);
     const lastNight = nights.at(-1);
     const measuredRecent = lastNight && t - new Date(lastNight.clock_at).getTime() < 30 * 36e5;
-    const connected = $("whoop-button").classList.contains("connected");
+    // Progress from WHOOP is proof of a connection; the header button's status
+    // call may still be in flight on the first draw.
+    const connected = !!progress || !!lastWhoopStatus?.connected || $("whoop-button").classList.contains("connected");
 
     const head = el("div", "today-head");
     head.appendChild(el("h2", "", tripInfo(trip).route));
@@ -934,33 +1016,47 @@
       bar.append(track, el("span", "", cityOfZone(dest)));
       hero.appendChild(bar);
     }
+    // What the line is based on, always: a night WHOOP measured, or the plan's
+    // expectation. A body clock is an estimate, and one shown without its
+    // source reads as a fact.
     const sub = [];
-    if (measuredRecent) sub.push(`plan expected ${describeHours(lastNight.clock_planned, lastNight.local_tz)}`);
+    if (measuredRecent) sub.push(`from last night on WHOOP; the plan expected ${describeHours(lastNight.clock_planned, lastNight.local_tz)}`);
+    else if (t >= t0 && t <= t1) sub.push(connected ? "by the plan, until WHOOP scores last night" : "by the plan");
     if (t < t0) sub.push(`the plan starts moving it on ${shortDate(points[0].at)}`);
     else if (!adapted && cur.adapted_by && cur.mode === "adapt") sub.push(`on ${cityOfZone(dest)} time by ${shortDate(cur.adapted_by)}`);
     if (sub.length) hero.appendChild(el("p", "hero-sub", sub.join(" · ")));
     card.appendChild(hero);
 
-    // 2. What WHOOP says this morning: four tiles and one sentence.
+    // 2. What WHOOP says this morning. Two numbers the eye lands on, recovery
+    //    in WHOOP's own bands and sleep against need, each with the word for
+    //    where it sits in the traveller's own range; the rest one tap down.
+    //    Four equal tiles read as four verdicts on the day, and a number with
+    //    no range reads as a mark out of a hundred. The body clock above stays
+    //    the one thing this screen is about.
     if (measuredRecent) {
-      const w = lastNight.whoop || {}, b = progress.baseline || {};
-      const tiles = el("div", "tiles");
-      const tile = (label, value, sub, cls = "") => {
-        const d = el("div", `tile ${cls}`);
-        d.append(el("small", "", label), el("b", "", value));
-        if (sub) d.appendChild(el("span", "", sub));
-        return d;
-      };
-      if (lastNight.recovery != null) tiles.appendChild(tile("Recovery", `${lastNight.recovery}%`, b.recovery != null ? `yours ${b.recovery}%` : "", recoveryBand(lastNight.recovery)));
-      if (w.hrv != null) tiles.appendChild(tile("HRV", `${w.hrv} ms`, b.hrv != null ? `yours ${b.hrv}` : ""));
-      if (w.rhr != null) tiles.appendChild(tile("Resting HR", `${w.rhr}`, b.rhr != null ? `yours ${b.rhr}` : ""));
-      if (w.asleep_hours != null) tiles.appendChild(tile("Sleep", `${w.asleep_hours} h`, w.need_total_hours != null ? `of ${w.need_total_hours} h needed` : `${lastNight.actual_bed}–${lastNight.actual_wake}`));
-      if (tiles.childElementCount) card.appendChild(tiles);
+      const w = lastNight.whoop || {}, b = progress.baseline || {}, st = lastNight.states || {};
+      const usual = (key, unit = "") => (b[key] != null ? `usual ${b[key]}${unit}` : "");
+      const first = el("div", "tiles");
+      if (lastNight.recovery != null) first.appendChild(tile("Recovery", `${lastNight.recovery}%`, usual("recovery", "%"), { band: recoveryBand(lastNight.recovery), state: STATE_WORDS[st.recovery] || "" }));
+      if (w.asleep_hours != null) {
+        first.appendChild(tile("Sleep", `${w.asleep_hours} h`, w.need_total_hours != null ? `of ${w.need_total_hours} h needed` : `${lastNight.actual_bed}–${lastNight.actual_wake}`,
+          { band: st.sleep === "short" ? "yellow" : st.sleep === "met" ? "green" : "", state: STATE_WORDS[st.sleep] || "" }));
+      }
+      if (first.childElementCount) card.appendChild(first);
+      const rest = [];
+      if (w.hrv != null) rest.push(tile("HRV", `${w.hrv} ms`, usual("hrv"), { band: st.hrv === "below" ? "yellow" : st.hrv ? "green" : "", state: STATE_WORDS[st.hrv] || "" }));
+      if (w.rhr != null) rest.push(tile("Resting HR", `${w.rhr}`, usual("rhr"), { band: st.rhr === "above" ? "yellow" : st.rhr ? "green" : "", state: STATE_WORDS[st.rhr] || "" }));
+      if (w.skin_temp != null) rest.push(tile("Skin temp", `${w.skin_temp}°C`, usual("skin_temp", "°C")));
+      if (w.spo2 != null) rest.push(tile("SpO₂", `${w.spo2}%`, ""));
+      if (rest.length) {
+        const more = el("details", "more-whoop");
+        more.appendChild(el("summary", "", "HRV, resting heart rate and more"));
+        const grid = el("div", "tiles"); grid.append(...rest); more.appendChild(grid);
+        card.appendChild(more);
+      }
       const late = Math.round((lastNight.bed_minutes_late + lastNight.wake_minutes_late) / 2);
       const bits = [`Slept ${lastNight.actual_bed}–${lastNight.actual_wake}` + (Math.abs(late) < 15 ? ", on the plan" : `, ${Math.abs(late)} min ${late > 0 ? "later" : "earlier"} than planned`)];
       if (w.rem_hours != null) bits.push(`REM ${w.rem_hours} h · deep ${w.deep_hours} h`);
-      if (w.skin_temp != null) bits.push(`skin ${w.skin_temp}°C`);
-      if (w.spo2 != null) bits.push(`SpO₂ ${w.spo2}%`);
       card.appendChild(el("p", "night-line", bits.join(" · ")));
       if (progress.insight) card.appendChild(el("p", "insight", progress.insight));
       if (progress.adjustment?.minutes) card.appendChild(el("p", "adjusted", `Today's times are moved ${Math.abs(progress.adjustment.minutes)} min ${progress.adjustment.minutes > 0 ? "later" : "earlier"} to match your clock.`));
@@ -982,8 +1078,7 @@
       card.appendChild(pre);
       getBaseline(Math.ceil((t0 - t) / DAY_MS)).then((b) => {
         if (!b || b.nights === undefined) return;
-        const tiles = el("div", "tiles");
-        const tile = (label, value, sub) => { const d = el("div", "tile"); d.append(el("small", "", label), el("b", "", value)); if (sub) d.appendChild(el("span", "", sub)); return d; };
+        const tiles = el("div", "tiles compact");
         if (b.recovery_week != null) tiles.appendChild(tile("Recovery", `${b.recovery_week}%`, b.recovery != null ? `usual ${b.recovery}%` : "this week"));
         if (b.asleep_hours != null) tiles.appendChild(tile("Sleep", `${b.asleep_hours} h`, "a night, this week"));
         if (b.debt_hours != null) tiles.appendChild(tile("Sleep debt", `${b.debt_hours} h`, "per WHOOP"));
@@ -1011,18 +1106,12 @@
         if (e.end_local) time.appendChild(document.createTextNode(`–${hm(e.end_local)}`));
         row.append(time, el("span", "", (live ? "Now: " : "") + (LABELS[e.type] || e.type)));
         if (ACTIONABLE.includes(e.type) && (past || live)) {
-          const mark = el("div", "mark");
-          for (const [value, label] of [["done", "Done"], ["skipped", "Skip"]]) {
-            const b = el("button", value === state ? "on" : "", label); b.type = "button";
-            b.setAttribute("aria-pressed", String(value === state));
-            b.addEventListener("click", () => {
-              const all2 = load(LOG, {}); all2[momentKey(e)] = value; save(LOG, all2);
-              api("app/log", { device: device(), kind: "moment", type: e.type, value, day_number: dayNo }).catch(() => {});
-              renderToday(plans, trip, progress);
-            });
-            mark.appendChild(b);
-          }
-          row.appendChild(mark);
+          row.appendChild(choices(ANSWERS, state, (value) => {
+            const all2 = load(LOG, {}); all2[momentKey(e)] = value; save(LOG, all2);
+            api("app/log", { device: device(), kind: "moment", type: e.type, value, day_number: dayNo }).catch(() => {});
+            renderToday(plans, trip, progress);
+          }, "mark"));
+          if (state === "couldnt" && NEXT_BEST[e.type]) row.appendChild(el("p", "fallback", NEXT_BEST[e.type]));
         }
         list.appendChild(row);
       }
@@ -1044,24 +1133,37 @@
       const feels = load(FEEL, {});
       const feel = el("div", "feel");
       if (feels[todayKey]) {
-        feel.appendChild(el("p", "", `This morning you feel ${feels[todayKey]}/5`
+        const f = FACES[feels[todayKey] - 1] || FACES[2];
+        feel.appendChild(el("p", "", `This morning: ${f.face} ${f.label.toLowerCase()}`
           + (lastNight?.recovery != null && measuredRecent ? ` · WHOOP recovery ${lastNight.recovery}%` : "") + "."));
       } else {
-        feel.appendChild(el("p", "", "How sharp do you feel this morning?"));
-        const scale = el("div", "rating feel-scale");
-        ["1 foggy", "2", "3", "4", "5 sharp"].forEach((label, i) => {
-          const b = el("button", "secondary", label); b.type = "button";
-          b.addEventListener("click", () => {
-            const all2 = load(FEEL, {}); all2[todayKey] = i + 1; save(FEEL, all2);
-            api("app/log", { device: device(), kind: "feel", value: String(i + 1), day: todayKey,
-              recovery: measuredRecent ? lastNight?.recovery ?? null : null, day_number: dayNo }).catch(() => {});
-            renderToday(plans, trip, progress);
-          });
-          scale.appendChild(b);
-        });
-        feel.appendChild(scale);
+        feel.appendChild(el("p", "", "How do you feel this morning?"));
+        feel.appendChild(choices(FACES, null, (value) => {
+          const all2 = load(FEEL, {}); all2[todayKey] = value; save(FEEL, all2);
+          api("app/log", { device: device(), kind: "feel", value: String(value), day: todayKey,
+            recovery: measuredRecent ? lastNight?.recovery ?? null : null, day_number: dayNo }).catch(() => {});
+          renderToday(plans, trip, progress);
+        }, "faces"));
       }
       card.appendChild(feel);
+    }
+
+    // iPhone, in Safari rather than from the Home Screen: the two things that
+    // only work installed are reminders (WebKit allows Web Push only there) and
+    // keeping the trip past a week away from the site (WebKit's storage policy).
+    // Said once, after a real trip exists, and before anything asks for a
+    // notification permission it could not use.
+    if (isIOS && !standalone && !load(INSTALL, false)) {
+      const box = el("div", "install");
+      box.appendChild(el("h3", "", "Keep this trip on your phone"));
+      box.appendChild(el("p", "", "Added to the Home Screen, Circadian keeps your trip past a week away and can send reminders."));
+      const steps = el("ol");
+      for (const step of ["Tap Share at the bottom of Safari.", "Tap Add to Home Screen, then Add.", "Open Circadian from there."]) steps.appendChild(el("li", "", step));
+      box.appendChild(steps);
+      const later = el("button", "link", "Not now"); later.type = "button";
+      later.addEventListener("click", () => { save(INSTALL, true); box.remove(); });
+      box.appendChild(later);
+      card.appendChild(box);
     }
 
     const actions = el("div", "today-actions");
@@ -1070,11 +1172,11 @@
       editing = !editing;
       $("trip-card").hidden = !editing;
       edit.textContent = editing ? "Hide trip form" : "Edit trip";
-      if (editing) $("trip-card").scrollIntoView({ behavior: "smooth", block: "start" });
+      if (editing) $("trip-card").scrollIntoView({ behavior: scrollMode, block: "start" });
     });
     const open = (id, label) => {
       const b = el("button", "secondary", label); b.type = "button";
-      b.addEventListener("click", () => { const d = $(id); if (d) { d.open = true; d.scrollIntoView({ behavior: "smooth", block: "start" }); } });
+      b.addEventListener("click", () => { const d = $(id); if (d) { d.open = true; d.scrollIntoView({ behavior: scrollMode, block: "start" }); } });
       return b;
     };
     actions.append(edit, open("history", "History"), open("fullplan", "Full plan"));
@@ -1225,7 +1327,7 @@
     remember(trip);
     editing = false;
     makePlan(trip);
-    scrollTo({ top: 0, behavior: "smooth" });
+    scrollTo({ top: 0, behavior: scrollMode });
   });
 
   // First look: the current trip if there is one, otherwise a real example.
