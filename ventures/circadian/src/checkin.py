@@ -88,7 +88,7 @@ def handle_webhook(body: bytes, now: Optional[datetime] = None, send=None) -> st
 def run(device: str, now: Optional[datetime] = None, send=None) -> str:
     """Send this device its check-in for the latest planned night, once."""
     now = now or datetime.now(UTC)
-    entry = store.read(push.COLLECTION, {}).get(device)
+    entry = store.get(push.COLLECTION, device)
     if not entry or not entry.get("trip"):
         return "skipped: reminders are off"
     plan = _plan_from(entry["trip"])
@@ -107,13 +107,12 @@ def run(device: str, now: Optional[datetime] = None, send=None) -> str:
     if not push.send_to(device, payload, send=send):
         return "skipped: reminders gone"
 
-    def change(all_):
-        e = all_.get(device)
+    def change(e):
         if e is not None:
             e.setdefault("checkins", {})[night["night_of"]] = now.isoformat()
-        return all_
+        return e
 
-    store.update(push.COLLECTION, {}, change)
+    store.update_record(push.COLLECTION, device, change)
     return f"sent for {night['night_of']}"
 
 
@@ -176,19 +175,19 @@ def sweep(now: Optional[datetime] = None, send=None) -> int:
     """Check-ins the webhook did not deliver, for planned wakes 1-4 h ago. Returns how many were sent."""
     now = now or datetime.now(UTC)
     sent = 0
-    for device, entry in store.read(push.COLLECTION, {}).items():
-        if not entry.get("trip") or not whoop.status(device)["connected"]:
+    for device, entry in store.items(push.COLLECTION):
+        if not entry.get("trip"):
             continue
         last = entry.get("checkin_attempt")
         if last and now - datetime.fromisoformat(last) < RETRY_EVERY:
             continue
-        plan = _plan_from(entry["trip"])
-        due = [e for e in plan.events if e.type == "sleep" and e.where in ("home", "destination")
-               and SWEEP_AFTER <= now - e.end <= SWEEP_UNTIL]
+        due = [w for w in _wakes(device, entry) if SWEEP_AFTER <= now - datetime.fromisoformat(w["end"]) <= SWEEP_UNTIL]
         if not due:
             continue
-        night_of = due[-1].start.astimezone(ZoneInfo(due[-1].tz or (plan.home_tz if due[-1].where == "home" else plan.destination_tz))).date().isoformat()
+        night_of = datetime.fromisoformat(due[-1]["start"]).astimezone(ZoneInfo(due[-1]["tz"])).date().isoformat()
         if night_of in (entry.get("checkins") or {}):
+            continue
+        if not whoop.status(device)["connected"]:
             continue
         try:
             if run(device, now=now, send=send).startswith("sent"):
@@ -199,12 +198,35 @@ def sweep(now: Optional[datetime] = None, send=None) -> int:
     return sent
 
 
+def _wakes(device: str, entry: dict) -> list:
+    """
+    The planned nights stored with the subscription (push.wakes_from_plan).
+    A subscription from before they were stored gets them from its plan,
+    once, and keeps them.
+    """
+    if "wakes" in entry:
+        return entry["wakes"]
+    try:
+        wakes = push.wakes_from_plan(_plan_from(entry["trip"]))
+    except Exception as err:  # a trip the planner now refuses: no check-ins, and no retry each minute
+        print(f"CircadianAPI: could not re-plan a stored trip for the check-in ({type(err).__name__}).")
+        wakes = []
+
+    def keep(e):
+        if e is not None and e.get("trip") == entry["trip"]:
+            e["wakes"] = wakes
+        return e
+
+    store.update_record(push.COLLECTION, device, keep)
+    return wakes
+
+
 def _note_attempt(device: str, now: datetime) -> None:
-    def change(all_):
-        if device in all_:
-            all_[device]["checkin_attempt"] = now.isoformat()
-        return all_
-    store.update(push.COLLECTION, {}, change)
+    def change(e):
+        if e is not None:
+            e["checkin_attempt"] = now.isoformat()
+        return e
+    store.update_record(push.COLLECTION, device, change)
 
 
 def _plan_from(trip: dict):

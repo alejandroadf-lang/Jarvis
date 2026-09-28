@@ -122,4 +122,39 @@ def test_secrets_are_made_once_and_kept(data_dir):
     assert len(a) == 32 and store.server_secret() == a
     assert store.vapid_keys() == v
     assert len(v["public_key"]) == 87, "a 65-byte uncompressed P-256 point, base64url"
-    assert (data_dir / "secrets.json").exists()
+    assert (data_dir / store.DB_NAME).exists(), "kept in the database on the volume"
+    # A fresh process sees the same keys: nothing is cached outside the database.
+    store._connections.clear()
+    assert store.server_secret() == a and store.vapid_keys() == v
+
+
+def test_a_replan_while_reminders_go_out_keeps_the_new_list():
+    plan = trip()
+    push.subscribe("d1", SUB, plan)
+    first = store.get("push", "d1")["reminders"][0]
+    due = datetime.fromisoformat(first["at"]) + timedelta(minutes=1)
+    moved = plan_trip(datetime(2030, 10, 12, 19, 0), "Europe/London", datetime(2030, 10, 13, 15, 0), "Asia/Tokyo")
+
+    def send(sub, payload):
+        push.subscribe("d1", SUB, moved)   # the traveller changes the trip at this moment
+
+    assert push.dispatch(now=due, send=send)["sent"] >= 1
+    after = store.get("push", "d1")["reminders"]
+    assert after and not any(r["sent"] for r in after), \
+        "the new trip's reminders are all still to come; marking by position sent the first one silently"
+
+
+def test_a_gone_subscription_replaced_meanwhile_is_kept():
+    push.subscribe("d1", SUB, trip())
+    first = store.get("push", "d1")["reminders"][0]
+    fresh = {**SUB, "endpoint": "https://push.example.com/new"}
+
+    def send(sub, payload):
+        push.subscribe("d1", fresh, trip())   # the phone re-subscribed with a new endpoint
+        raise push.Gone()
+
+    assert push.dispatch(now=datetime.fromisoformat(first["at"]), send=send)["gone"] == 1
+    assert store.get("push", "d1")["subscription"]["endpoint"] == fresh["endpoint"]
+    # And a gone one that was not replaced is dropped.
+    assert push.dispatch(now=datetime.fromisoformat(first["at"]), send=lambda s, p: (_ for _ in ()).throw(push.Gone()))["gone"] == 1
+    assert store.get("push", "d1") is None

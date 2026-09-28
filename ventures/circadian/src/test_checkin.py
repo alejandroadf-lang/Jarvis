@@ -121,3 +121,35 @@ def test_the_sweep_covers_a_morning_the_webhook_missed_and_does_not_hammer_whoop
     push.subscribe(DEVICE, SUB, w.plan, trip=TRIP)  # a re-subscribe keeps the check-in record
     assert store.read(push.COLLECTION, {})[DEVICE]["checkins"]
     assert checkin.sweep(now=w.nights[0].end + timedelta(hours=5), send=w.send) == 0
+
+
+def test_the_sweep_does_not_rebuild_a_plan_to_find_who_is_due(world, monkeypatch):
+    # Rebuilding every traveller's plan each minute was most of the sweep's
+    # cost: at 5,000 travellers the minute tick took 43 s. The planned wakes
+    # are stored with the subscription; a plan is built only for the one
+    # device that is due, inside run().
+    w = world
+    built = []
+    real = checkin._plan_from
+    monkeypatch.setattr(checkin, "_plan_from", lambda trip: built.append(trip) or real(trip))
+    other = dict(TRIP, departure="2026-12-01T19:00", arrival="2026-12-02T15:00")
+    for i in range(20):
+        push.subscribe(f"idle-{i:02d}", SUB, plan_trip(datetime(2026, 12, 1, 19), "Europe/London",
+                                                        datetime(2026, 12, 2, 15), "Asia/Tokyo", preflight_days=0),
+                       trip=other)
+    scored_night(w, 0, late_bed=10, late_wake=5)
+    assert checkin.sweep(now=w.nights[0].end + timedelta(minutes=90), send=w.send) == 1
+    assert len(built) == 1, "one plan, for the device that was due"
+
+
+def test_a_subscription_from_before_wakes_were_stored_gets_them_once(world, monkeypatch):
+    w = world
+    store.update_record(push.COLLECTION, DEVICE, lambda e: {k: v for k, v in e.items() if k != "wakes"})
+    built = []
+    real = checkin._plan_from
+    monkeypatch.setattr(checkin, "_plan_from", lambda trip: built.append(trip) or real(trip))
+    far = w.nights[0].end + timedelta(days=30)
+    checkin.sweep(now=far, send=w.send)
+    checkin.sweep(now=far + timedelta(minutes=1), send=w.send)
+    assert len(built) == 1
+    assert store.get(push.COLLECTION, DEVICE)["wakes"] == push.wakes_from_plan(w.plan)
