@@ -16,6 +16,12 @@ The grade (A–E), the two dimension scores and a 12-week trend appear on a
 "Team health" page in the project or space. The scoring bands are starting
 points to be calibrated in pilots, and the page says so.
 
+## The signals
+
+`SIGNALS.md` lists every signal considered, what it means, where Jira or
+Confluence records it, and whether it is built, proposed or refused. Read it
+before adding a signal; the privacy classes there decide what may be stored.
+
 ## Layout
 
 ```

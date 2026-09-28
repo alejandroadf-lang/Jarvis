@@ -17,6 +17,14 @@ work from; the launch plan format follows `ventures/circadian/LAUNCH_PLAN.md`.
 - The founder's edge: an agent team that builds and tests, a hosting-free
   platform, and a product whose selling point is what it does *not* collect.
 
+## The signals
+
+`SIGNALS.md` is the catalogue: forty candidate signals across hours and
+recovery, workload, fragmentation, deadline pressure, rework, withdrawal and
+support, each with its evidence, false positives, privacy class and a
+proposed release. It is a proposal awaiting the founder's decision per row;
+nothing beyond the v1 skeleton is built until then.
+
 ## What exists today
 
 The app in this directory: two product-event triggers, a daily scheduled
