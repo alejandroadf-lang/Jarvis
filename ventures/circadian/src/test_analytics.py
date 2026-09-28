@@ -127,8 +127,8 @@ def test_a_post_trip_rating_is_counted_and_nothing_else_happens(sent):
 
 
 def test_a_rating_outside_the_scale_is_refused(sent):
-    assert client.post("/app/feedback", json={"device": DEVICE, "rating": 9}).status_code == 422
-    assert client.post("/app/feedback", json={"device": DEVICE, "rating": 3, "followed": "always"}).status_code == 422
+    assert client.post("/app/feedback", json={"device": DEVICE, "rating": 9}).json()["error"]["code"] == "invalid_request"
+    assert client.post("/app/feedback", json={"device": DEVICE, "rating": 3, "followed": "always"}).json()["error"]["code"] == "invalid_request"
     assert client.post("/app/feedback", json={"device": "../x", "rating": 3}).status_code == 400
     assert sent == []
 
@@ -146,7 +146,7 @@ def test_a_days_taps_are_counted_and_checked(sent):
     ok = client.post("/app/log", json={"device": DEVICE, "kind": "moment", "type": "light_seek", "value": "couldnt", "day_number": 3})
     assert ok.status_code == 200 and sent[2]["properties"]["value"] == "couldnt"
     # Outside the vocabulary: refused, nothing counted.
-    assert client.post("/app/log", json={"device": DEVICE, "kind": "moment", "type": "flight", "value": "done"}).status_code == 422
+    assert client.post("/app/log", json={"device": DEVICE, "kind": "moment", "type": "flight", "value": "done"}).json()["error"]["code"] == "invalid_request"
     assert client.post("/app/log", json={"device": DEVICE, "kind": "moment", "type": "nap", "value": "maybe"}).status_code == 400
     assert client.post("/app/log", json={"device": DEVICE, "kind": "feel", "value": "9"}).status_code == 400
     assert len(sent) == 3

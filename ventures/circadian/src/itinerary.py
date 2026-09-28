@@ -654,7 +654,8 @@ def plan_itinerary(
             prev_land, prev_zone = parsed[i - 1][-1][1], parsed[i - 1][-1][3]
             raise ValueError(
                 f"Flight {i + 1} leaves {_when(parsed[i][0][0].astimezone(parsed[i][0][2]))}, before flight {i} "
-                f"lands ({_when(prev_land.astimezone(prev_zone))}, local times): check the landing date of flight {i}.")
+                f"lands ({_when(prev_land.astimezone(prev_zone))}, local times): check the landing date of flight {i}, "
+                f"and the date of flight {i + 1}.")
 
     plans: List[TripPlan] = []
     body_offset: Optional[float] = None

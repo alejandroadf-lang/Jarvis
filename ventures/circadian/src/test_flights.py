@@ -152,7 +152,7 @@ def test_the_route_returns_the_legs_and_refusals_in_the_apps_error_shape(configu
     assert ok.status_code == 200 and len(ok.json()["legs"]) == 2
     bad = client.get("/app/flight", params={"number": "London", "date": "2026-10-06"})
     assert bad.status_code == 400 and bad.json()["error"]["code"] == "bad_flight_number"
-    assert client.get("/app/flight", params={"number": "QF1", "date": "not-a-date"}).status_code == 422
+    assert client.get("/app/flight", params={"number": "QF1", "date": "not-a-date"}).json()["error"]["code"] == "invalid_request"
 
 
 def test_the_ceiling_keeps_the_free_tier_for_the_whole_month_and_a_paid_tier_can_raise_it(configured, monkeypatch):
