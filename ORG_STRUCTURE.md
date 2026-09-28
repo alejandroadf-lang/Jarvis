@@ -3887,3 +3887,32 @@ said out loud: the desk tells the caller it may take longer, the API tells the
 bot the team has not been notified, and `TICKETS` on WhatsApp shows the
 founder every ticket with ✉️ or ⚠️ beside it — proof a ticket exists that does
 not depend on the email having arrived.
+
+## Grok, and the research agents reading X
+
+The Market Researcher and the Scale Strategist searched the web and nothing
+else. The web is where things are written up weeks after they are said; X is
+where people complain about a product the day it breaks and where a trend is
+visible before the article. Only xAI's API can search it, so Grok joined as a
+sixth provider (`agents/xai.js`), behind `XAI_API_KEY`.
+
+It does two jobs.
+
+- **An `x_search` tool** for the two research agents (`xSearch: true` in
+  `ideationTeam.js`). They have web search, which runs inside Anthropic, so
+  they must stay on Claude and cannot use Grok's own hosted tool on their
+  turn. Instead this server runs the search: the agent asks one question,
+  Grok searches X over the last 30 days (or the days and accounts the agent
+  names), and the summary plus the cited posts come back as the tool result.
+  Each search is checked against the daily spend cap first and metered into
+  it after: Grok's tokens at the tier's prices, plus xAI's search fee. It
+  appears in the trace, and its question goes into the search log with an
+  `[X]` prefix. Without the key the tool is not offered at all, rather than
+  offered and always failing.
+- **A `grok` tier**, like `reasoner` or `analyst`: assignable with
+  `AGENT_MODEL_TIERS`, one of the providers MODE ECO picks by price, and one
+  more backup when Anthropic is down.
+
+The agents are told to report what posts say as opinion ("N posts say"),
+never as a market figure. The Integrations panel checks the key and that
+`XAI_MODEL` still exists at xAI, and names the current models when it does not.

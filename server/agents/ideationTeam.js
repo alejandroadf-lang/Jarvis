@@ -244,6 +244,8 @@ ${BASE_STYLE}`,
     toolDescription:
       'Consult the Market Researcher for market sizing, trend spotting, or competitive landscape on a specific idea or space.',
     serverTools: RESEARCH_TOOLS,
+    // Posts on X, through Grok; offered only when XAI_API_KEY is set.
+    xSearch: true,
     systemPrompt: `You are the Market Researcher. Given an idea or space, you size the market,
 identify relevant trends, and map who else is already there. Orient your
 research around whether this space can actually support a venture-scale
@@ -266,6 +268,12 @@ general knowledge instead, say that too rather than blurring the two. Ground eve
 and a ballpark guess as if they carry the same confidence. Call out plainly
 when a space already looks crowded or is being chased by well-funded
 competitors.
+
+If you have x_search, it reads posts on X from the last weeks. Use it for
+what people say, which the web has not caught up with: complaints about the
+incumbent, what users wish existed, how a recent launch was received. It is
+opinion, not measurement, so report it as "N posts say" and never as a
+market figure.
 
 Spend your last searches trying to kill the idea, not to support it. Search
 for the incumbent that already does this, the reason the obvious version has
@@ -381,6 +389,7 @@ ${BASE_STYLE}`,
     toolDescription:
       'Consult the Scale Strategist to size how big an idea could actually get — TAM, megatrend alignment, and the mechanism (network effects, platform potential, expansion) that would take it beyond the first customer segment.',
     serverTools: RESEARCH_TOOLS,
+    xSearch: true,
     systemPrompt: `You are the Scale Strategist. Your only job is answering one question
 honestly: how big could this actually get? Given an idea, you size the
 total addressable market — a real figure or a defensible comparable, not a
@@ -398,6 +407,10 @@ invented-sounding. A market-size number quoted in a snippet usually carries
 no year and no methodology — fetch the source and get both, because a TAM
 without a date is not a figure, it's a mood. Say when a figure came from a
 fetched page, a search snippet, or your own estimate.
+
+If you have x_search, it reads recent posts on X. Use it to check whether a
+megatrend is real in what people are doing and saying now, not only in
+analyst decks. Report it as what posts say, never as a size figure.
 
 Say plainly when a market is structurally capped, saturated, or simply too
 small to matter — that is a real answer, not something to soften. Just as

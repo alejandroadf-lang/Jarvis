@@ -15,6 +15,7 @@
 
 import { isOpenRouterConfigured } from './agents/openrouter.js';
 import { isDeepSeekConfigured, deepSeekModel } from './agents/deepseek.js';
+import { isGrokConfigured, grokModel } from './agents/xai.js';
 import { isHonchoConfigured, FOUNDER_PEER_ID } from './memory/honcho.js';
 import { isEmailConfigured } from './email.js';
 import { isInboxConfigured } from './inbox.js';
@@ -406,14 +407,49 @@ async function probeDeepSeek() {
   }
 }
 
+/**
+ * xAI's model list: proves the key and that XAI_MODEL still exists, the two
+ * things that would otherwise surface only as a failed X search mid-research.
+ * Costs nothing.
+ */
+async function probeGrok() {
+  if (!isGrokConfigured()) {
+    return notConfigured('Not set — the research agents cannot read X, and no agent runs on Grok.');
+  }
+  try {
+    const res = await withTimeout(
+      fetch('https://api.x.ai/v1/models', { headers: { Authorization: `Bearer ${readSecret('XAI_API_KEY')}` } }),
+      'xAI'
+    );
+    if (res.status === 401 || res.status === 403) {
+      return { configured: true, ok: false, detail: 'Key rejected. X search is failing and Grok agents fall back to Claude.' };
+    }
+    if (!res.ok) return { configured: true, ok: false, detail: `xAI returned ${res.status}.` };
+    const body = await res.json().catch(() => ({}));
+    const ids = (body?.data || []).map((m) => m?.id).filter(Boolean);
+    const wanted = grokModel();
+    if (ids.length && !ids.includes(wanted)) {
+      return {
+        configured: true,
+        ok: false,
+        detail: `Key accepted, but xAI has no model "${wanted}". Set XAI_MODEL to one of: ${ids.slice(0, 6).join(', ')}.`,
+      };
+    }
+    return { configured: true, ok: true, detail: `Key accepted — X search and ${wanted} are available.` };
+  } catch (err) {
+    return { configured: true, ok: false, detail: `Couldn't reach xAI: ${err.message}` };
+  }
+}
+
 export async function getIntegrationStatus() {
-  const [openrouter, honcho, whatsapp, openai, gemini, deepseek] = await Promise.all([
+  const [openrouter, honcho, whatsapp, openai, gemini, deepseek, grok] = await Promise.all([
     probeOpenRouter(),
     probeHoncho(),
     probeWhatsApp(),
     probeOpenAI(),
     probeGemini(),
     probeDeepSeek(),
+    probeGrok(),
   ]);
 
   return {
@@ -438,6 +474,7 @@ export async function getIntegrationStatus() {
     openai,
     gemini,
     deepseek,
+    grok,
     honcho,
     whatsapp,
     // Synchronous: there is nothing to probe without placing a call, and a
