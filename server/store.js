@@ -68,6 +68,11 @@ export function writeJson(file, data) {
   writeAtomically(path.join(dir, file), data);
 }
 
+/** Whether a store file exists, without creating it the way readJson does. */
+export function existsJson(file) {
+  return fs.existsSync(path.join(dataDir(), file));
+}
+
 /**
  * Read, change, write, in one call. Every store module used to spell this
  * out as load() / mutate / save(); one name for it keeps a new store from

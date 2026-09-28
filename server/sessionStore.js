@@ -1,34 +1,58 @@
-// Persists conversation history for all three chat modes (Jarvis, Executive
-// Team, Venture Studio) to disk, so it survives a server restart — before
-// this, every session lived only in an in-memory Map and vanished the
-// moment the process stopped, which matters more the longer this app is
-// meant to run as an actual company. One JSON file, one key per mode.
+// Persists conversation history for every chat mode (Jarvis, Executive Team,
+// Venture Studio, and the help desk's strangers) to disk, so it survives a
+// server restart — before this, every session lived only in an in-memory Map
+// and vanished the moment the process stopped, which matters more the longer
+// this app is meant to run as an actual company.
+//
+// One file per mode. It was one file for all of them, rewritten in full after
+// every turn in any of them: a WhatsApp desk reply re-serialised every
+// founder conversation, and the file only grows. A mode's file holds only that
+// mode's sessions, so a turn rewrites what it touched.
+//
+// The old combined sessions.json is read once per mode, the first time that
+// mode's own file does not exist yet, and then never again. It is left where
+// it is: it is the only backup of those conversations until the new files
+// have been through a restart, and deleting data to tidy up is the wrong way
+// round.
 
-import { readJson, writeJson } from './store.js';
+import { readJson, writeJson, existsJson } from './store.js';
 
-const FILE = 'sessions.json';
+const LEGACY_FILE = 'sessions.json';
 
-function load() {
-  return readJson(FILE, { jarvis: {}, company: {}, studio: {} });
+function fileFor(kind) {
+  // The mode becomes part of a file name, so it is held to lower-case words:
+  // nothing that could name a path (a slash, a dot) gets through.
+  if (!/^[a-z][a-z-]*$/.test(String(kind))) throw new Error(`Unknown session mode "${kind}".`);
+  return `sessions-${kind}.json`;
+}
+
+function load(kind) {
+  const file = fileFor(kind);
+  if (!existsJson(file) && existsJson(LEGACY_FILE)) {
+    writeJson(file, readJson(LEGACY_FILE, {})[kind] || {});
+  }
+  return readJson(file, {});
 }
 
 // Returns a Map(sessionId -> messages[]) for the given mode, seeded from disk.
 export function loadSessions(kind) {
-  const data = load();
-  return new Map(Object.entries(data[kind] || {}));
+  return new Map(Object.entries(load(kind)));
 }
 
 export function saveSession(kind, sessionId, history) {
-  const data = load();
-  data[kind] = data[kind] || {};
-  data[kind][sessionId] = history;
-  writeJson(FILE, data);
+  const data = load(kind);
+  data[sessionId] = history;
+  writeJson(fileFor(kind), data);
 }
 
 export function deleteSession(kind, sessionId) {
-  const data = load();
-  if (data[kind]) delete data[kind][sessionId];
-  writeJson(FILE, data);
+  // Deleting from a mode that has never been saved is a no-op, and must not
+  // leave an empty file behind for it.
+  if (!/^[a-z][a-z-]*$/.test(String(kind)) || (!existsJson(fileFor(kind)) && !existsJson(LEGACY_FILE))) return;
+  const data = load(kind);
+  if (!(sessionId in data)) return;
+  delete data[sessionId];
+  writeJson(fileFor(kind), data);
 }
 
 // How much of a conversation to keep.
