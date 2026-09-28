@@ -12,6 +12,7 @@
     "lint": "npm run lint --prefix client",
     "test:action-layer": "npm test --prefix packages/action-layer",
     "eval": "node server/eval/runner.mjs",
-    "test:all": "npm test && npm run test:action-layer"
+    "test:all": "npm test && npm run test:action-layer && npm run test:happycompany",
+    "test:happycompany": "npm test --prefix ventures/happycompany"
   }
 }

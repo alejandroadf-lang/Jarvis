@@ -65,3 +65,15 @@ jobs:
         working-directory: ventures/circadian
         env:
           CIRCADIAN_SCHEDULER: 'off'
+
+  # Happy Company (ventures/happycompany) is a Forge app; its tests need only
+  # Node, and 22 because that is the Forge runtime the manifest declares.
+  happycompany-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm test
+        working-directory: ventures/happycompany
