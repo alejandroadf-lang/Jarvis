@@ -69,6 +69,14 @@ test('a bare command is a command', () => {
   assert.deepEqual(commands.parseFounderCommand('Spend'), { kind: 'spend' });
 });
 
+test('HALT is recognised however the reason is separated, and a longer word is not HALT', () => {
+  for (const text of ['HALT: the CTO is looping', 'halt, the CTO is looping', 'Halt - the CTO is looping', 'HALT — the CTO is looping', 'HALT the CTO is looping']) {
+    assert.deepEqual(commands.parseFounderCommand(text), { kind: 'halt', reason: 'the CTO is looping' }, text);
+  }
+  assert.equal(commands.parseFounderCommand('halted the rollout yesterday'), null);
+  assert.equal(commands.parseFounderCommand('stopping by the office'), null);
+});
+
 test('HALT carries the reason the founder gave', async () => {
   const parsed = commands.parseFounderCommand('HALT the CTO is looping on the same commit');
   assert.equal(parsed.reason, 'the CTO is looping on the same commit');
