@@ -27,7 +27,7 @@
 <body>
 <main>
   <h1>Circadian privacy</h1>
-  <p class="muted">What the jet lag app keeps, where, and for how long. Last changed 27 September 2026.</p>
+  <p class="muted">What the jet lag app keeps, where, and for how long. Last changed 28 September 2026.</p>
 
   <div class="card">
     <p><b>In short:</b> your trips stay on your phone. The server works out a plan and forgets it. It keeps
@@ -46,6 +46,11 @@
   <p>Your flight times, cities and sleep times are sent to the server to calculate the plan and sent back.
   The server does not store them. The "Add to calendar" link carries the trip inside the link itself, so
   nothing is stored for it either.</p>
+
+  <h2>Looking up a flight</h2>
+  <p>If you look up your flight by its number, the server sends the flight number and the date to
+  AeroDataBox, which answers with that flight's airports and scheduled times. Nothing about you goes with it.
+  The server keeps the answer for a few hours so the same flight is not asked for twice, and then forgets it.</p>
 
   <h2>Reminders</h2>
   <p>If you turn on reminders, the server keeps your device ID, your browser's push address, the trip's flights
@@ -75,6 +80,7 @@
   <h2>Who else gets data</h2>
   <ul>
     <li>WHOOP, when you connect it, as described above.</li>
+    <li>AeroDataBox, a flight number and date when you look up a flight.</li>
     <li>Your browser's push service (Apple, Google or Mozilla), which delivers reminders.</li>
     <li>PostHog, for the usage counts above.</li>
     <li>Railway, which hosts the server.</li>

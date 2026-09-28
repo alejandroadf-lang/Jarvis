@@ -178,9 +178,119 @@
     dep.addEventListener("change", follow);
   }
 
+  // --- flight numbers ------------------------------------------------------------------
+  //
+  // With a flight number and the date on the ticket, the server asks AeroDataBox
+  // for the flight's airports and scheduled times (flights.py) and this fills the
+  // journey in: cities, departure, landing, and any stop when one number covers
+  // two legs. Typed times stay possible, and are what the form falls back to when
+  // the server has no key (the row is then never shown) or the lookup fails.
+  let flightLookup = false;
+  api("app/flight/status").then((s) => {
+    flightLookup = !!s.configured;
+    for (const j of journeyNodes()) j.querySelector(".flight-find").hidden = !flightLookup;
+  }).catch(() => {});
+
+  // A zone the browser's own list lacks still has to resolve when typed back.
+  function ensureZone(tz) {
+    if (!zones.includes(tz)) {
+      zones.push(tz);
+      byLabel.set(labelOf(tz).toLowerCase(), tz);
+      const o = document.createElement("option"); o.value = labelOf(tz); $("zones").appendChild(o);
+    }
+    return labelOf(tz);
+  }
+
+  const place = (end) => `${end.city || cityOf(end.tz)} (${end.iata})`;
+  const when = (local) => `${shortDate(local)} ${hm(local)}`;
+
+  // Legs that fly one after another become one journey with stops.
+  function applyLegs(journey, legs) {
+    const [first, last] = [legs[0], legs.at(-1)];
+    const fromTz = first.departure.tz, toTz = last.arrival.tz;
+    // A mirrored return whose airports differ from the outbound is an open jaw.
+    if (journey.classList.contains("mirrored")
+        && (resolveZone(val(journey, "from")) !== fromTz || resolveZone(val(journey, "to")) !== toTz)) {
+      setMode("multi");
+    }
+    if (!journey.classList.contains("mirrored")) {
+      journey.querySelector(".from").value = ensureZone(fromTz);
+      journey.querySelector(".to").value = ensureZone(toTz);
+    }
+    const dep = journey.querySelector(".departure");
+    dep.value = first.departure.local;
+    // Tell keepFlightLength about the new departure before the landing is set,
+    // or the next hand edit would shift the landing by the jump just made.
+    dep.dispatchEvent(new Event("input"));
+    setStops(journey, Math.min(legs.length - 1, MAX_STOPS));
+    stopNodes(journey).forEach((stop, i) => {
+      stop.querySelector(".stop-city").value = ensureZone(legs[i + 1].departure.tz);
+      stop.querySelector(".stop-arrival").value = legs[i].arrival.local;
+      stop.querySelector(".stop-departure").value = legs[i + 1].departure.local;
+    });
+    journey.querySelector(".arrival").value = last.arrival.local;
+    journey.querySelector(".flight-date").value = first.departure.local.slice(0, 10);
+    mirrorReturn();
+  }
+
+  function describeLegs(number, legs) {
+    const route = [`${place(legs[0].departure)} ${when(legs[0].departure.local)}`,
+      ...legs.map((l) => `${place(l.arrival)} ${when(l.arrival.local)}`)].join(" → ");
+    const revised = legs.some((l) => l.departure.revised || l.arrival.revised) ? " Some times are revised from the schedule." : "";
+    return `${number}: ${route}. Local times at each airport, from AeroDataBox.${revised} Check them against your ticket.`;
+  }
+
+  function setUpFlightLookup(journey) {
+    const box = journey.querySelector(".flight-find");
+    const button = box.querySelector(".find-flight");
+    const note = box.querySelector(".flight-note");
+    const say = (text, error = false) => { note.textContent = text; note.classList.toggle("error", error); note.hidden = !text; };
+    box.hidden = !flightLookup;
+    // The ticket date follows a typed departure, so the two never disagree.
+    journey.querySelector(".departure").addEventListener("change", (e) => {
+      if (e.target.value) box.querySelector(".flight-date").value = e.target.value.slice(0, 10);
+    });
+    const find = async () => {
+      const number = box.querySelector(".flight-no").value.trim();
+      const day = box.querySelector(".flight-date").value;
+      if (!number) { say("Type the flight number from your ticket, like TG 910.", true); return; }
+      if (!day) { say("Pick the date on your ticket: the day the flight leaves.", true); return; }
+      button.disabled = true; button.textContent = "Finding…"; say("");
+      try {
+        const out = await api(`app/flight?${new URLSearchParams({ number, date: day })}`);
+        const legs = out.legs;
+        const chained = legs.every((l, i) => i === 0 || legs[i - 1].arrival.iata === l.departure.iata);
+        if (chained) {
+          applyLegs(journey, legs);
+          say(describeLegs(out.number, legs));
+          return;
+        }
+        // Unrelated flights under one number that day: the traveller picks.
+        say(`${out.number} flies more than one route that day. Which is yours?`);
+        const choices = el("div", "choices");
+        for (const l of legs) {
+          const b = el("button", "secondary", `${place(l.departure)} ${hm(l.departure.local)} → ${place(l.arrival)} ${hm(l.arrival.local)}`);
+          b.type = "button";
+          b.addEventListener("click", () => { applyLegs(journey, [l]); say(describeLegs(out.number, [l])); });
+          choices.appendChild(b);
+        }
+        note.appendChild(choices);
+      } catch (err) {
+        say(err.message, true);
+      } finally {
+        button.disabled = false; button.textContent = "Find times";
+      }
+    };
+    button.addEventListener("click", find);
+    box.querySelector(".flight-no").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); find(); } });
+  }
+
   function addJourney(values = {}) {
     const node = $("journey-template").content.firstElementChild.cloneNode(true);
     const flight = flightOf(values.legs);
+    if (values.flight) node.querySelector(".flight-no").value = values.flight;
+    if (flight.departure) node.querySelector(".flight-date").value = flight.departure.slice(0, 10);
+    setUpFlightLookup(node);
     for (const k of ["from", "to", "departure", "arrival"]) if (flight[k]) node.querySelector("." + k).value = flight[k];
     for (const stop of flight.stops.slice(0, MAX_STOPS)) addStop(node, stop);
     node.querySelector(".remove-journey").addEventListener("click", () => { node.remove(); renumber(); });
@@ -280,7 +390,7 @@
 
   function read() {
     return {
-      journeys: journeyNodes().map((j) => ({ legs: legsOf(j) })),
+      journeys: journeyNodes().map((j) => ({ legs: legsOf(j), flight: j.querySelector(".flight-no").value.trim() || undefined })),
       sleep_start: $("sleep_start").value, sleep_end: $("sleep_end").value, chronotype: $("chronotype").value,
       preflight_days: $("preflight_days").value, light_device: $("light_device").value,
       melatonin: $("melatonin").checked, caffeine: $("caffeine").checked,

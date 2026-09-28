@@ -121,6 +121,8 @@ test("the child gets Circadian's variables and none of Jarvis's keys", () => {
     WHOOP_CLIENT_SECRET: 'cs',
     VAPID_SUBJECT: 'mailto:x@example.com',
     POSTHOG_API_KEY: 'phc_x',
+    AERODATABOX_API_KEY: 'adb_x',
+    AERODATABOX_VIA: 'rapidapi',
     JARVIS_DATA_DIR: '/data',
   });
   assert.equal(env.ANTHROPIC_API_KEY, undefined);
@@ -130,6 +132,10 @@ test("the child gets Circadian's variables and none of Jarvis's keys", () => {
   assert.equal(env.WHOOP_CLIENT_SECRET, 'cs');
   assert.equal(env.VAPID_SUBJECT, 'mailto:x@example.com');
   assert.equal(env.POSTHOG_API_KEY, 'phc_x');
+  // Without these the flight-number lookup is silently off in production:
+  // the key is set in Railway and never reaches the Python process.
+  assert.equal(env.AERODATABOX_API_KEY, 'adb_x');
+  assert.equal(env.AERODATABOX_VIA, 'rapidapi');
   assert.equal(env.PATH, '/usr/bin');
   // Inside the volume Jarvis already has, so reminders survive a redeploy.
   assert.equal(env.CIRCADIAN_DATA_DIR, '/data/circadian');

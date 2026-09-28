@@ -80,6 +80,11 @@
   .journey-head[hidden] { display: none; }
   .journey-head .link { text-transform: none; letter-spacing: 0; font-weight: 500; font-size: 13px; }
   .journey.mirrored .cities { display: none; }
+  .flight-find { display: grid; gap: 10px; }
+  .flight-note { margin: 0; font-size: 14px; color: var(--ink); }
+  .flight-note.error { color: var(--danger); }
+  .flight-note .choices { display: grid; gap: 6px; margin-top: 8px; }
+  .flight-or { margin: 0; font-size: 13px; color: var(--muted); }
   /* Stops, as a search site asks: Direct by default, details only if not. */
   .stops-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; color: var(--muted); }
   .segmented.small { padding: 3px; gap: 3px; }
@@ -430,6 +435,16 @@
 <template id="journey-template">
   <div class="journey">
     <div class="journey-head"><span class="journey-title">Your flight</span><button type="button" class="link remove-journey" hidden>Remove</button></div>
+    <!-- Shown only when the server can look flights up (GET app/flight/status). -->
+    <div class="flight-find" hidden>
+      <div class="row">
+        <label>Flight number<input class="flight-no" autocomplete="off" autocapitalize="characters" spellcheck="false" enterkeyhint="search" placeholder="e.g. TG 910" maxlength="12"></label>
+        <label>Date on your ticket<input class="flight-date" type="date"></label>
+      </div>
+      <button type="button" class="secondary find-flight">Find times</button>
+      <p class="flight-note" role="status" hidden></p>
+      <p class="flight-or">Or type the cities and times yourself:</p>
+    </div>
     <div class="row cities">
       <label>From<input class="from" list="zones" autocomplete="off" placeholder="City" required></label>
       <button type="button" class="swap" aria-label="Swap from and to" title="Swap">

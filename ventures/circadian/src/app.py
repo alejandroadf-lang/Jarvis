@@ -22,7 +22,7 @@ import os
 import re
 import threading
 from dataclasses import asdict
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import List, Optional
 
@@ -31,7 +31,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from src import advice, analytics, checkin, push, store, whoop
+from src import advice, analytics, checkin, flights, push, store, whoop
 from src.auth import RateLimiter, auth_and_rate_limit
 from src.ics import plan_to_ics
 from src.itinerary import estimate_landing, merge_plans, plan_itinerary, plan_to_dict, plan_trip
@@ -269,6 +269,27 @@ def app_estimate(departure: datetime, departure_tz: str, arrival_tz: str, _limit
     """When a direct flight lands, estimated from the distance; the page marks it as an estimate."""
     landing, minutes = estimate_landing(departure, departure_tz, arrival_tz)
     return {"arrival": landing.strftime("%Y-%m-%dT%H:%M"), "minutes": minutes}
+
+
+@app.get("/app/flight/status")
+def flight_status(_limit=Depends(app_rate_limit)):
+    """Whether flight numbers can be looked up here; the page hides the field when not."""
+    return {"configured": flights.is_configured()}
+
+
+@app.get("/app/flight", responses={400: {"model": ErrorResponse}})
+def flight_lookup(number: str = Query(..., max_length=12), on: date = Query(..., alias="date"), _limit=Depends(app_rate_limit)):
+    """
+    A flight's legs leaving on the ticket's date, with each airport's time
+    zone and the local times, from AeroDataBox (see flights.py). Refusals
+    carry the words the page shows: a wrong number, no such flight that day,
+    the day's lookups used up, or the service not switched on.
+    """
+    try:
+        return flights.lookup(number, on)
+    except flights.LookupFailed as err:
+        code = {400: "bad_flight_number", 404: "flight_not_found", 429: "lookups_used_up", 503: "lookup_not_configured"}.get(err.status, "lookup_failed")
+        return JSONResponse(status_code=err.status, content={"error": {"code": code, "message": str(err)}})
 
 
 @app.get("/app/plan.ics")
