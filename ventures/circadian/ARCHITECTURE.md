@@ -155,7 +155,7 @@ not `cp`, which can catch a write half done.
 | WHOOP status, reminder status | Page memory | One page view | A connect, disconnect or switch changes them |
 | Two weeks of WHOOP sleep and recovery | Server memory, per device | 10 minutes | Webhook, new tokens, disconnect |
 | Flight lookups | Server memory, per flight and date | 6 hours | Restart |
-| Flight lookup spend | Server memory | One UTC day | At a daily ceiling of 150 |
+| Flight lookup spend | Server memory | One UTC day | At a daily ceiling of 20 (`AERODATABOX_LOOKUPS_PER_DAY`) |
 
 What is deliberately not cached: plans. They are cheap to compute (about
 three milliseconds) and depend on the trip alone, so a cache would only add a way

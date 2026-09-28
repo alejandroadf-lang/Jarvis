@@ -17,6 +17,8 @@ own; changes made here are not copied back there.
 How it is built, where its data lives (one SQLite file on the volume), what
 it costs as travellers grow and what to change at each size: `ARCHITECTURE.md`.
 
+The current plan for getting it to its first paying travellers: `LAUNCH_PLAN.md`.
+
 ## Run the tests
 
 ```

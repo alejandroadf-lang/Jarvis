@@ -17,7 +17,8 @@ disagree. A revised time, when AeroDataBox has one, wins over the schedule.
 
 The key is the founder's money: the free tier is 600 units a month. So
 answers are cached for six hours per flight and date, and there is a daily
-ceiling across all travellers, after which the page says to type the times
+ceiling across all travellers (20 unless AERODATABOX_LOOKUPS_PER_DAY says
+otherwise), after which the page says to type the times
 from the ticket. A lookup sends AeroDataBox the flight number and date, and
 nothing about the traveller.
 
@@ -49,7 +50,11 @@ PROVIDERS = {
     },
 }
 CACHE_SECONDS = 6 * 3600
-LOOKUPS_PER_DAY = 150        # across everyone; the free tier is 600 units a month
+# Across everyone. The free tier is 600 lookups a month, and the ceiling was
+# 150 a day: a busy week spent the month's allowance in four days and every
+# lookup after that failed until the month turned. 20 a day spreads the 600
+# over the month. A paid tier raises it with AERODATABOX_LOOKUPS_PER_DAY.
+LOOKUPS_PER_DAY = 20
 NUMBER_RE = re.compile(r"^([A-Z0-9]{2}[A-Z]?)(\d{1,4}[A-Z]?)$")
 
 _cache: dict = {}
@@ -83,6 +88,14 @@ def provider() -> str:
 
 def is_configured() -> bool:
     return bool(api_key())
+
+
+def lookups_per_day() -> int:
+    try:
+        n = int(_env("AERODATABOX_LOOKUPS_PER_DAY"))
+    except ValueError:
+        return LOOKUPS_PER_DAY
+    return n if n > 0 else LOOKUPS_PER_DAY
 
 
 def normalise_number(raw: str) -> str:
@@ -185,7 +198,7 @@ def lookup(raw_number: str, on: date, now: Optional[float] = None) -> dict:
         if today not in _spent:          # a new UTC day: yesterday's count goes
             _spent.clear()
             _spent[today] = 0
-        if _spent[today] >= LOOKUPS_PER_DAY:
+        if _spent[today] >= lookups_per_day():
             raise LookupFailed("Flight lookups are paused until tomorrow. Type the times from your ticket for now.", 429)
         _spent[today] += 1
 
