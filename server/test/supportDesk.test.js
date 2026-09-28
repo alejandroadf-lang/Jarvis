@@ -329,3 +329,31 @@ test('the ticket email carries the description the founder asked for', async () 
   assert.match(text, /move flight LH123 from 4 Oct to 6 Oct; fare rules unknown/, 'the full description, not a truncated subject');
   assert.match(text, /Reach them: \+33600000000/);
 });
+
+test('two tickets opened at the same moment are both kept, whichever email finishes first', async () => {
+  // The first ticket's email is slow and the second's is quick, so the first
+  // call writes last. It used to write back its copy from before the second
+  // ticket existed, and the second ticket was gone.
+  const nodemailer = (await import('nodemailer')).default;
+  const realCreate = nodemailer.createTransport;
+  process.env.SMTP_HOST = 'smtp.test';
+  process.env.REPORT_EMAIL_TO = 'founder@example.com';
+  nodemailer.createTransport = () => ({
+    sendMail: ({ text }) => new Promise((resolve) => setTimeout(resolve, text.includes('slow email') ? 60 : 1)),
+  });
+  try {
+    const before = desk.listTickets().length;
+    const [a, b] = await Promise.all([
+      desk.openTicket({ summary: 'Caller on the phone, slow email: refund for booking AB12' }),
+      desk.openTicket({ summary: 'Customer on WhatsApp: seat change for booking CD34' }),
+    ]);
+    const kept = desk.listTickets();
+    assert.equal(kept.length, before + 2);
+    assert.ok(kept.some((t) => t.id === a.id) && kept.some((t) => t.id === b.id));
+    assert.ok(kept.filter((t) => t.id === a.id || t.id === b.id).every((t) => t.emailed === true), 'both marked as emailed');
+  } finally {
+    nodemailer.createTransport = realCreate;
+    delete process.env.SMTP_HOST;
+    delete process.env.REPORT_EMAIL_TO;
+  }
+});

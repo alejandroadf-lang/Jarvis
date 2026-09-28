@@ -26,7 +26,7 @@
 // (ISSUE / ISSUES / ISSUE DEL in founderCommands.js), because the founder is
 // on a phone and a file nobody can edit is a knowledge base nobody can grow.
 
-import { readJson, writeJson } from '../store.js';
+import { readJson, writeJson, updateJson } from '../store.js';
 import { fingerprint, similarity } from '../pitchOfTheDay.js';
 import { languageName, pinnedLanguage } from '../language.js';
 import { sendTicketEmail } from '../email.js';
@@ -328,7 +328,14 @@ export async function openTicket({ summary, callerName = '', contact = '', langu
     console.error(`Ticket #${ticket.id} saved but the email failed:`, err.message);
   }
   ticket.emailed = emailed;
-  writeJson(TICKETS, data);
+  // Re-read, not the copy from before the email: two tickets opened at once
+  // (a caller on the phone and a customer on WhatsApp) both reach this await,
+  // and writing the old copy back erased whichever ticket the other one had
+  // added in between.
+  updateJson(TICKETS, { tickets: [] }, (all) => {
+    const saved = all.tickets.find((t) => t.id === ticket.id);
+    if (saved) saved.emailed = emailed;
+  });
   return ticket;
 }
 
