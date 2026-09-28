@@ -105,6 +105,8 @@ export function toOpenAiMessages(messages, system) {
           id: use.id,
           type: 'function',
           function: { name: use.name, arguments: JSON.stringify(use.input ?? {}) },
+          // Sent back exactly as it came (see fromOpenAiResponse).
+          ...(use.extra_content ? { extra_content: use.extra_content } : {}),
         })),
       });
       continue;
@@ -162,6 +164,14 @@ export function fromOpenAiResponse(data) {
       name: call?.function?.name || '',
       input: parsed.ok ? parsed.value : {},
       ...(parsed.ok ? {} : { parseError: parsed.error, rawArguments: String(raw ?? '') }),
+      // Gemini's thinking models sign each tool call
+      // (extra_content.google.thought_signature) and refuse the next request
+      // with a 400 unless the signature comes back verbatim on that call. The
+      // OpenAI format has no field for it, so it was dropped here, and every
+      // Gemini turn that used a tool failed on its second round ("Function
+      // call is missing a thought_signature"). Kept whole, so any provider's
+      // extension survives the round trip; forAnthropic strips it for Claude.
+      ...(call?.extra_content ? { extra_content: call.extra_content } : {}),
     });
   }
 
@@ -205,4 +215,31 @@ function stopReasonFor(finishReason, toolCalls) {
   if (finishReason === 'tool_calls') return 'tool_use';
   if (finishReason === 'length') return 'max_tokens';
   return 'end_turn';
+}
+
+/**
+ * A conversation made for another provider, made safe to send to Claude.
+ *
+ * Tool-call blocks can carry fields only this translation layer understands:
+ * parseError and rawArguments (a malformed call), extra_content (a provider's
+ * own extension, such as Gemini's thought signature). Claude's API refuses
+ * unknown fields, so a turn that started on another provider and fell back
+ * to Claude mid-way would fail on history it had no part in. Only
+ * tool_use blocks are touched; everything else passes through unchanged.
+ */
+const ANTHROPIC_TOOL_USE_FIELDS = new Set(['type', 'id', 'name', 'input', 'cache_control']);
+
+export function forAnthropic(messages) {
+  return (messages || []).map((message) => {
+    if (!Array.isArray(message.content)) return message;
+    let changed = false;
+    const content = message.content.map((block) => {
+      if (block?.type !== 'tool_use') return block;
+      const keys = Object.keys(block);
+      if (keys.every((k) => ANTHROPIC_TOOL_USE_FIELDS.has(k))) return block;
+      changed = true;
+      return Object.fromEntries(keys.filter((k) => ANTHROPIC_TOOL_USE_FIELDS.has(k)).map((k) => [k, block[k]]));
+    });
+    return changed ? { ...message, content } : message;
+  });
 }
