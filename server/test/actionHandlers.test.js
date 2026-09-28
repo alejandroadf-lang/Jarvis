@@ -5,6 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 import nodemailer from 'nodemailer';
 
+// Every commercial email needs a postal address (CAN-SPAM); without one the
+// send is refused, which outreachCompliance.test.js pins on its own.
+process.env.COMPANY_POSTAL_ADDRESS = '1 Test Street, Testville';
+
 let tmpDir;
 let actionHandlers;
 let ventures;

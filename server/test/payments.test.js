@@ -35,6 +35,7 @@ beforeEach(() => {
   process.env.STRIPE_SECRET_KEY = 'sk_test_x';
   process.env.STRIPE_WEBHOOK_SECRET = 'whsec_new';
   process.env.PUBLIC_URL = 'https://jarvis.example.com/';
+  process.env.COMPANY_CONTACT_EMAIL = 'help@acme.example';
   global.fetch = originalFetch;
 });
 
@@ -82,6 +83,11 @@ test('a checkout link charges the amount asked, in minor units, and remembers wh
   assert.equal(form.get('metadata[ventureId]'), 'v_7');
   assert.equal(form.get('metadata[agentId]'), 'sales_commercial_manager');
   assert.equal(form.get('success_url'), 'https://jarvis.example.com/paid?venture=v_7', 'no double slash from a trailing one');
+  // The renewal terms sit beside the pay button, where the renewal law wants them.
+  const terms = form.get('custom_text[submit][message]');
+  assert.match(terms, /EUR 149\.00 today and again every month until you cancel/);
+  assert.match(terms, /help@acme\.example/);
+  assert.equal(form.get('subscription_data[metadata][ventureId]'), 'v_7', 'renewals stay tied to the venture');
   assert.deepEqual(out, { url: 'https://checkout.stripe.com/c/cs_test_1', sessionId: 'cs_test_1', amount: 149, currency: 'eur', kind: 'monthly' });
   assert.equal(payments.listPaymentLinks('v_7')[0].agentId, 'sales_commercial_manager');
 });

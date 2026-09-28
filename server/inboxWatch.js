@@ -93,7 +93,7 @@ export async function pollInboxOnce({ anthropic, fetchRepliesImpl = fetchReplies
       const { entry, duplicate } = recordReply(venture.id, message);
       if (duplicate || !entry) continue;
 
-      if (isUnsubscribe(entry.body)) {
+      if (isUnsubscribe(`${entry.subject}\n${entry.body}`)) {
         blockContact(venture.id, message.from, 'unsubscribed by reply');
         markRepliesRead(venture.id, [entry.messageId]);
         handled.push({ from: message.from, action: 'blocked' });

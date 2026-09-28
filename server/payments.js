@@ -77,11 +77,59 @@ async function stripe(path, params) {
  *
  * @returns {Promise<{url: string, sessionId: string, amount: number, currency: string, kind: string}>}
  */
+// --- automatic renewal --------------------------------------------------------------
+//
+// A monthly plan renews until the customer stops it, and California's
+// automatic renewal law (Bus. & Prof. Code 17600-17606) treats anything
+// charged without its conditions met as an unconditional gift the customer
+// can keep while asking for the money back. The conditions, and where each
+// is met here:
+//
+//   - The terms stated clearly *in visual proximity to* the request for
+//     consent: the text beside Stripe's pay button (custom_text.submit), set
+//     on every monthly checkout. There is no separate terms page to miss.
+//   - An acknowledgment after purchase with the terms and how to cancel: the
+//     confirmation email sent on the first payment (see index.js).
+//   - A way to cancel online, at least as easy as signing up: the cancel link
+//     in that email, one button, no login (see /billing/cancel).
+//
+// A monthly link is refused without a contact address, because the terms
+// must say how to reach someone and an invented one is worse than none.
+
+/** Who a customer writes to. COMPANY_CONTACT_EMAIL, else the address mail is sent from. */
+export function contactEmail() {
+  const configured = (process.env.COMPANY_CONTACT_EMAIL || '').trim();
+  if (configured) return configured;
+  const from = (process.env.REPORT_EMAIL_FROM || process.env.SMTP_USER || '').trim();
+  const address = (from.match(/<([^>]+)>/)?.[1] || from).trim();
+  return address.includes('@') ? address : '';
+}
+
+function money(amount, currency) {
+  return `${String(currency).toUpperCase()} ${Number(amount).toFixed(2)}`;
+}
+
+/** The words beside the pay button, and at the top of the confirmation email. */
+export function renewalTerms({ amount, currency, contact = contactEmail() }) {
+  return (
+    `This is a subscription. You will be charged ${money(amount, currency)} today and again every month ` +
+    'until you cancel. Cancel at any time with the link in your confirmation email' +
+    (contact ? ` or by writing to ${contact}` : '') +
+    '; it stops the next charge, and you keep what you have paid for until the end of that month.'
+  );
+}
+
 export async function createCheckoutLink({ venture, amount, currency, description, customerEmail, kind = 'one_time', agentId }) {
   if (!isPaymentsConfigured()) throw new Error('Payments are not configured (STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET).');
   const major = Number(amount);
   if (!Number.isFinite(major) || major <= 0) throw new Error('amount must be a positive number in major units, e.g. 149.00');
   const code = String(currency || 'eur').toLowerCase();
+  if (kind === 'monthly' && !contactEmail()) {
+    throw new Error(
+      'A monthly plan must tell the customer how to cancel, and there is no contact address to name. ' +
+        'Set COMPANY_CONTACT_EMAIL (or REPORT_EMAIL_FROM) in Railway.'
+    );
+  }
   const unitAmount = Math.round(major * 100);
   const base = publicBaseUrl();
 
@@ -99,6 +147,10 @@ export async function createCheckoutLink({ venture, amount, currency, descriptio
     cancel_url: `${base}/paid?venture=${encodeURIComponent(venture.id)}&cancelled=1`,
     ...(customerEmail ? { customer_email: customerEmail } : {}),
     metadata: { ventureId: venture.id, agentId: agentId || '', kind },
+    // Beside the pay button, where the renewal law wants it.
+    ...(kind === 'monthly' ? { custom_text: { submit: { message: renewalTerms({ amount: major, currency: code }) } } } : {}),
+    // So a later invoice (a renewal) can still be tied to its venture.
+    ...(kind === 'monthly' ? { subscription_data: { metadata: { ventureId: venture.id, agentId: agentId || '' } } } : {}),
   });
 
   const data = load();
@@ -163,6 +215,10 @@ export function interpretEvent(event) {
       agentId: obj.metadata?.agentId || null,
       kind: obj.metadata?.kind || 'one_time',
       reference: obj.id,
+      // The first payment of a monthly plan: the moment the customer is owed
+      // the acknowledgment with the terms and a way to cancel.
+      subscriptionId: typeof obj.subscription === 'string' ? obj.subscription : obj.subscription?.id || null,
+      firstPayment: true,
     };
   } else if (event.type === 'invoice.paid') {
     // Subsequent months of a subscription arrive here, not as a checkout.
@@ -187,4 +243,46 @@ export function interpretEvent(event) {
 
 export function listPaymentLinks(ventureId) {
   return load().links.filter((l) => !ventureId || l.ventureId === ventureId);
+}
+
+// --- cancelling ------------------------------------------------------------------------
+
+// Signed with a key derived from the webhook secret: always present when
+// payments are on, never shown to anyone, and separate from the app's own
+// access token, so a customer's cancel link opens nothing else.
+function cancelKey() {
+  return createHmac('sha256', readSecret('STRIPE_WEBHOOK_SECRET') || '').update('jarvis:cancel-subscription:v1').digest();
+}
+
+/** A link token naming one subscription. It does not expire: a customer may cancel in month twelve. */
+export function cancelToken(subscriptionId) {
+  const id = String(subscriptionId || '');
+  const mac = createHmac('sha256', cancelKey()).update(id).digest('base64url');
+  return `${Buffer.from(id).toString('base64url')}.${mac}`;
+}
+
+/** The subscription id a token names, or null when it is not one this server signed. */
+export function verifyCancelToken(token) {
+  if (!hasSecret('STRIPE_WEBHOOK_SECRET') || typeof token !== 'string' || !token.includes('.')) return null;
+  const [encoded, mac] = token.split('.', 2);
+  const id = Buffer.from(encoded, 'base64url').toString('utf8');
+  if (!/^sub_[A-Za-z0-9]+$/.test(id)) return null;
+  const expected = createHmac('sha256', cancelKey()).update(id).digest('base64url');
+  if (mac.length !== expected.length || !timingSafeEqual(Buffer.from(mac), Buffer.from(expected))) return null;
+  return id;
+}
+
+export function cancelLink(subscriptionId) {
+  return `${publicBaseUrl()}/billing/cancel?t=${encodeURIComponent(cancelToken(subscriptionId))}`;
+}
+
+/**
+ * Stops the next charge. At period end rather than now: the customer paid
+ * for this month, and ending it early would be taking something back.
+ * @returns {Promise<{endsAt: string|null, metadata: object}>}
+ */
+export async function cancelSubscription(subscriptionId) {
+  const sub = await stripe(`/v1/subscriptions/${encodeURIComponent(subscriptionId)}`, { cancel_at_period_end: 'true' });
+  const end = sub?.current_period_end || sub?.items?.data?.[0]?.current_period_end || sub?.cancel_at;
+  return { endsAt: end ? new Date(end * 1000).toISOString() : null, metadata: sub?.metadata || {} };
 }
