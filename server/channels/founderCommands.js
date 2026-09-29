@@ -29,6 +29,9 @@ import {
   listVentures,
   getVenture,
   createVenture,
+  setFocus,
+  clearFocus,
+  getFocus,
   linkRepo,
   linkOutreachScope,
   setOutreachEnabled,
@@ -207,6 +210,12 @@ const AGENTS_REPORT = /^(?:agents|performance)(?:\s+(\d{1,3}))?$/i;
 const CAPACITY_REPORT = /^(?:capacity|kpis?)(?:\s+(\d{1,3}))?$/i;
 const AGENT_DETAIL = /^agent\s+([a-z_]+)(?:\s+(\d{1,3}))?$/i;
 
+// "focus v_1 60 v_2 40" sets the split of the team across ventures (see
+// setFocus); "focus" alone shows it; "focus clear" removes it.
+const FOCUS_SET = /^focus\s+((?:v_\S+\s+\d+(?:\.\d+)?\s*)+)$/i;
+const FOCUS_SHOW = /^focus$/i;
+const FOCUS_CLEAR = /^focus\s+clear$/i;
+
 const START_VENTURE = /^start\s+([^|]+?)\s*\|\s*([\s\S]+)$/i;
 const MAX_TITLE = 80;
 const MAX_ONE_LINER = 300;
@@ -304,6 +313,15 @@ export function parseFounderCommand(text) {
   if (capacity) return { kind: 'capacity', days: capacity[1] ? Number(capacity[1]) : 7 };
   const detail = raw.match(AGENT_DETAIL);
   if (detail) return { kind: 'agent', agentId: detail[1].toLowerCase(), days: detail[2] ? Number(detail[2]) : 7 };
+
+  if (FOCUS_SHOW.test(raw)) return { kind: 'focus_show' };
+  if (FOCUS_CLEAR.test(raw)) return { kind: 'focus_clear' };
+  const focus = raw.match(FOCUS_SET);
+  if (focus) {
+    const weights = {};
+    for (const [, id, share] of focus[1].matchAll(/(v_\S+)\s+(\d+(?:\.\d+)?)/g)) weights[id] = Number(share);
+    return { kind: 'focus_set', weights };
+  }
 
   const start = raw.match(START_VENTURE);
   if (start) {
@@ -448,6 +466,7 @@ AGENTS [days] — which agents actually did work, which only advised, which sat 
 AGENT <id> [days] — one agent: what it did, what was refused, and when
 CAPACITY [days] — KPIs: how much of the agents, commits, budget and daily cycle is used, and what would use more
 
+FOCUS <ventureId> <share> [<ventureId> <share> ...] — split the team's work across ventures (FOCUS shows it, FOCUS CLEAR removes it)
 START <title> | <one-liner> — start a venture yourself (the team's revenue gate does not apply to you)
 LINK <ventureId> <owner/repo> [paths] — grant a repo and turn deploys on
 URL <ventureId> <https://...> — where it's deployed, so they can check it's up
@@ -890,6 +909,28 @@ export async function runFounderCommand(command, deps = {}) {
       const kpis = describeCapacity(capacityReport({ days }));
       if (command.kind === 'capacity') return kpis + capped;
       return describePerformance({ days, extra: ['', kpis] }) + capped;
+    }
+
+    case 'focus_show':
+    case 'focus_set':
+    case 'focus_clear': {
+      if (command.kind === 'focus_clear') {
+        clearFocus();
+        return 'Focus cleared. The team is back to choosing one priority at a time.';
+      }
+      if (command.kind === 'focus_set') {
+        try {
+          setFocus(command.weights);
+        } catch (err) {
+          return err.message;
+        }
+      }
+      const split = getFocus();
+      if (!split.length) return 'No focus set: the team picks one priority at a time. FOCUS <ventureId> <share> <ventureId> <share> sets a split.';
+      return (
+        `${command.kind === 'focus_set' ? 'Focus set' : 'Focus'}: ${split.map((f) => `${f.title} ${f.pct}%`).join(', ')}.\n\n` +
+        'Every agent is now told to work across these ventures in about that proportion and to cover each in the daily plan. CAPACITY shows where the work actually went against this split.'
+      );
     }
 
     case 'start_venture': {

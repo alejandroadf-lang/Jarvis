@@ -17,8 +17,8 @@
 // acts on it. They are advice for the founder, not something any agent reads:
 // a team told "use more budget" is a team given a reason to spend it.
 
-import { agentPerformance, listActivity } from './activityLog.js';
-import { listVentures, rateLimitState } from './finance/ventures.js';
+import { agentPerformance, listActivity, activitySince } from './activityLog.js';
+import { listVentures, rateLimitState, getFocus } from './finance/ventures.js';
 import { spendByDay, dailyCapUsd } from './spend.js';
 import { listDailyReports } from './dailyReports.js';
 import { listTasks } from './tasks.js';
@@ -53,7 +53,20 @@ export function capacityReport({ days = 7, now = new Date() } = {}) {
 
   const since = new Date(now.getTime() - days * DAY_MS).toISOString();
   const gates = {};
-  for (const e of listActivity({ since })) if (e.kind === 'action' && !e.ok) gates[e.gate || 'other'] = (gates[e.gate || 'other'] || 0) + 1;
+  const byVenture = {};
+  for (const e of listActivity({ since })) {
+    if (e.kind === 'action' && !e.ok) gates[e.gate || 'other'] = (gates[e.gate || 'other'] || 0) + 1;
+    if (e.kind === 'action' && e.ok && e.ventureId) byVenture[e.ventureId] = (byVenture[e.ventureId] || 0) + 1;
+  }
+  // Where the work went against the founder's split (FOCUS): actions that
+  // succeeded, by the venture they named.
+  const ventureActions = Object.values(byVenture).reduce((a, b) => a + b, 0);
+  const focus = getFocus().map((f) => ({ ...f, actual: pct(byVenture[f.id] || 0, ventureActions) }));
+
+  // Agent figures cover only the time the activity log has existed.
+  const started = activitySince();
+  const coveredDays = started ? Math.min(days, Math.max(1, Math.ceil((now.getTime() - Date.parse(started)) / DAY_MS))) : 0;
+  const activity = { since: started, coveredDays, partial: coveredDays < days };
 
   // Busiest agent's share of all successful actions: one name doing most of
   // the work is a bottleneck, and a single point of failure.
@@ -79,8 +92,14 @@ export function capacityReport({ days = 7, now = new Date() } = {}) {
   const tasksDone = tasks.filter((t) => t.status === 'done').length;
   const tasksFailed = tasks.filter((t) => t.status === 'failed').length;
 
+  const activeVentures = listVentures().filter((v) => v.status === 'active').length;
+
   return {
     days,
+    activity,
+    focus,
+    ventureActions,
+    activeVentures,
     roster: { total: roster, active, working, activePct: pct(active, roster), workingPct: pct(working, roster), idle: perf.idle },
     actions: { done, refused, successPct: pct(done, done + refused), gates },
     concentration,
@@ -112,8 +131,21 @@ export function recommendations(r) {
     }
   }
 
+  // Several ventures and no split: the shared context then says "one thing
+  // can be the priority at a time", and the team single-tracks one of them.
+  if ((r.activeVentures || 0) >= 2 && !(r.focus || []).length) {
+    out.push(`${r.activeVentures} ventures are active and no split is set, so the team works on one at a time. FOCUS <ventureId> <share> <ventureId> <share> makes it a multi-venture team.`);
+  }
+  if ((r.ventureActions || 0) >= 5) {
+    for (const f of r.focus || []) {
+      if (f.actual !== null && Math.abs(f.actual - f.pct) >= 25) {
+        out.push(`${f.title} got ${f.actual}% of the work against your ${f.pct}%. Remind the team in one message, or change the split with FOCUS.`);
+      }
+    }
+  }
+
   if (r.budget.pct !== null && r.budget.pct >= 90) out.push(`The model budget is ${r.budget.pct}% used on average. MODE ECO moves routine roles to cheaper models; or raise DAILY_SPEND_CAP_USD.`);
-  else if (r.budget.pct !== null && r.budget.pct < 25 && r.roster.workingPct !== null && r.roster.workingPct < 25) {
+  else if (!r.activity?.partial && r.budget.pct !== null && r.budget.pct < 25 && r.roster.workingPct !== null && r.roster.workingPct < 25) {
     out.push(`Only ${r.budget.pct}% of the daily budget is used and few agents do real work: the limit is direction, not money. Give each active venture one measurable objective.`);
   }
 
@@ -121,7 +153,9 @@ export function recommendations(r) {
 
   if (r.tasks.failed) out.push(`${r.tasks.failed} queued task${r.tasks.failed === 1 ? '' : 's'} failed. BUILD <ventureId> shows which and why.`);
 
-  if (r.roster.idle.length >= r.roster.total / 2) {
+  // Not advised on a log younger than the window: an agent absent from
+  // three days of records is not an agent nobody asks.
+  if (!r.activity?.partial && r.roster.idle.length >= r.roster.total / 2) {
     out.push(`${r.roster.idle.length} of ${r.roster.total} agents were never asked. Ask the Agent Operations Engineer, in one message, which to cut or re-describe: every idle role is one more option every manager weighs on every turn.`);
   }
   return out.slice(0, 6);
@@ -130,11 +164,21 @@ export function recommendations(r) {
 /** The KPI block and recommendations, as WhatsApp text. */
 export function describeCapacity(r) {
   const lines = [`KPIs, last ${r.days} day${r.days === 1 ? '' : 's'}:`];
+  if (r.activity?.partial) {
+    lines.push(
+      r.activity.since
+        ? `(Agent and action figures cover only since ${r.activity.since.slice(0, 10)}, when recording began; meeting, budget and queue cover the full ${r.days} days.)`
+        : '(No agent activity recorded yet: agent and action figures start with the next turn or daily meeting.)',
+    );
+  }
   lines.push(`• Agents in use: ${r.roster.active} of ${r.roster.total} active (${r.roster.activePct ?? 0}%), ${r.roster.working} did real work (${r.roster.workingPct ?? 0}%)`);
   lines.push(`• Actions that got through: ${r.actions.successPct === null ? 'none tried' : `${r.actions.successPct}% (${r.actions.done} done, ${r.actions.refused} refused)`}`);
   if (r.ventures.length) {
     lines.push(`• Commit allowance used this week: ${r.ventures.map((v) => `${v.title} ${v.used}/${v.allowed}${v.pct === null ? '' : ` (${v.pct}%)`}${v.enabled ? '' : ' deploy off'}`).join('; ')}`);
   } else lines.push('• Commit allowance: no venture has a repo linked');
+  if ((r.focus || []).length) {
+    lines.push(`• Work split vs your FOCUS: ${r.focus.map((f) => `${f.title} ${f.actual ?? 0}% (target ${f.pct}%)`).join('; ')}${r.ventureActions ? '' : ' (no venture actions yet)'}`);
+  }
   lines.push(`• Model budget used: ${r.budget.pct ?? 0}% (average $${r.budget.avgPerDay.toFixed(2)} a day of $${r.budget.cap.toFixed(2)})`);
   lines.push(`• Daily meeting ran: ${r.cycles.ran} of ${r.cycles.days} days`);
   lines.push(`• Queued work: ${r.tasks.done} done, ${r.tasks.failed} failed, ${r.tasks.open} open`);

@@ -53,6 +53,8 @@ test('refusals are kept as a gate category, never as the message', () => {
 });
 
 test('the report measures each ceiling on its own', () => {
+  // A log older than the window, so the agent figures cover all of it.
+  log.recordActivity({ agentId: 'ceo', kind: 'led' }, new Date(Date.now() - 8 * 86400000));
   const v = ventures.createVenture({ title: 'Happy Company' });
   ventures.linkRepo(v.id, { owner: 'o', name: 'r', allowedPaths: ['x/'] });
   ventures.setDeploymentEnabled(v.id, true);
@@ -127,4 +129,57 @@ test('CAPACITY and KPI from WhatsApp; AGENTS carries the same block', async () =
   assert.doesNotMatch(reply, /Did real work/, 'CAPACITY is the KPIs alone');
   assert.match(await commands.runFounderCommand({ kind: 'agents', days: 7 }), /KPIs, last 7 days:/);
   assert.match(commands.__helpForTests, /CAPACITY \[days\]/);
+});
+
+test('a log younger than the window says so, and does not call the roster idle', () => {
+  log.recordActivity({ agentId: 'cto', kind: 'consulted' });
+  const r = cap.capacityReport({ days: 7 });
+  assert.equal(r.activity.partial, true);
+  const text = cap.describeCapacity(r);
+  assert.match(text, /cover only since \d{4}-\d{2}-\d{2}, when recording began/);
+  assert.doesNotMatch(text, /were never asked/, 'an agent absent from one day of records is not an agent nobody asks');
+  assert.doesNotMatch(text, /the limit is direction, not money/);
+});
+
+test('FOCUS splits the team across ventures and CAPACITY compares the split with the work', async () => {
+  const a = ventures.createVenture({ title: 'Circadian' });
+  const b = ventures.createVenture({ title: 'Happy Company' });
+
+  // Two active ventures and no split: the report says the team single-tracks.
+  const before = cap.recommendations(cap.capacityReport({ days: 7 }));
+  assert.ok(before.some((x) => /2 ventures are active and no split is set.*FOCUS/.test(x)));
+
+  // Shares are normalised: 3 and 1 mean 75/25.
+  assert.deepEqual(ventures.setFocus({ [a.id]: 1, [b.id]: 3 }), { [a.id]: 25, [b.id]: 75 });
+  assert.deepEqual(ventures.getFocus().map((f) => [f.title, f.pct]), [['Happy Company', 75], ['Circadian', 25]]);
+  assert.throws(() => ventures.setFocus({ v_nope: 50 }), /No active venture v_nope/);
+  assert.throws(() => ventures.setFocus({ [a.id]: 0 }), /positive number/);
+  assert.throws(() => ventures.setFocus({}), /at least one venture/);
+
+  // Every agent is told the split, instead of "one thing at a time".
+  const { buildBusinessContext } = await import('../finance/context.js');
+  const ctx = buildBusinessContext();
+  assert.match(ctx, /Happy Company 75%/);
+  assert.match(ctx, /Every agent works on every venture on that list/);
+  assert.doesNotMatch(ctx, /only one thing can be the priority at a time/);
+
+  // All the work went to Circadian: the report shows it and says so.
+  for (let i = 0; i < 6; i++) log.recordActivity({ agentId: 'cto', kind: 'action', tool: 'open_pull_request', ok: true, ventureId: a.id });
+  const r = cap.capacityReport({ days: 7 });
+  assert.deepEqual(r.focus.map((f) => [f.title, f.actual]), [['Happy Company', 0], ['Circadian', 100]]);
+  assert.match(cap.describeCapacity(r), /• Work split vs your FOCUS: Happy Company 0% \(target 75%\); Circadian 100% \(target 25%\)/);
+  assert.ok(cap.recommendations(r).some((x) => /Happy Company got 0% of the work against your 75%/.test(x)));
+  assert.ok(!cap.recommendations(r).some((x) => /no split is set/.test(x)));
+
+  // Clearing the split puts the context back as it was.
+  ventures.clearFocus();
+  assert.deepEqual(ventures.getFocus(), []);
+  assert.match(buildBusinessContext(), /only one thing can be the priority at a time/);
+});
+
+test('the FOCUS commands parse', () => {
+  assert.deepEqual(commands.parseFounderCommand('FOCUS v_1 60 v_2 40'), { kind: 'focus_set', weights: { v_1: 60, v_2: 40 } });
+  assert.equal(commands.parseFounderCommand('focus').kind, 'focus_show');
+  assert.equal(commands.parseFounderCommand('FOCUS CLEAR').kind, 'focus_clear');
+  assert.match(commands.__helpForTests, /FOCUS/);
 });
