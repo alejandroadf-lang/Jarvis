@@ -122,6 +122,17 @@ Because it reaches back before the app was switched on, the agreement
 should say whether it is allowed (clause 10 below). The request is recorded
 in the audit trail with the administrator's pseudonym.
 
+### The Rovo agent
+
+Atlassian's AI assistant, Rovo, can answer questions about a team through
+the Happy Company agent. It receives exactly what the Team health page
+shows (grade, trend, dimensions, suggested changes, the use ban) and only
+for a project or space the person asking can see; the app checks that with
+the person's own permissions first and refuses otherwise. It stores
+nothing. The text goes to Rovo, which runs inside Atlassian under
+Atlassian's AI terms; the customer's Rovo settings decide whether Rovo is
+available at all. Clause 12 lets the parties switch it off in the agreement.
+
 ### The organisation view
 
 Site administrators, and members of the groups they name, see coverage,
@@ -198,9 +209,28 @@ personal data, not anonymous data, and it is treated as such below.
   document are its input.
 - **Employee information** (Articles 13/14 GDPR): a one-page notice, §9.
 
-## 8. Draft clauses for the works agreement
+## 8. Works agreement template
 
-Numbered so they can be adopted as they are or struck one by one.
+A complete agreement: fill the brackets, strike any clause the parties do
+not want, and attach Annex A. It is a starting point for the parties and
+their lawyers, not legal advice.
+
+> **Works agreement on the use of Happy Company**
+> between [employer], represented by [name, role], and the [works council /
+> central works council] of [establishment], represented by its chair.
+>
+> **Preamble.** The parties want to identify working conditions that put
+> health at risk through excessive hours, missing recovery, workload,
+> fragmentation, deadline pressure and rework, as part of the risk
+> assessment under §5 ArbSchG, and to change those conditions. The
+> software is a technical device suitable for monitoring behaviour or
+> performance within the meaning of §87(1) no. 6 BetrVG, and its use for
+> the risk assessment falls under §87(1) no. 7 BetrVG. This agreement
+> governs both.
+>
+> **Scope.** This agreement covers every Jira project and Confluence space
+> of [site] on which Happy Company is installed, and every employee whose
+> activity there is counted.
 
 1. **Purpose.** Happy Company is used solely to identify, at team level,
    working conditions that present psychosocial risks (excessive hours,
@@ -247,6 +277,21 @@ Numbered so they can be adopted as they are or struck one by one.
     figures only and are used for the occupational health and safety
     management system, management review and sustainability reporting. The
     council receives each pack.
+12. **Rovo agent.** The Happy Company agent in Rovo is [enabled / not
+    enabled]. It answers only with what the team page shows, only to people
+    who can see the project or space, and is bound by clause 2.
+13. **Breach.** Data obtained or used in breach of this agreement may not
+    be used in any measure concerning an employee, and any such measure is
+    to be withdrawn. The employer informs the council of any breach it
+    becomes aware of without delay.
+14. **Term.** This agreement takes effect on [date] and may be terminated
+    by either party with three months' notice. Until a new agreement is
+    concluded, clauses 2, 3 and 6 continue to apply to data already
+    collected; the software is otherwise switched off.
+
+> [Place, date]
+>
+> [Employer] ____________________   [Works council] ____________________
 
 ## 9. Notice to employees (one page)
 

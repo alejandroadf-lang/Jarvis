@@ -204,6 +204,17 @@ export function jiraClient(api, route) {
       };
     },
 
+    /** Whether the person asking (asUser) can see the project. Fails closed. */
+    async userCanSeeProject(projectKey) {
+      if (!PROJECT_KEY.test(projectKey)) return false;
+      try {
+        const res = await api.asUser().requestJira(route`/rest/api/3/project/${projectKey}`);
+        return res.ok;
+      } catch {
+        return false;
+      }
+    },
+
     /** A project's display name. */
     async projectName(projectKey) {
       if (!PROJECT_KEY.test(projectKey)) return projectKey;
@@ -330,6 +341,17 @@ export function confluenceClient(api, route) {
         'digest blog post',
       );
       return { id: created?.id ? String(created.id) : null };
+    },
+
+    /** Whether the person asking (asUser) can see the space. Fails closed. */
+    async userCanSeeSpace(spaceId) {
+      if (!/^\d+$/.test(String(spaceId))) return false;
+      try {
+        const res = await api.asUser().requestConfluence(route`/wiki/api/v2/spaces/${spaceId}`);
+        return res.ok;
+      } catch {
+        return false;
+      }
     },
 
     /** Create a page in the space (the quarterly evidence pack). */

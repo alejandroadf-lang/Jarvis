@@ -70,7 +70,70 @@ modules:
     - key: happycompany-daily-rollup
       function: daily-rollup
       interval: day
+  # Rovo, Atlassian's AI: an agent that answers "how are we doing, and what
+  # should we change?" from the same team figures the page shows. Both
+  # actions are read-only; the team action checks the asker can see the
+  # project or space first (src/rovo.mjs).
+  rovo:agent:
+    - key: happycompany-agent
+      name: Happy Company
+      description: Explains a team's working conditions from Jira and Confluence activity, and what the team could change. Never about individuals.
+      prompt: |
+        You are Happy Company, an assistant for teams using the Happy Company app in Jira and Confluence.
+        The app grades the working conditions of a team (a Jira project or a Confluence space) from A to E on five dimensions:
+        hours and recovery, workload and pace, fragmentation, deadline pressure, and rework. It never grades a person.
+
+        When someone asks how a team is doing, call the team working conditions action. Explain the grade, the trend,
+        the dimensions that need attention, and the changes the app suggests, in plain words. Suggest that the team commits
+        to one to three changes on the Team health page and says a week later whether they happened.
+
+        When someone asks what the app measures, whether it watches them, or what it does with data, call the
+        what-we-measure action and answer from it.
+
+        Rules you always follow:
+        - Never try to identify, compare, rank or evaluate individuals, and refuse requests to. The app has no individual data.
+        - Always pass on the use ban the action returns: the figures may not be used in any decision about a person.
+        - Suggest changes to how work is organised (planning, hand-offs, deadlines, on-call, meetings), never advice to
+          individuals to cope better.
+        - If a team shows "too few people", explain that this protects individuals and cannot be lowered.
+        - You are not a medical or mental health service. If someone describes distress, say so kindly and point them to
+          their organisation's employee assistance programme, occupational health service or a doctor.
+        - The grade sees only Jira and Confluence activity. Say so when relevant, and mention the anonymous team pulse for
+          what metadata cannot see.
+      conversationStarters:
+        - How is our team doing this week?
+        - What should our team change first?
+        - What does Happy Company measure about me?
+      actions:
+        - happycompany-team-health
+        - happycompany-what-we-measure
+  action:
+    - key: happycompany-team-health
+      name: Get team working conditions
+      function: rovo-team-health
+      actionVerb: GET
+      description: The working-conditions grade, trend, dimensions and suggested changes for one Jira project or Confluence space. Team level only.
+      inputs:
+        projectKey:
+          title: Jira project key
+          type: string
+          required: false
+          description: The Jira project key, such as OPS. Leave empty to use the project the person is in.
+        spaceId:
+          title: Confluence space id
+          type: string
+          required: false
+          description: The numeric Confluence space id. Leave empty to use the space the person is in.
+    - key: happycompany-what-we-measure
+      name: What Happy Company measures
+      function: rovo-what-we-measure
+      actionVerb: GET
+      description: What the app measures, what it never measures, how people are protected, and the use ban.
   function:
+    - key: rovo-team-health
+      handler: index.rovoTeamHealth
+    - key: rovo-what-we-measure
+      handler: index.rovoWhatWeMeasure
     - key: resolver
       handler: index.handler
     - key: on-jira-event

@@ -32,3 +32,16 @@ test('the manifest declares no egress, remotes or external fetch', () => {
   assert.doesNotMatch(manifest, /^\s*external\s*:/m);
   assert.doesNotMatch(manifest, /^\s*egress\s*:/m);
 });
+
+test('every function handler in the manifest is exported by src/index.js', () => {
+  // A handler that names a missing export deploys fine and fails on every
+  // call, which for a Rovo action means the agent silently has no answer.
+  const index = readFileSync(new URL('../src/index.js', import.meta.url), 'utf8');
+  const exported = new Set([...index.matchAll(/^export (?:async function|function|const) (\w+)/gm)].map((m) => m[1]));
+  const handlers = [...manifest.matchAll(/^\s*handler:\s*index\.(\w+)\s*$/gm)].map((m) => m[1]);
+  assert.ok(handlers.length >= 6);
+  assert.deepEqual(handlers.filter((h) => !exported.has(h)), []);
+  // And every action and agent refers to keys that exist.
+  const functionKeys = new Set([...manifest.matchAll(/^\s*-\s*key:\s*([\w-]+)\s*\n\s*handler:/gm)].map((m) => m[1]));
+  for (const [, fn] of manifest.matchAll(/^\s*function:\s*([\w-]+)\s*$/gm)) assert.ok(functionKeys.has(fn), `no function ${fn}`);
+});

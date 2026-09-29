@@ -58,7 +58,13 @@ Atlassian Community groups for your city.
 3. If there is a works council: send `WORKS_COUNCIL.md` first, and switch off
    any signals it has not agreed to before anyone looks at a figure.
 4. Tell the team, with the notice in `WORKS_COUNCIL.md` §9.
-5. First useful page after about a week; the trend after four.
+5. Jira: if the works agreement allows it (clause 10), a project admin presses
+   "Fill in history" in Settings, and the first card appears the next
+   morning instead of after a week.
+6. For the validation study (`VALIDATION.md`): the monthly pulse on, with
+   validation mode, in at least eight teams across the pilots.
+7. First useful page after about a week (or the next morning with history);
+   the trend after four.
 
 ## The monthly call (30 minutes, the same five questions)
 

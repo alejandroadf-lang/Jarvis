@@ -101,6 +101,8 @@ src/lib/disclosures.mjs ESRS S1, Top Employers and B Corp drafts from a pack
 src/lib/levels.mjs      Measuring, Acting, Sustaining
 src/lib/attestation.mjs signed attestations of a level (Ed25519)
 scripts/verify-attestation.mjs  checks an attestation offline
+src/rovo.mjs            the Rovo agent's two read-only actions
+src/lib/brief.mjs       the team page condensed for Rovo
 src/frontend/index.jsx  the page, UI Kit
 test/                   node:test, runs without Forge
 ```
@@ -186,5 +188,11 @@ product's activity. That is a platform rule, not a choice.
 
 - Per-person views of any kind. Not a setting, not an admin option.
 - Sentiment or text analysis of comments. Text is never read.
-- An LLM. Nothing here needs one, and adding an outbound model call would
-  forfeit the Runs on Atlassian badge.
+- An LLM of our own. Nothing here needs one, and adding an outbound model
+  call would forfeit the Runs on Atlassian badge. The Rovo agent uses
+  Atlassian's own AI, inside Atlassian, and sees only what the team page
+  shows.
+- Cross-customer benchmarks. Pooling customers' figures needs egress and
+  small cohorts can be re-identified, so the app publishes research-based
+  reference bands (`SIGNALS.md`) instead. Validation results are pooled by
+  hand, three numbers per customer, only with consent (`VALIDATION.md`).
