@@ -153,6 +153,26 @@ export function jiraClient(api, route) {
 export function confluenceClient(api, route) {
   const get = async (path, what) => json(await api.asApp().requestConfluence(path), what);
   return {
+    /**
+     * Whether the current viewer administers the space. Asks Confluence for the
+     * operations *this user* may perform on the space; "administer" is the
+     * space-admin permission. Fails closed on any error, so a Confluence API
+     * hiccup can only ever refuse a settings change, never allow one. The
+     * `include-operations` parameter is assumed from the v2 API reference and
+     * belongs on the tunnel-run checklist in the README.
+     */
+    async canAdminister(spaceId) {
+      if (!spaceId || !/^\d+$/.test(String(spaceId))) return false;
+      try {
+        const res = await api.asUser().requestConfluence(route`/wiki/api/v2/spaces/${spaceId}?include-operations=true`);
+        if (!res.ok) return false;
+        const space = await res.json();
+        return (space?.operations || []).some((op) => op?.operation === 'administer');
+      } catch {
+        return false;
+      }
+    },
+
     /** The space id of a page, blog post or comment, or null. */
     async spaceIdFor({ contentId, type }) {
       if (!contentId) return null;

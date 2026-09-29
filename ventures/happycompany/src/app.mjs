@@ -372,10 +372,13 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
     };
   }
 
-  async function saveSettings({ scope, product, projectKey, settings }) {
+  async function saveSettings({ scope, product, projectKey, spaceId, settings }) {
     if (!scope) throw new Error('This page only works inside a Jira project or a Confluence space.');
     if (product === 'jira' && jira?.canAdminister && !(await jira.canAdminister(projectKey))) {
       throw new Error('Only project administrators can change these settings.');
+    }
+    if (product === 'confluence' && confluence?.canAdminister && !(await confluence.canAdminister(spaceId))) {
+      throw new Error('Only space administrators can change these settings.');
     }
     const clean = validateSettings(settings);
     await store.set(`settings:${scope}`, { ...clean, updatedAt: now().toISOString() });

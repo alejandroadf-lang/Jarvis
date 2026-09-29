@@ -13,7 +13,7 @@ function fakeApi(responses, calls) {
     const body = typeof hit.body === 'function' ? hit.body(init) : hit.body;
     return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
   };
-  return { asApp: () => ({ requestJira: respond, requestConfluence: respond }), asUser: () => ({ requestJira: respond }) };
+  return { asApp: () => ({ requestJira: respond, requestConfluence: respond }), asUser: () => ({ requestJira: respond, requestConfluence: respond }) };
 }
 
 test('open issues page through nextPageToken and read assignee and due date', async () => {
@@ -92,6 +92,15 @@ test('time zone and admin checks read the right fields and fail closed', async (
   assert.equal(await jira.canAdminister('OPS'), true);
   assert.equal(await jiraClient(fakeApi([], []), route).userTimeZone('hidden'), null);
   assert.equal(await jiraClient(fakeApi([], []), route).canAdminister('OPS'), false);
+});
+
+test('the space-admin check reads the viewer’s operations and fails closed', async () => {
+  const admin = fakeApi([{ path: '/wiki/api/v2/spaces/123?include-operations=true', body: { id: '123', operations: [{ operation: 'read', targetType: 'space' }, { operation: 'administer', targetType: 'space' }] } }], []);
+  const viewer = fakeApi([{ path: '/wiki/api/v2/spaces/123?include-operations=true', body: { id: '123', operations: [{ operation: 'read', targetType: 'space' }] } }], []);
+  assert.equal(await confluenceClient(admin, route).canAdminister('123'), true);
+  assert.equal(await confluenceClient(viewer, route).canAdminister('123'), false);
+  assert.equal(await confluenceClient(fakeApi([], []), route).canAdminister('123'), false);
+  assert.equal(await confluenceClient(admin, route).canAdminister('123; drop'), false);
 });
 
 test('a comment resolves to its page, then to the space', async () => {
