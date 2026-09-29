@@ -2529,6 +2529,14 @@ is under `STUDIO_MIN_MRR_USD` (default 1000). One expensive thing, completely.
 The studio was the right tool for choosing a venture and the wrong tool for
 the next eighteen months.
 
+The gate bounds the agents, not the founder. At first it refused both: asked
+on WhatsApp to register Happy Company, the CEO was stopped by it, and the only
+way round was to switch the gate off for everyone. `START <title> |
+<one-liner>` (`server/channels/founderCommands.js`) starts a venture in
+person, past the gate, the way `LINK` grants a repo past the pre-approval
+list. It refuses a duplicate active title, so a message sent twice starts one
+venture, and its reply says the gate still binds the team.
+
 ### Held
 
 Exposing the venture's API as an MCP server waits for the API to exist. The

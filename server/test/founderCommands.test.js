@@ -652,3 +652,53 @@ test('TICKETS with nothing logged says so and says when one appears', async () =
   assert.equal(commands.parseFounderCommand('TICKETS')?.kind, 'tickets');
   assert.match(commands.__helpForTests, /TICKETS — what the desk has logged/);
 });
+
+// START: the founder starting a venture in person. propose_venture is refused
+// for everyone while a venture is active and revenue is under the studio bar,
+// which blocked the founder too. The command goes round the gate for the
+// founder only; the agents' tool still meets it.
+test('START needs a title and a one-liner, and a sentence about work is not START', () => {
+  assert.deepEqual(commands.parseFounderCommand('START Happy Company | Grades teams, never people'), {
+    kind: 'start_venture',
+    title: 'Happy Company',
+    oneLiner: 'Grades teams, never people',
+  });
+  assert.equal(commands.parseFounderCommand('start the acme rollout on monday'), null);
+  assert.equal(commands.parseFounderCommand('start Happy Company |   '), null, 'no one-liner, no venture');
+});
+
+test('START starts a venture past the revenue gate the agents still meet, once', async () => {
+  const saved = process.env.STUDIO_MIN_MRR_USD;
+  process.env.STUDIO_MIN_MRR_USD = '1000';
+  try {
+    newVenture(); // one active venture, no revenue: the gate is shut
+    const { handleProposeVenture, studioGate } = await import('../actionHandlers.js');
+    assert.ok(studioGate(), 'precondition: the gate is shut');
+    assert.match(await handleProposeVenture({ title: 'Agent idea', oneLiner: 'x' }), /^Not started/);
+
+    const reply = await commands.runFounderCommand(commands.parseFounderCommand('START Happy Company | Grades teams, never people'));
+    const started = ventures.listVentures().find((v) => v.title === 'Happy Company');
+    assert.ok(started, 'the venture exists');
+    assert.equal(started.status, 'active');
+    assert.equal(started.oneLiner, 'Grades teams, never people');
+    assert.equal(started.repo, undefined, 'no repo until LINK');
+    assert.match(reply, new RegExp(started.id), 'the id is in the reply, ready to copy into LINK');
+    assert.match(reply, /revenue gate still applies to the team/);
+
+    const again = await commands.runFounderCommand(commands.parseFounderCommand('start happy company | anything'));
+    assert.match(again, /already active/);
+    assert.equal(ventures.listVentures().filter((v) => v.title === 'Happy Company').length, 1, 'sent twice, started once');
+
+    assert.match(await handleProposeVenture({ title: 'Another agent idea', oneLiner: 'y' }), /^Not started/, 'the agents still meet the gate');
+  } finally {
+    if (saved === undefined) delete process.env.STUDIO_MIN_MRR_USD;
+    else process.env.STUDIO_MIN_MRR_USD = saved;
+  }
+});
+
+test('START refuses an overlong title or one-liner, and HELP lists it', async () => {
+  assert.match(await commands.runFounderCommand({ kind: 'start_venture', title: 'x'.repeat(81), oneLiner: 'y' }), /at most 80/);
+  assert.match(await commands.runFounderCommand({ kind: 'start_venture', title: 'T', oneLiner: 'y'.repeat(301) }), /300 characters/);
+  assert.equal(ventures.listVentures().length, 0);
+  assert.match(commands.__helpForTests, /START <title> \| <one-liner>/);
+});
