@@ -67,6 +67,14 @@ function Summary({ s }) {
           <Text>No team has been at D or E for two weeks in a row.</Text>
         )}
       </Stack>
+      {s.validation && (
+        <Stack space="space.100">
+          <Heading size="small">Does the grade track reported burnout?</Heading>
+          <Text>{s.validation.rho === null ? s.validation.verdict : `Across ${s.validation.teams} teams: rank correlation ${s.validation.rho}. ${s.validation.verdict}`}</Text>
+          {s.validation.matchMean !== null && <Text>{`Teams rate "the grade matches how the weeks felt" at ${s.validation.matchMean} of 5 on average.`}</Text>}
+          <Text>Teams join the check by switching on validation mode in their pulse settings.</Text>
+        </Stack>
+      )}
       {s.mostImproved && (
         <SectionMessage title="Most improved" appearance="success">
           <Text>{`${s.mostImproved.name} lifted its working conditions by ${s.mostImproved.rise} points against its own earlier weeks.`}</Text>

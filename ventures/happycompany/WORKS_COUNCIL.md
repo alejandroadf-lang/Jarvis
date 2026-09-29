@@ -50,6 +50,10 @@ Every fact the app stores, and where in the code it is written:
 | Launch or incident weeks the team marked | up to 2 a quarter | `src/features/actions.mjs` |
 | Audit trail: settings changes (with the administrator's pseudonym), committed and closed actions (with nobody's) | 3 years | `src/features/audit.mjs` |
 | Which weekly digests were posted, and where | 26 weeks | `src/features/digest.mjs` |
+| Pulse answers, as counts per statement and option only | 36 periods | `src/features/pulse.mjs` |
+| "Already answered" codes for the open pulse period, hashed per period | until the period closes | `src/features/pulse.mjs` |
+| Assignment changes (made by the assignee or someone else) and priority changes, as team counts | inside day buckets, 21 days | `src/lib/events.mjs`, `changelogTags` |
+| In-progress items flagged as impediments, as a team count | 91 days | `src/lib/openwork.mjs` |
 | Project and space display names, cached for the organisation view | 7 days | `src/app.mjs`, `teamName` |
 
 ### What is never collected
@@ -60,6 +64,27 @@ Every fact the app stores, and where in the code it is written:
 - Anything from Slack, Teams, e-mail, calendars or any system outside Jira
   and Confluence. The app has no network access outside Atlassian.
 - Anything about people who merely view the page.
+
+### The optional team pulse
+
+Off unless a project or space administrator switches it on (monthly or
+quarterly). Eight statements, one per HSE Management Standard plus two that
+check the grade; with validation mode on, also the seven work-related items
+of the Copenhagen Burnout Inventory. No free text.
+
+- Answers are stored **only as counts per statement and option**. No
+  response record exists, so no answer can be linked to anyone.
+- A list of "already answered" codes stops double answering. The codes are
+  hashed with a key that changes every period and differs from the
+  activity pseudonyms; the list is deleted when the period closes.
+- Results are shown only for a **closed** period, so nobody can watch the
+  counts move when a colleague answers, and only for statements at least
+  the team's minimum group answered.
+- Tallies are kept for three years (36 periods) as evidence of worker
+  participation (ISO 45001 5.4); they contain no personal data.
+
+The works council should agree the statements (Annex B) before the pulse is
+switched on.
 
 ### What the app writes
 

@@ -14,7 +14,9 @@ import ForgeReconciler, {
   ListItem,
   Lozenge,
   ProgressBar,
+  RadioGroup,
   SectionMessage,
+  Select,
   Stack,
   Tab,
   TabList,
@@ -54,6 +56,16 @@ const SIGNAL_LABELS = {
   dueMoveRate: 'Due dates being moved',
   loadSurge: 'Workload surge this week',
   reopenRate: 'Work reopened after being done',
+  blockedShare: 'Enabler: work in progress that is blocked',
+  reprioritisationRate: 'Enabler: priorities changing mid-flight',
+  selfAssignedShare: 'Enabler: work people pick up themselves',
+  soloShare: 'Enabler: work only one person touches',
+};
+
+const SCALE_LABELS = {
+  agree: ['Strongly disagree', 'Disagree', 'Neither', 'Agree', 'Strongly agree'],
+  frequency: ['Never or almost never', 'Seldom', 'Sometimes', 'Often', 'Always'],
+  degree: ['To a very low degree', 'To a low degree', 'Somewhat', 'To a high degree', 'To a very high degree'],
 };
 
 function Indicator({ indicator }) {
@@ -153,6 +165,99 @@ function Scorecard({ report }) {
           <Dimension key={dimension.key} dimension={dimension} />
         ))}
       </Inline>
+    </Stack>
+  );
+}
+
+function Enablers({ enablers }) {
+  if (!enablers || !enablers.indicators.length) return null;
+  return (
+    <Stack space="space.100">
+      <Inline space="space.100" alignBlock="center">
+        <Heading size="small">What helps this team (enablers, not part of the grade)</Heading>
+        <Lozenge appearance={APPEARANCE[enablers.status]} isBold>
+          {enablers.score === null ? 'No data' : `${enablers.score} / 100`}
+        </Lozenge>
+      </Inline>
+      {enablers.indicators.map((i) => (
+        <Stack key={i.key} space="space.025">
+          <Indicator indicator={i} />
+          {i.action && <Text>{i.action}</Text>}
+        </Stack>
+      ))}
+    </Stack>
+  );
+}
+
+function Pulse({ pulse, reload }) {
+  const [answers, setAnswers] = useState({});
+  const [message, setMessage] = useState(null);
+  if (!pulse || pulse.cadence === 'off') {
+    return <Text>The team pulse is off. A project or space administrator can switch it on in Settings.</Text>;
+  }
+  const submit = async () => {
+    try {
+      await invoke('answerPulse', { answers });
+      setMessage({ appearance: 'success', text: 'Thank you. Only counts are kept; your answers cannot be traced back to you.' });
+      await reload();
+    } catch (err) {
+      setMessage({ appearance: 'error', text: err.message });
+    }
+  };
+  const r = pulse.results;
+  return (
+    <Stack space="space.300">
+      <SectionMessage title="Anonymous, and only counted" appearance="information">
+        <Text>
+          {`Answers are stored only as totals per statement. Results appear when ${pulse.cadence === 'monthly' ? 'the month' : 'the quarter'} closes, and only for statements at least ${pulse.minGroup} people answered. There is no free text.`}
+        </Text>
+      </SectionMessage>
+      {pulse.answered ? (
+        <Text>{`You have answered this period's pulse. ${pulse.answersSoFar} answers so far.`}</Text>
+      ) : (
+        <Stack space="space.200">
+          <Text>{`${pulse.answersSoFar} answers so far this period. Skip any statement you prefer not to answer.`}</Text>
+          {pulse.items.map((item) => (
+            <Stack key={item.key} space="space.050">
+              <Text>{item.text}</Text>
+              <RadioGroup
+                name={`hc-pulse-${item.key}`}
+                options={SCALE_LABELS[item.scale].map((label, i) => ({ label, value: String(i + 1) }))}
+                value={answers[item.key] ? String(answers[item.key]) : undefined}
+                onChange={(e) => setAnswers({ ...answers, [item.key]: Number(e.target.value) })}
+              />
+            </Stack>
+          ))}
+          <Inline space="space.100">
+            <Button appearance="primary" onClick={submit} isDisabled={!Object.keys(answers).length}>
+              Send anonymously
+            </Button>
+          </Inline>
+        </Stack>
+      )}
+      <Stack space="space.100">
+        <Heading size="small">{`Results for ${pulse.closedPeriod}`}</Heading>
+        {r.shown ? (
+          <Stack space="space.075">
+            <Text>{`${r.n} people answered.`}</Text>
+            {r.items.map((i) => (
+              <Text key={i.key}>
+                {i.favourable === null
+                  ? `${i.text} Average ${i.mean} of 5.`
+                  : `${i.text} ${Math.round(i.favourable * 100)}% agree (average ${i.mean} of 5).`}
+              </Text>
+            ))}
+            {r.cbi !== null && r.cbi !== undefined && <Text>{`Work-related burnout scale (Copenhagen Burnout Inventory): ${r.cbi} of 100.`}</Text>}
+          </Stack>
+        ) : (
+          <Text>{`Not shown: fewer than ${pulse.minGroup} people answered (${r.n}).`}</Text>
+        )}
+      </Stack>
+      {message && (
+        <SectionMessage appearance={message.appearance}>
+          <Text>{message.text}</Text>
+        </SectionMessage>
+      )}
     </Stack>
   );
 }
@@ -333,6 +438,7 @@ function WhatWeMeasure({ t }) {
 // Controlled fields rather than a form library: what is on screen is exactly
 // what gets sent, and the backend validates every field again.
 function Settings({ settings, indicatorKeys, onSaved }) {
+  // indicatorKeys includes the enabler signals, which can be switched off too.
   const [form, setForm] = useState({
     timeZone: settings.timeZone,
     quietStart: String(settings.quietStart),
@@ -344,6 +450,8 @@ function Settings({ settings, indicatorKeys, onSaved }) {
     longSpanHours: String(settings.longSpanHours),
     minGroup: String(settings.minGroup ?? 5),
     digest: settings.digest === 'on' ? 'on' : 'off',
+    pulse: settings.pulse || 'off',
+    validation: settings.validation === true,
     signals: { ...(settings.signals || {}) },
   });
   const [message, setMessage] = useState(null);
@@ -400,6 +508,23 @@ function Settings({ settings, indicatorKeys, onSaved }) {
         isChecked={form.digest === 'on'}
         onChange={(e) => setForm({ ...form, digest: e.target.checked ? 'on' : 'off' })}
       />
+      <Label labelFor="hc-pulse">Anonymous team pulse</Label>
+      <Select
+        inputId="hc-pulse"
+        options={[
+          { label: 'Off', value: 'off' },
+          { label: 'Monthly', value: 'monthly' },
+          { label: 'Quarterly', value: 'quarterly' },
+        ]}
+        value={{ label: form.pulse === 'monthly' ? 'Monthly' : form.pulse === 'quarterly' ? 'Quarterly' : 'Off', value: form.pulse }}
+        onChange={(option) => setForm({ ...form, pulse: option?.value || 'off' })}
+      />
+      <Toggle
+        id="hc-validation"
+        label="Validation mode: add the seven-item Copenhagen Burnout Inventory to the pulse, to check the grade against a validated scale"
+        isChecked={form.validation}
+        onChange={(e) => setForm({ ...form, validation: Boolean(e.target.checked) })}
+      />
       <Label labelFor="hc-we">Weekend days, 0 = Sunday … 6 = Saturday</Label>
       <Textfield id="hc-we" value={form.weekendDays} onChange={field('weekendDays')} />
       <Label labelFor="hc-hol">Public holidays, one date per line (YYYY-MM-DD). Activity on them counts like weekend work.</Label>
@@ -449,6 +574,7 @@ function App() {
       <TabList>
         <Tab>Working conditions</Tab>
         <Tab>{toClose ? `Actions (${toClose} to close)` : 'Actions'}</Tab>
+        <Tab>Team pulse</Tab>
         <Tab>What we measure</Tab>
         <Tab>Settings</Tab>
       </TabList>
@@ -456,6 +582,7 @@ function App() {
         <Box padding="space.200">
           <Stack space="space.400">
             <Scorecard report={report} />
+            <Enablers enablers={report.enablers} />
             <History weeks={report.weeks} />
             <Stack space="space.050">
               {report.notes.map((note) => (
@@ -472,12 +599,22 @@ function App() {
       </TabPanel>
       <TabPanel>
         <Box padding="space.200">
+          <Pulse pulse={report.pulse} reload={load} />
+        </Box>
+      </TabPanel>
+      <TabPanel>
+        <Box padding="space.200">
           <WhatWeMeasure t={report.transparency} />
         </Box>
       </TabPanel>
       <TabPanel>
         <Box padding="space.200">
-          <Settings key={report.generatedAt} settings={report.settings} indicatorKeys={report.indicatorKeys} onSaved={async () => load()} />
+          <Settings
+            key={report.generatedAt}
+            settings={report.settings}
+            indicatorKeys={[...report.indicatorKeys, ...report.enablerKeys]}
+            onSaved={async () => load()}
+          />
         </Box>
       </TabPanel>
     </Tabs>

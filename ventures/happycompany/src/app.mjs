@@ -29,6 +29,10 @@ import { createAudit, AUDIT_RETAIN_DAYS } from './features/audit.mjs';
 import { createDigest } from './features/digest.mjs';
 import { organisationSummary, canSeeOrganisation, validateOrgSettings } from './features/org.mjs';
 import { strainCost } from './lib/cost.mjs';
+import { createPulse } from './features/pulse.mjs';
+import { cbiScore, itemMean } from './lib/pulse.mjs';
+import { enablerCard, ENABLER_KEYS } from './lib/enablers.mjs';
+import { validationSummary } from './lib/validation.mjs';
 import { normaliseJiraEvent, normaliseJiraMention, normaliseConfluenceEvent, confluenceScope } from './lib/events.mjs';
 import { openWorkSnapshot } from './lib/openwork.mjs';
 import { activeDaysByPerson, streakShare, updatePeopleRecord, noRestShare } from './lib/recovery.mjs';
@@ -68,13 +72,15 @@ export function validateSettings(input) {
   const span = Number(s.longSpanHours);
   if (!Number.isInteger(span) || span < 8 || span > 16) throw new Error('longSpanHours must be a whole number of hours from 8 to 16');
   const digest = s.digest === 'on' || s.digest === true ? 'on' : 'off';
+  const pulse = ['monthly', 'quarterly'].includes(s.pulse) ? s.pulse : 'off';
+  const validation = s.validation === true || s.validation === 'true' || s.validation === 'on';
   const minGroup = Number(s.minGroup ?? MIN_GROUP);
   if (!Number.isInteger(minGroup) || minGroup < MIN_GROUP || minGroup > MAX_GROUP_SETTING) {
     throw new Error(`minGroup must be a whole number from ${MIN_GROUP} to ${MAX_GROUP_SETTING}; ${MIN_GROUP} is the floor and cannot be lowered`);
   }
   const signals = {};
   for (const [key, on] of Object.entries(s.signals || {})) {
-    if (!INDICATOR_KEYS.includes(key)) throw new Error(`unknown signal ${JSON.stringify(key)}`);
+    if (!INDICATOR_KEYS.includes(key) && !ENABLER_KEYS.includes(key)) throw new Error(`unknown signal ${JSON.stringify(key)}`);
     if (on === false || on === 'false' || on === 0) signals[key] = false;
   }
   return {
@@ -88,6 +94,8 @@ export function validateSettings(input) {
     longSpanHours: span,
     minGroup,
     digest,
+    pulse,
+    validation,
     signals,
   };
 }
@@ -115,6 +123,8 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
   const todayUtc = () => now().toISOString().slice(0, 10);
   const audit = createAudit({ store, now });
   const actions = createActions({ store, now, audit: (scope, event, detail) => audit.log(scope, event, detail) });
+
+  const pulse = createPulse({ store, now, salt, audit: (scope, event, detail) => audit.log(scope, event, detail) });
 
   // The app's own account, per product, so its digest posts and evidence
   // pages are never counted as the team's work. Looked up once and kept.
@@ -414,6 +424,7 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
         grade: card?.grade ?? null,
         status: card?.status ?? 'unknown',
         card,
+        enablers: card ? enablerCard(metrics, snapshot, settings.signals) : null,
         check: metrics?.check || null,
         sprintClosed: sprints.some((sp) => daysOfWeek(week).includes(sp.completeDate)),
         carryOverShare: metrics?.carryOverShare ?? null,
@@ -439,7 +450,7 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
   }
 
   /** What the page shows. Never contains a pseudonym or a per-person count. */
-  async function teamHealth({ scope, product }) {
+  async function teamHealth({ scope, product, accountId: viewerAccountId = null }) {
     if (!scope) throw new Error('This page only works inside a Jira project or a Confluence space.');
     await rememberScope(scope, product);
     const team = await computeTeam({ scope, product });
@@ -481,6 +492,15 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
     if (isJira && !sprints.length) notes.push('No closed sprints seen yet, so the sprint signals are blank. They fill in after the first sprint closes.');
 
     const card = publicCard(current.card);
+    const pulseState = await pulse.state({ scope, settings, today: team.today, minGroup, accountId: viewerAccountId });
+    const checks = current.check ? [current.check] : [];
+    const hours = pulseState.results?.items?.find((i) => i.key === 'hours');
+    if (hours && current.score !== null && current.score >= 70 && hours.mean <= 2.5) {
+      checks.push({
+        key: 'pulseDisagrees',
+        text: 'The grade is good, but the team’s last pulse says most weeks cannot be finished within normal hours. Work may be happening where this page cannot see it. Believe the team.',
+      });
+    }
     return {
       scope,
       product,
@@ -523,10 +543,18 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
         freezes: freezes.filter((f) => weeks.some((w) => w.week === f)),
       },
       badges,
-      checks: current.check ? [current.check] : [],
+      checks,
+      enablers: current.enablers,
+      enablerKeys: ENABLER_KEYS,
+      pulse: pulseState,
       transparency: transparency({ minGroup, disabled: settings.signals }),
       notes,
     };
+  }
+
+  async function answerPulse({ scope, product, accountId, answers }) {
+    const team = await computeTeam({ scope, product });
+    return pulse.respond({ scope, settings: team.settings, today: team.today, accountId, answers });
   }
 
   /** Commit to some of this week's suggestions. */
@@ -607,6 +635,7 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
     }
     const teams = await allTeams(product);
     const summary = organisationSummary(teams);
+    summary.validation = await validationFor(teams);
     return {
       product,
       generatedAt: now().toISOString(),
@@ -619,6 +648,29 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
         'A team’s grade describes its working conditions. It is not a mark on its manager and may not be used in any decision about a person.',
       ],
     };
+  }
+
+  /** Grade against the burnout scale, across teams, for the last closed pulse period. */
+  async function validationFor(teams) {
+    const pairs = [];
+    let matchSum = 0;
+    let matchN = 0;
+    for (const t of teams) {
+      if (t.settings.validation !== true) continue;
+      const today = localParts(now(), t.settings.timeZone).day;
+      const closed = await pulse.closedTally(t.scope, t.settings, today);
+      if (!closed || closed.tally.n < groupFloor(t.settings.minGroup)) continue;
+      const cbi = cbiScore(closed.tally);
+      const scores = t.weeks.filter((w) => w.score !== null).slice(-5).map((w) => w.score);
+      if (cbi === null || !scores.length) continue;
+      pairs.push({ gradeScore: scores.reduce((a, b) => a + b, 0) / scores.length, cbi });
+      const m = closed.tally.items.match ? itemMean(closed.tally.items.match) : null;
+      if (m !== null) {
+        matchSum += m;
+        matchN += 1;
+      }
+    }
+    return { ...validationSummary(pairs), matchMean: matchN ? Math.round((matchSum / matchN) * 10) / 10 : null };
   }
 
   async function estimateCost({ product, viewer, inputs }) {
@@ -724,7 +776,15 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
         await step(scope, 'open work', async () => {
           const issues = await jira.openIssues(projectKey, { today });
           const key = await salt();
-          await store.set(`wip:${scope}:${today}`, openWorkSnapshot(issues, (id) => pseudonym(id, key), today));
+          let flagged = null;
+          if (jira.flaggedInProgress) {
+            try {
+              flagged = await jira.flaggedInProgress(projectKey);
+            } catch (err) {
+              log.warn(`[happycompany] flagged count failed for ${scope}: ${err.message}`);
+            }
+          }
+          await store.set(`wip:${scope}:${today}`, openWorkSnapshot(issues, (id) => pseudonym(id, key), today, { flaggedInProgress: flagged }));
           summary.snapshots += 1;
         });
       }
@@ -736,6 +796,9 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
       await step(scope, 'digest', async () => {
         const r = await digest.maybePost({ scope, product });
         if (r.posted) summary.digests = (summary.digests || 0) + 1;
+      });
+      await step(scope, 'pulse', async () => {
+        summary.deleted += await pulse.expire(scope, settings, today);
       });
       await step(scope, 'retention', async () => {
         summary.deleted += await expire(`day:${scope}:`, (k) => k.slice(-10) < oldestDayKept);
@@ -765,6 +828,7 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
     auditEntries: audit.entries,
     organisationView,
     saveOrgSettings,
+    answerPulse,
     estimateCost,
     allTeams,
     teamName,

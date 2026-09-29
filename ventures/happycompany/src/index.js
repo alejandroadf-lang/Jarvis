@@ -48,7 +48,10 @@ function placeOf(context) {
 }
 
 const resolver = new Resolver();
-resolver.define('teamHealth', ({ context }) => app.teamHealth(placeOf(context)));
+resolver.define('teamHealth', ({ context }) => app.teamHealth({ ...placeOf(context), accountId: context?.accountId || null }));
+resolver.define('answerPulse', ({ payload, context }) =>
+  app.answerPulse({ ...placeOf(context), accountId: context?.accountId || null, answers: payload?.answers }),
+);
 resolver.define('saveSettings', ({ payload, context }) =>
   app.saveSettings({ ...placeOf(context), settings: payload?.settings, by: context?.accountId || null }),
 );

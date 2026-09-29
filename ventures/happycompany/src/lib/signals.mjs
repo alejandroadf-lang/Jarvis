@@ -118,6 +118,26 @@ function median(values) {
 }
 
 /**
+ * Share of items touched in the period by exactly one person, among items
+ * touched at all. Null with fewer than 5 items: too few to mean anything.
+ */
+export function soloShare(buckets) {
+  const touchers = new Map();
+  for (const b of buckets) {
+    for (const [who, p] of Object.entries(b.people || {})) {
+      for (const item of p.items || []) {
+        if (!touchers.has(item)) touchers.set(item, new Set());
+        touchers.get(item).add(who);
+      }
+    }
+  }
+  if (touchers.size < 5) return null;
+  let solo = 0;
+  for (const set of touchers.values()) if (set.size === 1) solo += 1;
+  return solo / touchers.size;
+}
+
+/**
  * The metrics of a period, from its day buckets.
  *
  * Shares are null, not 0, when there was nothing to count: "no data" and
@@ -188,6 +208,9 @@ export function periodMetrics(dayBuckets, settings = DEFAULT_SETTINGS) {
     mentionTopShare: mentionTotal ? mentionTop / mentionTotal : null,
     reopenRate: resolved + reopened ? reopened / (resolved + reopened) : null,
     dueMoves: tags.dueMoved || 0,
+    reprioritisationRate: contributors ? (tags.reprioritised || 0) / contributors : null,
+    selfAssignedShare: (tags.selfAssigned || 0) + (tags.assignedByOther || 0) >= 3 ? (tags.selfAssigned || 0) / ((tags.selfAssigned || 0) + (tags.assignedByOther || 0)) : null,
+    soloShare: soloShare(days),
     kinds,
     tags,
   };
