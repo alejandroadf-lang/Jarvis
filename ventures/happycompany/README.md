@@ -87,8 +87,9 @@ for Confluence (https://go.atlassian.com/cloud-dev), and the Forge CLI.
    space → "Team health".
 5. `forge tunnel` and edit an issue, a page and a comment, and @mention
    someone in a Jira comment. The log shows each event; confirm the
-   Confluence payloads carry the space, and the mention event carries the
-   mentioned account, the way `src/lib/events.mjs` assumes (it documents what
+   Confluence payloads carry the space, the mention event carries the
+   mentioned account, and a space admin can save settings while a viewer
+   cannot, the way `src/lib/events.mjs` and `src/clients.mjs` assume (it documents what
    is verified and what is assumed). Adjust the normaliser if not; the tests
    describe every shape.
 6. Leave it a week on a real team of five or more, then read the page.
@@ -103,6 +104,3 @@ product's activity. That is a platform rule, not a choice.
 - Sentiment or text analysis of comments. Text is never read.
 - An LLM. Nothing here needs one, and adding an outbound model call would
   forfeit the Runs on Atlassian badge.
-- A space-admin check on the Confluence settings form (Jira gates settings to
-  project administrators). The settings are display thresholds and a time
-  zone; the gap is noted in PLAN.md.

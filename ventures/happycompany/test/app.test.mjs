@@ -362,9 +362,14 @@ test('settings are validated, admin-gated in Jira, and change how new activity i
   assert.equal(report.current.dimensions.fragmentation.indicators.some((i) => i.key === 'mentionsPerPersonDay'), false);
   assert.equal(report.current.dimensions.rework.indicators.some((i) => i.key === 'reopenRate'), true);
 
-  // Confluence has no admin check in v1; the validation still applies.
-  const conf = createApp({ store, now: clock(), log: quiet });
-  await assert.rejects(conf.saveSettings({ scope: 'confluence:1', product: 'confluence', settings: { quietEnd: -1 } }), /quietEnd/);
+  // Confluence gates on space administrators the same way.
+  let spaceAdmin = false;
+  const conf = createApp({ store, confluence: { canAdminister: async () => spaceAdmin }, now: clock(), log: quiet });
+  const space = { scope: 'confluence:1', product: 'confluence', spaceId: '1' };
+  await assert.rejects(conf.saveSettings({ ...space, settings: { timeZone: 'Europe/Berlin' } }), /Only space administrators/);
+  spaceAdmin = true;
+  await assert.rejects(conf.saveSettings({ ...space, settings: { quietEnd: -1 } }), /quietEnd/);
+  assert.equal((await conf.saveSettings({ ...space, settings: { timeZone: 'Europe/Berlin' } })).timeZone, 'Europe/Berlin');
   assert.deepEqual(validateSettings({}).weekendDays, [6, 0]);
   assert.deepEqual(validateSettings({}).holidays, []);
 });

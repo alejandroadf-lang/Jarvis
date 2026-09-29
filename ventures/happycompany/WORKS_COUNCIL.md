@@ -137,7 +137,8 @@ Numbered so they can be adopted as they are or struck one by one.
    the council's consent and is made through the software's switches.
 5. **Access.** The Team health page is visible to the members of the
    project or space it describes and to their manager. Settings may be
-   changed only by project administrators.
+   changed only by project administrators (Jira) or space administrators
+   (Confluence).
 6. **Retention.** Data is retained as set out in §5 of the pack and not
    longer. Neither party may export or copy the data.
 7. **Transparency.** Employees are informed before activation with the
