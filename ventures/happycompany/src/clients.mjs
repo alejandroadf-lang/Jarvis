@@ -67,6 +67,68 @@ export function jiraClient(api, route) {
       return issues;
     },
 
+    /** Board ids of a project's scrum boards. */
+    async boards(projectKey) {
+      if (!PROJECT_KEY.test(projectKey)) return [];
+      const out = [];
+      let startAt = 0;
+      for (;;) {
+        const page = await json(await api.asApp().requestJira(route`/rest/agile/1.0/board?projectKeyOrId=${projectKey}&type=scrum&startAt=${startAt}&maxResults=50`), 'board list');
+        for (const board of page.values || []) out.push({ id: String(board.id) });
+        if (page.isLast !== false || !(page.values || []).length) break;
+        startAt += page.values.length;
+      }
+      return out;
+    },
+
+    /** Sprints of a board closed on or after `since` (YYYY-MM-DD). */
+    async closedSprints(boardId, since) {
+      const out = [];
+      let startAt = 0;
+      for (;;) {
+        const page = await json(await api.asApp().requestJira(route`/rest/agile/1.0/board/${boardId}/sprint?state=closed&startAt=${startAt}&maxResults=50`), 'sprint list');
+        for (const sprint of page.values || []) {
+          if (sprint.completeDate && sprint.completeDate.slice(0, 10) >= since) {
+            out.push({ id: String(sprint.id), startDate: sprint.startDate || null, completeDate: sprint.completeDate });
+          }
+        }
+        if (page.isLast !== false || !(page.values || []).length) break;
+        startAt += page.values.length;
+      }
+      return out;
+    },
+
+    /** Every issue that was ever in a sprint, as {done, created, resolved}. */
+    async sprintIssues(sprintId) {
+      const issues = [];
+      let nextPageToken;
+      do {
+        const body = {
+          jql: `sprint = ${Number(sprintId)}`,
+          fields: ['status', 'created', 'resolutiondate'],
+          maxResults: 100,
+          ...(nextPageToken ? { nextPageToken } : {}),
+        };
+        const page = await json(
+          await api.asApp().requestJira(route`/rest/api/3/search/jql`, {
+            method: 'POST',
+            headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          }),
+          'sprint issue search',
+        );
+        for (const issue of page.issues || []) {
+          issues.push({
+            done: issue.fields?.status?.statusCategory?.key === 'done',
+            created: issue.fields?.created || null,
+            resolved: issue.fields?.resolutiondate || null,
+          });
+        }
+        nextPageToken = page.nextPageToken;
+      } while (nextPageToken && issues.length < 5000);
+      return issues;
+    },
+
     /** Every status id -> its category key ('new' | 'indeterminate' | 'done'). */
     async statusCategories() {
       const list = await json(await api.asApp().requestJira(route`/rest/api/3/status`), 'status list');

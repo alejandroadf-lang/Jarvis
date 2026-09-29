@@ -10,9 +10,9 @@ five of the psychosocial hazards ISO 45003 asks employers to manage:
 | Dimension            | What it reads                                                                                   |
 | -------------------- | ----------------------------------------------------------------------------------------------- |
 | Hours and recovery   | Activity after hours, late at night, on weekends and holidays; long days; streaks; no week away |
-| Workload and pace    | Concentration on one person, people far above the median open work, overdue, work in progress   |
+| Workload and pace    | Concentration, people far above the median open work, overdue, work in progress, sprint carry-over, inflow vs outflow |
 | Fragmentation        | Different items and separate bursts per person-day, mention load                                |
-| Deadline pressure    | Due dates bunching into one week, priorities inflated to High                                   |
+| Deadline pressure    | Due dates bunching, priorities inflated to High, work created mid-sprint, due dates moved, load surge |
 | Rework               | Work reopened after being done                                                                  |
 
 The grade (A–E), the five dimension scores, "three things to change this
@@ -42,6 +42,7 @@ src/lib/privacy.mjs     pseudonyms, retention, the 5-person rule
 src/lib/score.mjs       indicators → dimensions → grade, ISO 45003 mapping
 src/lib/events.mjs      product event → {who, when, which team}
 src/lib/openwork.mjs    the daily open-work snapshot (Jira)
+src/lib/sprints.mjs     carry-over and unplanned work per closed sprint (Jira)
 src/frontend/index.jsx  the page, UI Kit
 test/                   node:test, runs without Forge
 ```

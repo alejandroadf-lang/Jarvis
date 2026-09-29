@@ -31,7 +31,7 @@ test('a bucket counts actions, after-hours, late, rest days and per-person hours
   recordActivity(b, { actor: 'p1', hour: 22, weekday: 2, day: '2026-09-29', kind: 'updated', item: 'i1' });
   recordActivity(b, { actor: 'p1', hour: 10, weekday: 6, day: '2026-10-03', kind: 'comment', item: 'i2' });
   recordActivity(b, { actor: 'p1', hour: 10, weekday: 6, day: '2026-10-03', kind: 'comment', item: 'i2' });
-  recordActivity(b, { actor: 'p2', hour: 10, weekday: 2, day: '2026-09-29', kind: 'updated' });
+  recordActivity(b, { actor: 'p2', hour: 10, weekday: 2, day: '2026-09-29', kind: 'updated', tags: ['dueMoved'] });
   recordMention(b, { mentioned: 'p3' });
   assert.deepEqual(b, {
     v: 2,
@@ -40,6 +40,7 @@ test('a bucket counts actions, after-hours, late, rest days and per-person hours
     late: 1,
     weekend: 2,
     kinds: { updated: 2, comment: 2 },
+    tags: { dueMoved: 1 },
     people: {
       p1: { n: 3, hours: [22, 10], items: ['i1', 'i2'], mentions: 0 },
       p2: { n: 1, hours: [10], items: [], mentions: 0 },
@@ -89,6 +90,7 @@ test('period metrics: shares, concentration, long days, fragmentation, mentions,
   assert.equal(m.mentionsPerPersonDay, 1);
   assert.ok(Math.abs(m.mentionTopShare - 2 / 3) < 1e-9);
   assert.equal(m.reopenRate, 0.5);
+  assert.equal(m.dueMoves, 0);
   assert.deepEqual(m.kinds, { activity: 3, resolved: 1, reopened: 1 });
   assert.equal(Object.keys(m).some((k) => k === 'people' || k === 'byActor'), false);
 });

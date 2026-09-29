@@ -55,8 +55,10 @@ export function openWorkSnapshot(issues, toPseudonym, day) {
   let unassignedOverdue = 0;
   let overdue = 0;
   let high = 0;
+  let dated = 0;
   for (const issue of issues) {
     if (issue.overdue) overdue += 1;
+    if (issue.due) dated += 1;
     if (issue.high) high += 1;
     if (!issue.assignee) {
       unassigned += 1;
@@ -76,6 +78,7 @@ export function openWorkSnapshot(issues, toPseudonym, day) {
   return {
     day,
     openTotal: issues.length,
+    dated,
     unassigned,
     unassignedOverdue,
     people: counts.length,

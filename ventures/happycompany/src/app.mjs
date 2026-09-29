@@ -24,9 +24,14 @@ import { scorecard, trend, INDICATOR_KEYS } from './lib/score.mjs';
 import { normaliseJiraEvent, normaliseJiraMention, normaliseConfluenceEvent, confluenceScope } from './lib/events.mjs';
 import { openWorkSnapshot } from './lib/openwork.mjs';
 import { activeDaysByPerson, streakShare, updatePeopleRecord, noRestShare } from './lib/recovery.mjs';
+import { sprintSummary, sprintMetricsForWeek, SPRINT_LOOKBACK_DAYS, SPRINT_FALLBACK_WEEKS } from './lib/sprints.mjs';
 
 export const WEEKS_SHOWN = 12;
 const SNAPSHOT_RETAIN_DAYS = 91;
+const SPRINT_RETAIN_DAYS = 182;
+const SPRINTS_REMEMBERED = 500;
+const SURGE_BASELINE_WEEKS = 8;
+const INFLOW_WEEKS = 4;
 const STATUS_CACHE_DAYS = 7;
 const MAX_HOLIDAYS = 60;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
@@ -163,7 +168,7 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
     const bucket = upgradeBucket(await store.get(bucketKey)) || emptyBucket();
     recordActivity(
       bucket,
-      { actor: who, hour: parts.hour, weekday: parts.weekday, day: parts.day, kind: await kindOf(activity), item: itemHash(activity.item, key) },
+      { actor: who, hour: parts.hour, weekday: parts.weekday, day: parts.day, kind: await kindOf(activity), item: itemHash(activity.item, key), tags: activity.tags || [] },
       settings,
     );
     await store.set(bucketKey, bucket);
@@ -252,6 +257,44 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
     return { byWeek, latest: rows[rows.length - 1] || null };
   }
 
+  async function sprintSummaries(scope) {
+    return (await store.list(`sprint:${scope}:`)).map((r) => r.value).filter((v) => v?.completeDate);
+  }
+
+  // Indicators that need more than one week: inflow against outflow over
+  // four weeks, this week's load against the eight before, due-date moves
+  // against the dated open work, and the sprint shares. Computed at read
+  // time from the per-week metrics, so they need no extra storage.
+  function derive(weekKeys, metricsByWeek, snapshotByWeek, sprints) {
+    weekKeys.forEach((week, index) => {
+      const m = metricsByWeek[week];
+      if (!m) return;
+      const earlier = weekKeys.slice(0, index).map((w) => metricsByWeek[w]).filter(Boolean);
+
+      const recent = [m, ...earlier.slice(-(INFLOW_WEEKS - 1))];
+      const created = recent.reduce((a, x) => a + (x.kinds?.created || 0), 0);
+      const resolved = recent.reduce((a, x) => a + (x.kinds?.resolved || 0), 0);
+      m.inflowRatio = resolved >= 5 && created >= 5 ? Math.round((created / resolved) * 100) / 100 : null;
+
+      const perPerson = (x) => (x.contributors ? x.total / x.contributors : null);
+      const baseline = earlier.slice(-SURGE_BASELINE_WEEKS).map(perPerson).filter((v) => v !== null);
+      if (baseline.length >= 3 && perPerson(m) !== null) {
+        const sorted = [...baseline].sort((a, b) => a - b);
+        const median = sorted.length % 2 ? sorted[(sorted.length - 1) / 2] : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2;
+        m.loadSurge = median > 0 ? Math.round((perPerson(m) / median) * 100) / 100 : null;
+      } else m.loadSurge = null;
+
+      const dated = snapshotByWeek[week]?.dated ?? null;
+      m.dueMoveRate = dated ? Math.round(((m.dueMoves || 0) / dated) * 100) / 100 : null;
+
+      const weekDays = daysOfWeek(week);
+      const earlierDays = previousWeeks(week, SPRINT_FALLBACK_WEEKS).flatMap(daysOfWeek);
+      const sm = sprintMetricsForWeek(sprints, weekDays, earlierDays);
+      m.carryOverShare = sm.carryOverShare;
+      m.unplannedShare = sm.unplannedShare;
+    });
+  }
+
   /** What the page shows. Never contains a pseudonym or a per-person count. */
   async function teamHealth({ scope, product }) {
     if (!scope) throw new Error('This page only works inside a Jira project or a Confluence space.');
@@ -259,14 +302,23 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
     const settings = await settingsFor(scope);
     const today = localParts(now(), settings.timeZone).day;
     const thisWeek = isoWeek(today);
-    const weekKeys = [thisWeek, ...previousWeeks(thisWeek, WEEKS_SHOWN)].reverse();
-    const snaps = product === 'jira' ? await snapshots(scope) : { byWeek: {}, latest: null };
+    const weekKeys = [thisWeek, ...previousWeeks(thisWeek, WEEKS_SHOWN + SURGE_BASELINE_WEEKS)].reverse();
+    const shownKeys = weekKeys.slice(-(WEEKS_SHOWN + 1));
+    const isJira = product === 'jira';
+    const snaps = isJira ? await snapshots(scope) : { byWeek: {}, latest: null };
+    const sprints = isJira ? await sprintSummaries(scope) : [];
+
+    const metricsByWeek = {};
+    for (const week of weekKeys) metricsByWeek[week] = await weekMetrics(scope, week, settings, today);
+    const snapshotByWeek = { ...snaps.byWeek };
+    if (!snapshotByWeek[thisWeek] && snaps.latest) snapshotByWeek[thisWeek] = snaps.latest;
+    derive(weekKeys, metricsByWeek, snapshotByWeek, sprints);
 
     const weeks = [];
-    for (const week of weekKeys) {
-      const metrics = await weekMetrics(scope, week, settings, today);
+    for (const week of shownKeys) {
+      const metrics = metricsByWeek[week];
       const shown = publicMetrics(metrics);
-      const snapshot = snaps.byWeek[week] || (week === thisWeek ? snaps.latest : null);
+      const snapshot = snapshotByWeek[week] || null;
       const card = shown && !shown.suppressed ? scorecard(metrics, snapshot, settings.signals) : null;
       weeks.push({
         week,
@@ -304,6 +356,7 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
     if (current.openWork?.unassignedOverdue) {
       notes.push(`${current.openWork.unassignedOverdue} overdue items have no owner. Work nobody owns is work everybody worries about.`);
     }
+    if (isJira && !sprints.length) notes.push('No closed sprints seen yet, so the sprint signals are blank. They fill in after the first sprint closes.');
 
     return {
       scope,
@@ -329,6 +382,27 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
     return settingsFor(scope);
   }
 
+  // Closed sprints of the project's boards, summarised once each. Boards and
+  // sprint lists are cheap; the JQL per new sprint is the cost, so a sprint
+  // already summarised is never fetched again.
+  async function pollSprints(scope, projectKey, today) {
+    const seenKey = `sprintsSeen:${scope}`;
+    const seen = (await store.get(seenKey)) || [];
+    const since = addDays(today, -SPRINT_LOOKBACK_DAYS);
+    let added = 0;
+    for (const board of await jira.boards(projectKey)) {
+      for (const sprint of await jira.closedSprints(board.id, since)) {
+        if (seen.includes(sprint.id)) continue;
+        const summary = sprintSummary(sprint, await jira.sprintIssues(sprint.id));
+        await store.set(`sprint:${scope}:${summary.completeDate}:${summary.id}`, summary);
+        seen.push(sprint.id);
+        added += 1;
+      }
+    }
+    if (added) await store.set(seenKey, seen.slice(-SPRINTS_REMEMBERED));
+    return added;
+  }
+
   async function expire(prefix, isExpired) {
     let n = 0;
     for (const { key, value } of await store.list(prefix)) {
@@ -348,7 +422,7 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
     const oldestWeekKept = previousWeeks(thisWeek, RETAIN_WEEKS).at(-1);
     const oldestDayKept = addDays(today, -RETAIN_DAYS);
     const oldestSnapshotKept = addDays(today, -SNAPSHOT_RETAIN_DAYS);
-    const summary = { scopes: scopes.length, weeksRolled: 0, snapshots: 0, deleted: 0, errors: [] };
+    const summary = { scopes: scopes.length, weeksRolled: 0, snapshots: 0, sprints: 0, deleted: 0, errors: [] };
 
     for (const { scope, product } of scopes) {
       try {
@@ -373,9 +447,11 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
           await store.set(`wip:${scope}:${today}`, openWorkSnapshot(issues, (id) => pseudonym(id, key), today));
           summary.snapshots += 1;
         }
+        if (product === 'jira' && jira?.boards) summary.sprints += await pollSprints(scope, scope.slice('jira:'.length), today);
         summary.deleted += await expire(`day:${scope}:`, (k) => k.slice(-10) < oldestDayKept);
         summary.deleted += await expire(`wip:${scope}:`, (k) => k.slice(-10) < oldestSnapshotKept);
         summary.deleted += await expire(`wk:${scope}:`, (k) => k.slice(-8) < oldestWeekKept);
+        summary.deleted += await expire(`sprint:${scope}:`, (_k, v) => (v?.completeDate || '') < addDays(today, -SPRINT_RETAIN_DAYS));
       } catch (err) {
         summary.errors.push({ scope, message: err.message });
         log.error(`[happycompany] rollup failed for ${scope}: ${err.message}`);

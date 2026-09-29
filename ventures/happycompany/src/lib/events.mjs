@@ -63,7 +63,17 @@ export function normaliseJiraEvent(event, receivedAt) {
   const projectKey = issue.fields?.project?.key || String(issue.key || '').split('-')[0];
   if (!PROJECT_KEY.test(projectKey)) return null;
   const at = event.comment?.created || event.comment?.updated || issue.fields?.updated || receivedAt;
-  return { product: 'jira', scope: jiraScope(projectKey), actor, at, kind, item: issue.id ? String(issue.id) : issue.key, status: statusChange(event) };
+  return { product: 'jira', scope: jiraScope(projectKey), actor, at, kind, item: issue.id ? String(issue.id) : issue.key, status: statusChange(event), tags: changelogTags(event) };
+}
+
+/** Facts about an update worth counting beside its kind. Today: a moved due date. */
+export function changelogTags(event) {
+  const items = event?.changelog?.items || [];
+  const tags = [];
+  const due = items.find((i) => i?.field === 'duedate' || i?.fieldId === 'duedate');
+  // A date set for the first time is planning; a date changed is a slip.
+  if (due && due.from && due.to && due.from !== due.to) tags.push('dueMoved');
+  return tags;
 }
 
 /** {from, to} status ids when an update event changed the status, else null. */
