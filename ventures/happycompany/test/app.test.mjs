@@ -6,15 +6,16 @@ import { MIN_GROUP } from '../src/lib/privacy.mjs';
 
 const quiet = { warn() {}, error() {}, log() {} };
 
-function jiraEvent(actor, at, key = 'OPS-1') {
-  return { eventType: 'avi:jira:updated:issue', atlassianId: actor, issue: { key, fields: { updated: at } } };
+function jiraEvent(actor, at, key = 'OPS-1', extra = {}) {
+  return { eventType: 'avi:jira:updated:issue', atlassianId: actor, issue: { id: key.replace('-', ''), key, fields: { updated: at } }, ...extra };
 }
 
 // `now` is fixed so weeks are stable: Wednesday 2026-09-30, week 40.
 const NOW = '2026-09-30T12:00:00Z';
 const clock = (iso = NOW) => () => new Date(iso);
+const dayOf = (year, monthIndex, day) => new Date(Date.UTC(year, monthIndex, day)).toISOString().slice(0, 10);
 
-test('an event lands in the actor’s local day bucket under a pseudonym', async () => {
+test('an event lands in the actor’s local day bucket under a pseudonym, with its item hashed', async () => {
   const store = memoryStore();
   const jira = { userTimeZone: async () => 'Asia/Bangkok' };
   const app = createApp({ store, jira, now: clock(), log: quiet });
@@ -25,8 +26,14 @@ test('an event lands in the actor’s local day bucket under a pseudonym', async
   const bucket = await store.get('day:jira:OPS:2026-09-28');
   assert.equal(bucket.total, 1);
   assert.equal(bucket.afterHours, 1);
-  assert.equal(Object.keys(bucket.byActor).length, 1);
-  assert.ok(!JSON.stringify([...store.data.entries()]).includes('557058'));
+  assert.equal(bucket.late, 1);
+  const people = Object.values(bucket.people);
+  assert.equal(people.length, 1);
+  assert.deepEqual(people[0].hours, [23]);
+  assert.equal(people[0].items.length, 1);
+  const stored = JSON.stringify([...store.data.entries()]);
+  assert.ok(!stored.includes('557058'));
+  assert.ok(!stored.includes('OPS1')); // the issue id is hashed too
   assert.deepEqual(await store.get('scopes'), [{ scope: 'jira:OPS', product: 'jira' }]);
   assert.equal((await app.onJiraEvent({ eventType: 'avi:jira:viewed:issue' })).counted, false);
 });
@@ -54,6 +61,39 @@ test('the time zone lookup is cached and falls back to the team zone', async () 
   assert.equal(broken.hour, 23);
 });
 
+test('status changes across the Done line become resolved and reopened, using a cached status catalogue', async () => {
+  const store = memoryStore();
+  let fetches = 0;
+  const jira = {
+    statusCategories: async () => {
+      fetches += 1;
+      return { 1: 'new', 3: 'indeterminate', 10001: 'done' };
+    },
+  };
+  const app = createApp({ store, jira, now: clock(), log: quiet });
+  const change = (from, to) => ({ changelog: { items: [{ field: 'status', from, to }] } });
+  await app.onJiraEvent(jiraEvent('u', NOW, 'OPS-1', change('3', '10001')));
+  await app.onJiraEvent(jiraEvent('u', NOW, 'OPS-2', change('10001', '3')));
+  await app.onJiraEvent(jiraEvent('u', NOW, 'OPS-3', change('1', '3')));
+  await app.onJiraEvent(jiraEvent('u', NOW, 'OPS-4', change('3', '999'))); // unknown status: stays an update
+  const bucket = await store.get('day:jira:OPS:2026-09-30');
+  assert.deepEqual(bucket.kinds, { resolved: 1, reopened: 1, updated: 2 });
+  assert.equal(fetches, 1); // once; an unknown id does not refetch again the same day
+});
+
+test('a mention lands on the mentioned person and is not an action', async () => {
+  const store = memoryStore();
+  const app = createApp({ store, now: clock(), log: quiet });
+  const r = await app.onJiraEvent({ eventType: 'avi:jira:mentioned:issue', atlassianId: 'author', issue: { key: 'OPS-9' }, mentionedAccountIds: ['a', 'b'], comment: { created: NOW } });
+  assert.deepEqual(r, { counted: true, scope: 'jira:OPS', day: '2026-09-30', mentions: 2 });
+  const bucket = await store.get('day:jira:OPS:2026-09-30');
+  assert.equal(bucket.total, 0);
+  assert.deepEqual(
+    Object.values(bucket.people).map((p) => p.mentions),
+    [1, 1],
+  );
+});
+
 test('a Confluence event without a space is looked up, and dropped if that fails', async () => {
   const store = memoryStore();
   const confluence = { spaceIdFor: async ({ contentId }) => (contentId === '31' ? '123' : null) };
@@ -64,16 +104,14 @@ test('a Confluence event without a space is looked up, and dropped if that fails
   assert.equal(lost.counted, false);
 });
 
-async function populate(app, { people, weeks }) {
+async function populate(app, { people, weeks, actor = (p) => `557058:${p}` }) {
   // `weeks` full weeks ending with week 40 (Monday 2026-09-28): each person
-  // active every weekday at 10:00 UTC, which is working hours in the UTC
-  // team zone the defaults use.
+  // active every weekday at 10:00 UTC on their own issue, which is working
+  // hours in the UTC team zone the defaults use.
   for (let w = 0; w < weeks; w++) {
     for (let d = 0; d < 5; d++) {
-      const day = new Date(Date.UTC(2026, 8, 28 - 7 * w + d)).toISOString().slice(0, 10);
-      for (let p = 0; p < people; p++) {
-        await app.onJiraEvent(jiraEvent(`person-${p}`, `${day}T10:00:00.000Z`));
-      }
+      const day = dayOf(2026, 8, 28 - 7 * w + d);
+      for (let p = 0; p < people; p++) await app.onJiraEvent(jiraEvent(actor(p), `${day}T10:00:00.000Z`, `OPS-${p + 1}`));
     }
   }
 }
@@ -94,41 +132,79 @@ test('team health is suppressed below the minimum group and graded above it', as
   assert.equal(report.current.week, '2026-W40');
   assert.equal(report.current.grade, 'A');
   assert.equal(report.current.dimensions.hours.status, 'good');
+  assert.deepEqual(report.current.actions, []);
   assert.equal(report.weeks.length, 13);
+  assert.equal(report.weeks.filter((w) => w.dimensions).length, 1); // only the current week carries the detail
   const serialised = JSON.stringify(report);
-  assert.ok(!serialised.includes('byActor'));
-  assert.ok(!serialised.includes('person-'));
+  assert.ok(!serialised.includes('"people"'));
+  assert.ok(!serialised.includes('557058'));
+  assert.deepEqual(report.indicatorKeys.slice(0, 2), ['afterHoursShare', 'lateShare']);
 });
 
-test('late nights pull the grade down and the trend notices', async () => {
+test('late nights, long days and fragmentation pull the grade down, the trend notices, and the actions say what to do', async () => {
   const store = memoryStore();
   const app = createApp({ store, now: clock(), log: quiet });
-  // Five calm weeks, then a hard week (every person, every night).
+  // Five calm weeks, then a hard week: everyone at 08:00, in bursts through
+  // the day on many issues, and again at 22:30 and 23:30.
   await populate(app, { people: 6, weeks: 6 });
   for (let d = 0; d < 5; d++) {
-    const day = `2026-09-${28 + d}`.replace('2026-09-31', '2026-10-01').replace('2026-09-32', '2026-10-02');
+    const day = dayOf(2026, 8, 28 + d);
     for (let p = 0; p < 6; p++) {
-      await app.onJiraEvent(jiraEvent(`person-${p}`, `${day}T22:30:00.000Z`));
-      await app.onJiraEvent(jiraEvent(`person-${p}`, `${day}T23:30:00.000Z`));
+      for (const hour of ['08', '11', '14', '17', '22', '23']) await app.onJiraEvent(jiraEvent(`557058:${p}`, `${day}T${hour}:30:00.000Z`, `OPS-${hour}${p}`));
     }
   }
   const report = await app.teamHealth({ scope: 'jira:OPS', product: 'jira' });
   assert.equal(report.current.week, '2026-W40');
-  // Two of every three actions are after hours: that indicator bottoms out,
-  // and the dimension (with a clean weekend) sits at "watch".
-  const afterHours = report.current.dimensions.hours.indicators.find((i) => i.key === 'afterHoursShare');
-  assert.equal(afterHours.status, 'act');
-  assert.equal(afterHours.score, 0);
-  assert.equal(report.current.dimensions.hours.status, 'watch');
+  const hours = report.current.dimensions.hours;
+  const by = (key) => hours.indicators.find((i) => i.key === key);
+  assert.equal(by('lateShare').status, 'act');
+  assert.equal(by('longSpanShare').status, 'act'); // 08:00 to 23:00 every day
+  assert.equal(by('weekendShare').status, 'good');
+  assert.equal(hours.status, 'act');
+  const frag = report.current.dimensions.fragmentation;
+  assert.equal(frag.indicators.find((i) => i.key === 'burstyShare').status, 'act');
+  assert.equal(frag.indicators.find((i) => i.key === 'itemsMedian').value, 7);
   assert.equal(report.trend.direction, 'down');
+  assert.equal(report.current.actions.length, 3);
+  assert.ok(report.current.actions.every((a) => a.action.length > 10));
   assert.ok(report.current.score < report.weeks.at(-2).score);
-  assert.ok(report.weeks.filter((w) => w.score !== null).length >= 6);
 });
 
-test('the daily rollup aggregates completed weeks, snapshots open work and enforces retention', async () => {
+test('streaks and rests: a team that works every day is flagged, the people record remembers a week away', async () => {
+  const store = memoryStore();
+  const app = createApp({ store, now: clock(), log: quiet });
+  // Six people, every single day (weekends included) for three weeks.
+  for (let back = 20; back >= 0; back--) {
+    const day = dayOf(2026, 8, 30 - back);
+    for (let p = 0; p < 6; p++) await app.onJiraEvent(jiraEvent(`557058:${p}`, `${day}T10:00:00.000Z`, `OPS-${p}`));
+  }
+  const report = await app.teamHealth({ scope: 'jira:OPS', product: 'jira' });
+  const streak = report.current.dimensions.hours.indicators.find((i) => i.key === 'streakShare');
+  assert.equal(streak.value, 1);
+  assert.equal(streak.status, 'act');
+  const rest = report.current.dimensions.hours.indicators.find((i) => i.key === 'noRestShare');
+  assert.equal(rest.value, null); // nobody has 90 days of history yet
+
+  // Pretend the people record is old: five of six never rested, one did.
+  const record = {};
+  const [a, b, c, d, e, f] = Object.keys((await store.get('day:jira:OPS:2026-09-30')).people);
+  for (const who of [a, b, c, d, e]) record[who] = { firstSeen: '2026-01-05', lastSeen: '2026-09-30', lastRest: null };
+  record[f] = { firstSeen: '2026-01-05', lastSeen: '2026-09-30', lastRest: '2026-08-14' };
+  await store.set('people:jira:OPS', record);
+  const again = await app.teamHealth({ scope: 'jira:OPS', product: 'jira' });
+  const rest2 = again.current.dimensions.hours.indicators.find((i) => i.key === 'noRestShare');
+  assert.ok(Math.abs(rest2.value - 5 / 6) < 1e-9);
+  assert.equal(rest2.status, 'act');
+  assert.match(rest2.action, /vacation with Jira in it/);
+});
+
+test('the daily rollup keeps the people record, aggregates completed weeks, snapshots open work and enforces retention', async () => {
   const store = memoryStore();
   const jira = {
-    openIssues: async (key) => (key === 'OPS' ? [...Array(10)].map((_, i) => ({ assignee: `p${i % 3}`, overdue: i < 2 })) : []),
+    openIssues: async (key) =>
+      key === 'OPS'
+        ? [...Array(10)].map((_, i) => ({ assignee: `p${i % 3}`, overdue: i < 2, inProgress: i % 2 === 0, high: i < 5, due: i < 6 ? '2026-10-09' : '2026-11-20' }))
+        : [],
   };
   const app = createApp({ store, jira, now: clock(), log: quiet });
   await populate(app, { people: 6, weeks: 2 });
@@ -138,28 +214,36 @@ test('the daily rollup aggregates completed weeks, snapshots open work and enfor
   await store.set('tz:old', { zone: 'UTC', until: '2026-01-01' });
 
   const summary = await app.dailyRollup();
-  assert.equal(summary.errors.length, 0);
+  assert.deepEqual(summary.errors, []);
   assert.equal(summary.weeksRolled, 1); // week 39 is complete; week 40 is in progress
   assert.equal(summary.snapshots, 1);
   const rolled = await store.get('wk:jira:OPS:2026-W39');
   assert.equal(rolled.metrics.contributors, 6);
-  assert.equal(rolled.metrics.byActor, undefined);
+  assert.equal(rolled.metrics.people, undefined);
+  assert.equal(rolled.metrics.streakShare, 0);
   assert.equal(await store.get('day:jira:OPS:2026-08-01'), undefined);
   assert.equal(await store.get('wk:jira:OPS:2025-W01'), undefined);
   assert.equal(await store.get('tz:old'), undefined);
+  const people = await store.get('people:jira:OPS');
+  assert.equal(Object.keys(people).length, 6);
+  assert.equal(Object.values(people)[0].firstSeen, '2026-09-21');
   const snapshot = await store.get('wip:jira:OPS:2026-09-30');
   assert.equal(snapshot.openTotal, 10);
   assert.equal(snapshot.people, 3);
+  assert.equal(snapshot.highPriorityShare, 0.5);
+  assert.equal(snapshot.dueCrunch, 1.2); // two windows, 6 and 4
   assert.ok(!JSON.stringify(snapshot).includes('p0'));
 
   // Idempotent: a second run rolls nothing new.
   assert.equal((await app.dailyRollup()).weeksRolled, 0);
 
-  // The page now uses the snapshot for the workload dimension.
+  // The page now uses the snapshot for workload and deadline pressure.
   const report = await app.teamHealth({ scope: 'jira:OPS', product: 'jira' });
-  const overdue = report.current.dimensions.workload.indicators.find((i) => i.key === 'overdueShare');
-  assert.equal(overdue.value, 0.2);
-  assert.deepEqual(report.current.openWork, { day: '2026-09-30', openTotal: 10, unassigned: 0, people: 3 });
+  const find = (dim, key) => report.current.dimensions[dim].indicators.find((i) => i.key === key);
+  assert.equal(find('workload', 'overdueShare').value, 0.2);
+  assert.equal(find('deadline', 'highPriorityShare').status, 'act');
+  assert.equal(find('workload', 'wipMean').value, 1.7);
+  assert.deepEqual(report.current.openWork, { day: '2026-09-30', openTotal: 10, unassigned: 0, unassignedOverdue: 0, people: 3 });
 });
 
 test('a rollup failure on one project does not stop the others', async () => {
@@ -191,22 +275,41 @@ test('settings are validated, admin-gated in Jira, and change how new activity i
   await assert.rejects(app.saveSettings({ ...place, settings: { quietStart: 25 } }), /quietStart/);
   await assert.rejects(app.saveSettings({ ...place, settings: { quietStart: 7, quietEnd: 7 } }), /must differ/);
   await assert.rejects(app.saveSettings({ ...place, settings: { weekendDays: '1,2,3,4' } }), /more than three/);
+  await assert.rejects(app.saveSettings({ ...place, settings: { holidays: '2026-13-45' } }), /holidays must be dates/);
+  await assert.rejects(app.saveSettings({ ...place, settings: { longSpanHours: 4 } }), /longSpanHours/);
+  await assert.rejects(app.saveSettings({ ...place, settings: { signals: { nonsense: false } } }), /unknown signal/);
 
-  const saved = await app.saveSettings({ ...place, settings: { timeZone: 'Asia/Bangkok', quietStart: '19', quietEnd: '8', weekendDays: '5,6' } });
+  const saved = await app.saveSettings({
+    ...place,
+    settings: { timeZone: 'Asia/Bangkok', quietStart: '19', quietEnd: '8', weekendDays: '5,6', holidays: '2026-10-13, 2026-12-05', longSpanHours: '10', signals: { mentionsPerPersonDay: false, reopenRate: true } },
+  });
   assert.equal(saved.timeZone, 'Asia/Bangkok');
   assert.deepEqual(saved.weekendDays, [5, 6]);
+  assert.deepEqual(saved.holidays, ['2026-10-13', '2026-12-05']);
   assert.equal(saved.quietStart, 19);
+  assert.equal(saved.longSpanHours, 10);
+  assert.deepEqual(saved.signals, { mentionsPerPersonDay: false });
 
-  // Friday 12:30 Bangkok is now a weekend day, and 19:30 is after hours.
+  // Friday 12:30 Bangkok is now a weekend day, 19:30 is after hours, and the
+  // Thai holiday on 13 October counts as a rest day.
   await app.onJiraEvent(jiraEvent('u', '2026-10-02T05:30:00.000Z'));
-  const bucket = await store.get('day:jira:OPS:2026-10-02');
-  assert.equal(bucket.weekend, 1);
-  assert.equal(bucket.afterHours, 0);
+  const friday = await store.get('day:jira:OPS:2026-10-02');
+  assert.equal(friday.weekend, 1);
+  assert.equal(friday.afterHours, 0);
+  await app.onJiraEvent(jiraEvent('u', '2026-10-13T03:00:00.000Z'));
+  assert.equal((await store.get('day:jira:OPS:2026-10-13')).weekend, 1);
+
+  // A switched-off signal is missing from the card.
+  await populate(app, { people: 6, weeks: 1 });
+  const report = await app.teamHealth(place);
+  assert.equal(report.current.dimensions.fragmentation.indicators.some((i) => i.key === 'mentionsPerPersonDay'), false);
+  assert.equal(report.current.dimensions.rework.indicators.some((i) => i.key === 'reopenRate'), true);
 
   // Confluence has no admin check in v1; the validation still applies.
   const conf = createApp({ store, now: clock(), log: quiet });
   await assert.rejects(conf.saveSettings({ scope: 'confluence:1', product: 'confluence', settings: { quietEnd: -1 } }), /quietEnd/);
   assert.deepEqual(validateSettings({}).weekendDays, [6, 0]);
+  assert.deepEqual(validateSettings({}).holidays, []);
 });
 
 test('a page outside a project or space is refused', async () => {

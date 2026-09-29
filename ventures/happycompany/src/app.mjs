@@ -5,7 +5,7 @@
 // createApp() returns, and everything they need — storage, the Jira and
 // Confluence REST clients, the clock — comes in through the constructor. That
 // is what lets test/app.test.mjs run the whole app against an in-memory store
-// and a fake Jira, and it is why src/index.js is five lines of wiring.
+// and a fake Jira, and it is why src/index.js is a few lines of wiring.
 //
 // ## The concurrency caveat
 //
@@ -17,32 +17,57 @@
 // busy enough for this to matter, the fix is a per-day transaction on the
 // bucket key, which @forge/kvs supports.
 
-import { DEFAULT_SETTINGS, emptyBucket, recordActivity, mergeBuckets, periodMetrics } from './lib/signals.mjs';
+import { DEFAULT_SETTINGS, emptyBucket, recordActivity, recordMention, periodMetrics, upgradeBucket } from './lib/signals.mjs';
 import { localParts, isoWeek, daysOfWeek, previousWeeks, addDays, isValidZone, parseInstant } from './lib/time.mjs';
-import { newSalt, pseudonym, publicMetrics, MIN_GROUP, RETAIN_DAYS, RETAIN_WEEKS, TIMEZONE_CACHE_DAYS } from './lib/privacy.mjs';
-import { scorecard, trend } from './lib/score.mjs';
-import { normaliseJiraEvent, normaliseConfluenceEvent, confluenceScope } from './lib/events.mjs';
+import { newSalt, pseudonym, itemHash, publicMetrics, MIN_GROUP, RETAIN_DAYS, RETAIN_WEEKS, TIMEZONE_CACHE_DAYS } from './lib/privacy.mjs';
+import { scorecard, trend, INDICATOR_KEYS } from './lib/score.mjs';
+import { normaliseJiraEvent, normaliseJiraMention, normaliseConfluenceEvent, confluenceScope } from './lib/events.mjs';
 import { openWorkSnapshot } from './lib/openwork.mjs';
+import { activeDaysByPerson, streakShare, updatePeopleRecord, noRestShare } from './lib/recovery.mjs';
 
 export const WEEKS_SHOWN = 12;
 const SNAPSHOT_RETAIN_DAYS = 91;
+const STATUS_CACHE_DAYS = 7;
+const MAX_HOLIDAYS = 60;
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
 /** Settings as a caller may set them: validated, or an Error naming the field. */
 export function validateSettings(input) {
   const s = { ...DEFAULT_SETTINGS, ...(input || {}) };
   if (!isValidZone(s.timeZone)) throw new Error(`timeZone must be an IANA zone such as Europe/Berlin, not ${JSON.stringify(s.timeZone)}`);
-  for (const field of ['quietStart', 'quietEnd']) {
+  for (const field of ['quietStart', 'quietEnd', 'lateStart', 'lateEnd']) {
     const n = Number(s[field]);
     if (!Number.isInteger(n) || n < 0 || n > 23) throw new Error(`${field} must be a whole hour from 0 to 23`);
     s[field] = n;
   }
   if (s.quietStart === s.quietEnd) throw new Error('quietStart and quietEnd must differ');
+  if (s.lateStart === s.lateEnd) throw new Error('lateStart and lateEnd must differ');
   const days = Array.isArray(s.weekendDays) ? s.weekendDays : String(s.weekendDays).split(',');
-  const weekend = [...new Set(days.map((d) => Number(String(d).trim())))];
+  const weekend = [...new Set(days.map((d) => Number(String(d).trim())).filter((d) => !Number.isNaN(d)))];
   if (weekend.some((d) => !Number.isInteger(d) || d < 0 || d > 6)) throw new Error('weekendDays must be weekday numbers from 0 (Sunday) to 6 (Saturday)');
   if (weekend.length > 3) throw new Error('weekendDays lists more than three days');
-  s.weekendDays = weekend;
-  return { timeZone: s.timeZone, quietStart: s.quietStart, quietEnd: s.quietEnd, weekendDays: s.weekendDays };
+  const holidayList = Array.isArray(s.holidays) ? s.holidays : String(s.holidays || '').split(/[\s,;]+/);
+  const holidays = [...new Set(holidayList.map((d) => String(d).trim()).filter(Boolean))].sort();
+  if (holidays.some((d) => !DAY.test(d) || Number.isNaN(Date.parse(`${d}T00:00:00Z`)))) throw new Error('holidays must be dates written YYYY-MM-DD');
+  if (holidays.length > MAX_HOLIDAYS) throw new Error(`holidays lists more than ${MAX_HOLIDAYS} dates`);
+  const span = Number(s.longSpanHours);
+  if (!Number.isInteger(span) || span < 8 || span > 16) throw new Error('longSpanHours must be a whole number of hours from 8 to 16');
+  const signals = {};
+  for (const [key, on] of Object.entries(s.signals || {})) {
+    if (!INDICATOR_KEYS.includes(key)) throw new Error(`unknown signal ${JSON.stringify(key)}`);
+    if (on === false || on === 'false' || on === 0) signals[key] = false;
+  }
+  return {
+    timeZone: s.timeZone,
+    quietStart: s.quietStart,
+    quietEnd: s.quietEnd,
+    lateStart: s.lateStart,
+    lateEnd: s.lateEnd,
+    weekendDays: weekend,
+    holidays,
+    longSpanHours: span,
+    signals,
+  };
 }
 
 export function createApp({ store, jira = null, confluence = null, now = () => new Date(), log = console }) {
@@ -94,20 +119,75 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
     return zone;
   }
 
+  // Status ids -> categories, fetched once a week, so a status change can be
+  // read as "resolved" or "reopened" without an API call per event.
+  // An unknown id refreshes the list at most once a day: a status created
+  // today is recognised tomorrow, and a deleted one cannot cause a fetch per
+  // event.
+  async function statusCategory(id) {
+    if (!id || !jira?.statusCategories) return null;
+    const today = todayUtc();
+    let cached = await store.get('statuses');
+    const stale = !cached || cached.until <= today;
+    const unknown = cached && !(id in cached.map) && cached.fetchedOn !== today;
+    if (stale || unknown) {
+      try {
+        cached = { map: await jira.statusCategories(), fetchedOn: today, until: addDays(today, STATUS_CACHE_DAYS) };
+        await store.set('statuses', cached);
+      } catch (err) {
+        log.warn(`[happycompany] status list failed: ${err.message}`);
+        return cached?.map?.[id] ?? null;
+      }
+    }
+    return cached.map[id] ?? null;
+  }
+
+  // "updated" becomes "resolved" or "reopened" when the status crossed the
+  // Done line; those two feed the reopen rate. Everything else stays as is.
+  async function kindOf(activity) {
+    if (activity.kind !== 'updated' || !activity.status) return activity.kind;
+    const from = await statusCategory(activity.status.from);
+    const to = await statusCategory(activity.status.to);
+    if (from && to && from !== 'done' && to === 'done') return 'resolved';
+    if (from && to && from === 'done' && to !== 'done') return 'reopened';
+    return activity.kind;
+  }
+
   async function ingest(activity) {
     const settings = await settingsFor(activity.scope);
-    const who = pseudonym(activity.actor, await salt());
+    const key = await salt();
+    const who = pseudonym(activity.actor, key);
     const zone = await zoneFor(activity, settings, who);
     const parts = localParts(parseInstant(activity.at) || now(), zone);
-    const key = `day:${activity.scope}:${parts.day}`;
-    const bucket = (await store.get(key)) || emptyBucket();
-    recordActivity(bucket, { actor: who, hour: parts.hour, weekday: parts.weekday, kind: activity.kind }, settings);
-    await store.set(key, bucket);
+    const bucketKey = `day:${activity.scope}:${parts.day}`;
+    const bucket = upgradeBucket(await store.get(bucketKey)) || emptyBucket();
+    recordActivity(
+      bucket,
+      { actor: who, hour: parts.hour, weekday: parts.weekday, day: parts.day, kind: await kindOf(activity), item: itemHash(activity.item, key) },
+      settings,
+    );
+    await store.set(bucketKey, bucket);
     await rememberScope(activity.scope, activity.product);
     return { scope: activity.scope, day: parts.day, hour: parts.hour };
   }
 
+  async function ingestMention(mention) {
+    const settings = await settingsFor(mention.scope);
+    const key = await salt();
+    // Mentions are placed on the team's calendar day: the mentioned person's
+    // zone is unknown until they act, and the count is per day, not per hour.
+    const parts = localParts(parseInstant(mention.at) || now(), settings.timeZone);
+    const bucketKey = `day:${mention.scope}:${parts.day}`;
+    const bucket = upgradeBucket(await store.get(bucketKey)) || emptyBucket();
+    for (const accountId of mention.mentioned) recordMention(bucket, { mentioned: pseudonym(accountId, key) });
+    await store.set(bucketKey, bucket);
+    await rememberScope(mention.scope, mention.product);
+    return { scope: mention.scope, day: parts.day, mentions: mention.mentioned.length };
+  }
+
   async function onJiraEvent(event) {
+    const mention = normaliseJiraMention(event, now().toISOString());
+    if (mention) return { counted: true, ...(await ingestMention(mention)) };
     const activity = normaliseJiraEvent(event, now().toISOString());
     if (!activity) return { counted: false };
     return { counted: true, ...(await ingest(activity)) };
@@ -131,17 +211,37 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
     return { counted: true, ...(await ingest(activity)) };
   }
 
-  async function weekBucketFromDays(scope, week) {
-    const days = await Promise.all(daysOfWeek(week).map((day) => store.get(`day:${scope}:${day}`)));
-    if (days.every((d) => !d)) return null;
-    return mergeBuckets(days);
+  /** [{day, bucket}] for the given days, buckets upgraded, missing days omitted. */
+  async function dayRows(scope, days) {
+    const buckets = await Promise.all(days.map((day) => store.get(`day:${scope}:${day}`)));
+    return days.map((day, i) => ({ day, bucket: upgradeBucket(buckets[i]) })).filter((r) => r.bucket);
   }
 
-  async function weekMetrics(scope, week) {
+  // The 21-day window ending on `lastDay`, for streaks and rests.
+  async function windowRows(scope, lastDay) {
+    const days = Array.from({ length: RETAIN_DAYS }, (_, i) => addDays(lastDay, -i)).reverse();
+    return dayRows(scope, days);
+  }
+
+  async function weekMetricsFromDays(scope, week, settings, lastDay) {
+    const rows = await dayRows(scope, daysOfWeek(week));
+    if (!rows.length) return null;
+    const metrics = periodMetrics(rows.map((r) => r.bucket), settings);
+    const window = await windowRows(scope, lastDay);
+    const byPerson = activeDaysByPerson(window);
+    const weekDays = daysOfWeek(week);
+    metrics.streakShare = streakShare(byPerson, weekDays, lastDay);
+    const record = (await store.get(`people:${scope}`)) || {};
+    const activeThisWeek = Object.keys(activeDaysByPerson(rows));
+    metrics.noRestShare = noRestShare(record, activeThisWeek, lastDay);
+    return metrics;
+  }
+
+  async function weekMetrics(scope, week, settings, today) {
     const stored = await store.get(`wk:${scope}:${week}`);
     if (stored?.metrics) return stored.metrics;
-    const bucket = await weekBucketFromDays(scope, week);
-    return bucket ? periodMetrics(bucket) : null;
+    const sunday = daysOfWeek(week)[6];
+    return weekMetricsFromDays(scope, week, settings, sunday < today ? sunday : today);
   }
 
   async function snapshots(scope) {
@@ -164,10 +264,10 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
 
     const weeks = [];
     for (const week of weekKeys) {
-      const metrics = await weekMetrics(scope, week);
+      const metrics = await weekMetrics(scope, week, settings, today);
       const shown = publicMetrics(metrics);
       const snapshot = snaps.byWeek[week] || (week === thisWeek ? snaps.latest : null);
-      const card = shown && !shown.suppressed ? scorecard(metrics, snapshot) : null;
+      const card = shown && !shown.suppressed ? scorecard(metrics, snapshot, settings.signals) : null;
       weeks.push({
         week,
         hasData: Boolean(metrics),
@@ -178,8 +278,9 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
         grade: card?.grade ?? null,
         status: card?.status ?? 'unknown',
         dimensions: card?.dimensions ?? null,
+        actions: card?.actions ?? [],
         openWork: snapshot
-          ? { day: snapshot.day, openTotal: snapshot.openTotal, unassigned: snapshot.unassigned, people: snapshot.people }
+          ? { day: snapshot.day, openTotal: snapshot.openTotal, unassigned: snapshot.unassigned, unassignedOverdue: snapshot.unassignedOverdue ?? 0, people: snapshot.people }
           : null,
       });
     }
@@ -192,22 +293,29 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
       .slice(-4)
       .map((w) => w.score);
 
+    const notes = [
+      'Grades describe the team, never a person, and are indicators, not diagnoses.',
+      `Nothing is shown for weeks with fewer than ${MIN_GROUP} active people.`,
+      product === 'confluence'
+        ? 'Confluence has no per-person time zone, so quiet hours use the team time zone in the settings below.'
+        : 'Quiet hours use each person’s own Jira time zone when Jira shares it, and the team time zone otherwise.',
+      'This page sees the part of the day that lands in Jira and Confluence. Calls, chats and email are not counted.',
+    ];
+    if (current.openWork?.unassignedOverdue) {
+      notes.push(`${current.openWork.unassignedOverdue} overdue items have no owner. Work nobody owns is work everybody worries about.`);
+    }
+
     return {
       scope,
       product,
       generatedAt: now().toISOString(),
       settings,
       minGroup: MIN_GROUP,
-      weeks,
+      indicatorKeys: INDICATOR_KEYS,
+      weeks: weeks.map(({ dimensions, actions, ...w }) => ({ ...w, ...(w.week === current.week ? { dimensions, actions } : {}) })),
       current,
       trend: trend(current.score, earlier),
-      notes: [
-        'Grades describe the team, never a person, and are indicators, not diagnoses.',
-        `Nothing is shown for weeks with fewer than ${MIN_GROUP} active people.`,
-        product === 'confluence'
-          ? 'Confluence has no per-person time zone, so quiet hours use the team time zone in the settings below.'
-          : 'Quiet hours use each person’s own Jira time zone when Jira shares it, and the team time zone otherwise.',
-      ],
+      notes,
     };
   }
 
@@ -232,7 +340,7 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
     return n;
   }
 
-  /** Once a day: roll completed weeks up, snapshot open work, enforce retention. */
+  /** Once a day: roll completed weeks up, snapshot open work, keep the people record, enforce retention. */
   async function dailyRollup() {
     const scopes = (await store.get('scopes')) || [];
     const today = todayUtc();
@@ -244,11 +352,18 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
 
     for (const { scope, product } of scopes) {
       try {
+        const settings = await settingsFor(scope);
+        // The people record first, so the week rolled below sees today's rests.
+        const window = await windowRows(scope, addDays(today, -1));
+        const record = updatePeopleRecord((await store.get(`people:${scope}`)) || {}, window, settings, today);
+        await store.set(`people:${scope}`, record);
+
         for (const week of previousWeeks(thisWeek, 3)) {
           if (await store.get(`wk:${scope}:${week}`)) continue;
-          const bucket = await weekBucketFromDays(scope, week);
-          if (!bucket) continue;
-          await store.set(`wk:${scope}:${week}`, { week, metrics: periodMetrics(bucket), kinds: bucket.kinds, rolledAt: today });
+          const sunday = daysOfWeek(week)[6];
+          const metrics = await weekMetricsFromDays(scope, week, settings, sunday);
+          if (!metrics) continue;
+          await store.set(`wk:${scope}:${week}`, { week, metrics, rolledAt: today });
           summary.weeksRolled += 1;
         }
         if (product === 'jira' && jira?.openIssues) {

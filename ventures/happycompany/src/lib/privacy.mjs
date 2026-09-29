@@ -33,6 +33,13 @@ export function pseudonym(accountId, salt) {
   return createHash('sha256').update(`${salt}:${accountId}`).digest('hex').slice(0, 16);
 }
 
+/** A short keyed hash of an issue or page id, for counting distinct items without keeping ids. */
+export function itemHash(itemId, salt) {
+  if (!salt) throw new Error('item hashes need the installation salt');
+  if (!itemId) return null;
+  return createHash('sha256').update(`${salt}:item:${itemId}`).digest('hex').slice(0, 10);
+}
+
 export function isPublishable(contributors) {
   return Number.isFinite(contributors) && contributors >= MIN_GROUP;
 }
@@ -48,6 +55,17 @@ export function publicMetrics(metrics) {
       contributors: metrics.contributors,
     };
   }
-  const { total, contributors, afterHoursShare, weekendShare, topShare, hhi } = metrics;
-  return { suppressed: false, total, contributors, afterHoursShare, weekendShare, topShare, hhi };
+  // Everything in metrics is a team-level share or count. The one thing that
+  // must never pass is a per-person map, and periodMetrics never emits one;
+  // this copies field by field so a future field has to be added here on purpose.
+  const {
+    total, contributors, personDays, afterHoursShare, lateShare, weekendShare, topShare, hhi,
+    longSpanShare, burstyShare, itemsMedian, mentionsPerPersonDay, mentionTopShare, reopenRate,
+    streakShare, noRestShare, kinds,
+  } = metrics;
+  return {
+    suppressed: false, total, contributors, personDays, afterHoursShare, lateShare, weekendShare, topShare, hhi,
+    longSpanShare, burstyShare, itemsMedian, mentionsPerPersonDay, mentionTopShare, reopenRate,
+    streakShare: streakShare ?? null, noRestShare: noRestShare ?? null, kinds: kinds || {},
+  };
 }

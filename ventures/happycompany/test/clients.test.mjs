@@ -19,21 +19,32 @@ function fakeApi(responses, calls) {
 test('open issues page through nextPageToken and read assignee and due date', async () => {
   const calls = [];
   const pages = [
-    { issues: [{ fields: { assignee: { accountId: 'a' }, duedate: '2026-09-01' } }, { fields: { assignee: null, duedate: null } }], nextPageToken: 'p2' },
-    { issues: [{ fields: { assignee: { accountId: 'b' }, duedate: '2026-12-01' } }] },
+    {
+      issues: [
+        { fields: { assignee: { accountId: 'a' }, duedate: '2026-09-01', status: { statusCategory: { key: 'indeterminate' } }, priority: { name: 'High' } } },
+        { fields: { assignee: null, duedate: null } },
+      ],
+      nextPageToken: 'p2',
+    },
+    { issues: [{ fields: { assignee: { accountId: 'b' }, duedate: '2026-12-01', status: { statusCategory: { key: 'new' } }, priority: { name: 'Medium' } } }] },
   ];
   let n = 0;
   const api = fakeApi([{ path: '/rest/api/3/search/jql', body: () => pages[n++] }], calls);
   const issues = await jiraClient(api, route).openIssues('OPS', { today: '2026-09-28' });
   assert.deepEqual(issues, [
-    { assignee: 'a', overdue: true },
-    { assignee: null, overdue: false },
-    { assignee: 'b', overdue: false },
+    { assignee: 'a', overdue: true, inProgress: true, high: true, due: '2026-09-01' },
+    { assignee: null, overdue: false, inProgress: false, high: false, due: null },
+    { assignee: 'b', overdue: false, inProgress: false, high: false, due: '2026-12-01' },
   ]);
   assert.equal(calls.length, 2);
   const second = JSON.parse(calls[1].init.body);
   assert.equal(second.nextPageToken, 'p2');
-  assert.match(second.jql, /^project = "OPS" AND statusCategory != Done$/);
+  assert.match(second.jql, /^project = "OPS" AND statusCategory != Done AND hierarchyLevel = 0$/);
+});
+
+test('the status catalogue maps ids to categories', async () => {
+  const api = fakeApi([{ path: '/rest/api/3/status', body: [{ id: '1', statusCategory: { key: 'new' } }, { id: '10001', statusCategory: { key: 'done' } }, { noid: true }] }], []);
+  assert.deepEqual(await jiraClient(api, route).statusCategories(), { 1: 'new', 10001: 'done' });
 });
 
 test('a project key that is not a project key never reaches JQL', async () => {

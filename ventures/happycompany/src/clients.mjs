@@ -29,15 +29,17 @@ export function jiraClient(api, route) {
       return user?.timeZone || null;
     },
 
-    /** Every unresolved issue in a project, as {assignee, overdue}. */
+    /** Every unresolved issue in a project, as {assignee, overdue, inProgress, high, due}. */
     async openIssues(projectKey, { today, maxIssues = 5000 } = {}) {
       if (!PROJECT_KEY.test(projectKey)) throw new Error(`refusing to search for project key ${JSON.stringify(projectKey)}`);
       const issues = [];
       let nextPageToken;
       do {
         const body = {
-          jql: `project = "${projectKey}" AND statusCategory != Done`,
-          fields: ['assignee', 'duedate'],
+          // Epics and initiatives are containers, usually assigned to a lead;
+          // counting them would flag every lead as overloaded.
+          jql: `project = "${projectKey}" AND statusCategory != Done AND hierarchyLevel = 0`,
+          fields: ['assignee', 'duedate', 'status', 'priority'],
           maxResults: 100,
           ...(nextPageToken ? { nextPageToken } : {}),
         };
@@ -51,14 +53,26 @@ export function jiraClient(api, route) {
         );
         for (const issue of page.issues || []) {
           const due = issue.fields?.duedate;
+          const priority = String(issue.fields?.priority?.name || '').toLowerCase();
           issues.push({
             assignee: issue.fields?.assignee?.accountId || null,
             overdue: Boolean(due && today && due < today),
+            inProgress: issue.fields?.status?.statusCategory?.key === 'indeterminate',
+            high: priority === 'high' || priority === 'highest' || priority === 'critical' || priority === 'blocker',
+            due: due || null,
           });
         }
         nextPageToken = page.nextPageToken;
       } while (nextPageToken && issues.length < maxIssues);
       return issues;
+    },
+
+    /** Every status id -> its category key ('new' | 'indeterminate' | 'done'). */
+    async statusCategories() {
+      const list = await json(await api.asApp().requestJira(route`/rest/api/3/status`), 'status list');
+      const out = {};
+      for (const status of list || []) if (status?.id) out[String(status.id)] = status.statusCategory?.key || null;
+      return out;
     },
 
     /** Whether the current viewer administers the project. */
