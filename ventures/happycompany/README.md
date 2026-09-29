@@ -74,6 +74,12 @@ Tests need only Node 22:
 npm test
 ```
 
+`test/manifest.test.mjs` fails if the code handles a product event the
+manifest does not subscribe to, or the other way round, or if the manifest
+gains any egress. The manifest also passes Atlassian's own validator
+(`@forge/manifest`, the one `forge lint` uses); `forge lint` itself needs a
+login, so run it once after `forge login`.
+
 Deploying needs an Atlassian account, a free developer site for Jira and one
 for Confluence (https://go.atlassian.com/cloud-dev), and the Forge CLI.
 
@@ -85,13 +91,20 @@ for Confluence (https://go.atlassian.com/cloud-dev), and the Forge CLI.
 4. `forge deploy -e development`, then `forge install` once for Jira and once
    for Confluence on the developer site. Open a project → "Team health", and a
    space → "Team health".
-5. `forge tunnel` and edit an issue, a page and a comment, and @mention
-   someone in a Jira comment. The log shows each event; confirm the
-   Confluence payloads carry the space, the mention event carries the
-   mentioned account, and a space admin can save settings while a viewer
-   cannot, the way `src/lib/events.mjs` and `src/clients.mjs` assume (it documents what
-   is verified and what is assumed). Adjust the normaliser if not; the tests
-   describe every shape.
+5. `forge tunnel`, then in the developer site: edit an issue, comment on it
+   and @mention someone, edit a Confluence page and comment on it, open
+   "Team health" in a project and in a space, and save settings once as an
+   admin and once as a plain member. Paste the tunnel log. It confirms the
+   three things `src/lib/events.mjs` and `src/clients.mjs` assume but could
+   not verify without a site: which field of a Confluence event carries the
+   space, which field of the mention event names the mentioned account, and
+   that `include-operations=true` returns the viewer's space permissions.
+   Then run the daily job once (`forge webtrigger` is not needed: wait for it,
+   or temporarily set the scheduled trigger's interval to `fiveMinute`) and
+   check `forge logs` for a line starting `[happycompany] rollup` with an
+   empty `errors` list. An error on the `sprints` step means the site's
+   Jira Software API wants a scope the manifest lacks; the step fails on its
+   own and nothing else is affected.
 6. Leave it a week on a real team of five or more, then read the page.
 
 Storage is per installation and Atlassian does not let the Jira copy read the

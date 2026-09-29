@@ -17,7 +17,7 @@
 // three and, if none is present, asks for a lookup by content id, which the
 // app resolves through the Confluence REST API.
 
-const JIRA_KIND = {
+export const JIRA_KIND = {
   'avi:jira:created:issue': 'created',
   'avi:jira:updated:issue': 'updated',
   'avi:jira:commented:issue': 'comment',
@@ -34,7 +34,7 @@ function mentionedIds(event) {
   return list.map((m) => (typeof m === 'string' ? m : m?.accountId)).filter(Boolean);
 }
 
-const CONFLUENCE_KIND = {
+export const CONFLUENCE_KIND = {
   'avi:confluence:created:page': 'created',
   'avi:confluence:updated:page': 'updated',
   'avi:confluence:created:blogpost': 'created',

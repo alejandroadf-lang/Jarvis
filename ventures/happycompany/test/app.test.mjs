@@ -315,8 +315,35 @@ test('a rollup failure on one project does not stop the others', async () => {
   await app.onJiraEvent(jiraEvent('u', NOW, 'BAD-1'));
   await app.onJiraEvent(jiraEvent('u', NOW, 'OPS-1'));
   const summary = await app.dailyRollup();
-  assert.deepEqual(summary.errors, [{ scope: 'jira:BAD', message: 'search exploded' }]);
+  assert.deepEqual(summary.errors, [{ scope: 'jira:BAD', step: 'open work', message: 'search exploded' }]);
   assert.equal(summary.snapshots, 1);
+});
+
+test('retention runs even when an earlier step of the rollup fails', async () => {
+  // A 403 from the sprint API (say, a scope the site did not grant) used to
+  // abort the whole project's rollup, and with it the deletion that keeps
+  // the 21-day promise to employees.
+  const store = memoryStore();
+  const jira = {
+    openIssues: async () => {
+      throw new Error('search 503');
+    },
+    boards: async () => {
+      throw new Error('board list failed: 403');
+    },
+  };
+  const app = createApp({ store, jira, now: clock(), log: quiet });
+  await app.onJiraEvent(jiraEvent('u', NOW, 'OPS-1'));
+  await store.set('day:jira:OPS:2026-08-01', { v: 2, total: 1, afterHours: 0, late: 0, weekend: 0, kinds: {}, tags: {}, people: { x: { n: 1, hours: [9], items: [], mentions: 0 } } });
+
+  const summary = await app.dailyRollup();
+  assert.deepEqual(
+    summary.errors.map((e) => e.step),
+    ['open work', 'sprints'],
+  );
+  assert.equal(await store.get('day:jira:OPS:2026-08-01'), undefined);
+  assert.ok(summary.deleted >= 1);
+  assert.ok(await store.get('people:jira:OPS'));
 });
 
 test('settings are validated, admin-gated in Jira, and change how new activity is classified', async () => {

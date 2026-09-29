@@ -36,6 +36,8 @@ modules:
         - avi:jira:created:issue
         - avi:jira:updated:issue
         - avi:jira:commented:issue
+        # Who was mentioned, without reading the comment. See SIGNALS.md C3.
+        - avi:jira:mentioned:issue
     - key: happycompany-confluence-activity
       function: on-confluence-event
       events:
