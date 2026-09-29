@@ -29,7 +29,16 @@ organisation view (Jira: "Working conditions across teams"; Confluence:
 global settings) with coverage, the share of teams in sustainable
 conditions, recovery time, action completion, the teams that could use
 support (alphabetical, never ranked) and a cost-of-strain calculator that
-uses only the customer's own assumptions. Admins set quiet hours, late night, weekend days, public holidays and
+uses only the customer's own assumptions.
+
+An optional anonymous team pulse (monthly or quarterly) asks what metadata
+cannot see: respect, psychological safety, support, role clarity, control
+and change, one statement per HSE Management Standard. Answers are kept
+only as counts and shown only for closed periods. Validation mode adds the
+Copenhagen Burnout Inventory so the grade can be checked against a
+validated scale across teams. A separate enablers score shows what helps:
+blocked work, priority churn, work people pick up themselves, and work only
+one person touches. Admins set quiet hours, late night, weekend days, public holidays and
 the long-day threshold, and can switch any signal off. The scoring bands are
 starting points to be calibrated in pilots, and the page says so.
 
@@ -69,6 +78,10 @@ src/features/digest.mjs the weekly digest, posted once per completed week
 src/features/org.mjs    the organisation view: coverage, recovery, action, no ranking
 src/lib/digest.mjs      the digest text
 src/lib/cost.mjs        the cost-of-strain scenario calculator
+src/lib/pulse.mjs       the anonymous pulse: statements, counts, the burnout scale
+src/lib/validation.mjs  grade against burnout scale, rank correlation
+src/lib/enablers.mjs    what helps: blocked work, churn, self-assignment, solo work
+src/features/pulse.mjs  pulse storage: counts only, per-period voter codes
 src/frontend/org.jsx    the organisation page
 src/lib/sprints.mjs     carry-over and unplanned work per closed sprint (Jira)
 src/frontend/index.jsx  the page, UI Kit

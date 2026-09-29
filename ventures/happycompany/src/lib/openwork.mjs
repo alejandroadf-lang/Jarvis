@@ -44,11 +44,15 @@ export function dueCrunch(dueDates, today) {
   return Math.round((max / typical) * 10) / 10;
 }
 
+function inProgressTotal(issues) {
+  return issues.filter((i) => i.inProgress).length;
+}
+
 /**
  * @param issues [{ assignee, overdue, inProgress, high, due }]
  * @param toPseudonym accountId -> pseudonym (so no id survives in the result)
  */
-export function openWorkSnapshot(issues, toPseudonym, day) {
+export function openWorkSnapshot(issues, toPseudonym, day, { flaggedInProgress = null } = {}) {
   const open = new Map();
   const wip = new Map();
   let unassigned = 0;
@@ -90,5 +94,6 @@ export function openWorkSnapshot(issues, toPseudonym, day) {
     wipHighShare: wipCounts.length ? wipCounts.filter((n) => n >= WIP_HIGH).length / wipCounts.length : null,
     highPriorityShare: issues.length ? high / issues.length : null,
     dueCrunch: dueCrunch(issues.map((i) => i.due), day),
+    blockedShare: flaggedInProgress === null || !inProgressTotal(issues) ? null : Math.min(1, flaggedInProgress / inProgressTotal(issues)),
   };
 }

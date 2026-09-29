@@ -131,6 +131,23 @@ export function jiraClient(api, route) {
       return issues;
     },
 
+    /**
+     * How many in-progress issues are flagged as impediments. Uses the
+     * approximate-count endpoint; the "Flagged" field is Jira Software's.
+     * Null when the site has no such field or the count is unavailable.
+     */
+    async flaggedInProgress(projectKey) {
+      if (!PROJECT_KEY.test(projectKey)) return null;
+      const res = await api.asApp().requestJira(route`/rest/api/3/search/approximate-count`, {
+        method: 'POST',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jql: `project = "${projectKey}" AND statusCategory = "In Progress" AND Flagged = Impediment` }),
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      return Number.isFinite(data?.count) ? data.count : null;
+    },
+
     /** Every status id -> its category key ('new' | 'indeterminate' | 'done'). */
     async statusCategories() {
       const list = await json(await api.asApp().requestJira(route`/rest/api/3/status`), 'status list');

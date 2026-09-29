@@ -81,6 +81,7 @@ test('the organisation view refuses anyone without access, and only admins may c
   const view = await app.organisationView({ product: 'jira', viewer: { isAdmin: false, groups: ['hr'] } });
   assert.equal(view.summary.teams, 1);
   assert.equal(view.canConfigure, false);
+  assert.match(view.summary.validation.verdict, /at least 5 teams/);
   assert.equal(view.orgSettings, undefined);
   const est = await app.estimateCost({ product: 'jira', viewer: { isAdmin: true }, inputs: { salary: 1, replacementCostShare: 0, extraTurnover: 0, absenceDays: 0, workingDays: 220 } });
   assert.equal(est.inputs.people, view.summary.strainedPeople);

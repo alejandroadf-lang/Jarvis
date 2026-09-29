@@ -79,6 +79,14 @@ export function changelogTags(event) {
   const due = items.find((i) => i?.field === 'duedate' || i?.fieldId === 'duedate');
   // A date set for the first time is planning; a date changed is a slip.
   if (due && due.from && due.to && due.from !== due.to) tags.push('dueMoved');
+  // A priority changed on existing work: reprioritisation churn (enablers).
+  const priority = items.find((i) => i?.field === 'priority' || i?.fieldId === 'priority');
+  if (priority && priority.from && priority.to && priority.from !== priority.to) tags.push('reprioritised');
+  // Who assigned the work: the person themselves, or someone else. Assumed:
+  // the changelog "to" of an assignee change is the account id (Cloud).
+  // Only the team share is ever computed from these tags.
+  const assignee = items.find((i) => i?.field === 'assignee' || i?.fieldId === 'assignee');
+  if (assignee && assignee.to) tags.push(assignee.to === event?.atlassianId ? 'selfAssigned' : 'assignedByOther');
   return tags;
 }
 
