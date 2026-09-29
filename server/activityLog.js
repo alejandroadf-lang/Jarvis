@@ -55,9 +55,20 @@ export function recordActivity({ agentId, kind, tool = null, ok = true, ventureI
   if (!entry.ok && kind === 'action') entry.gate = classifyRefusal(refusal);
   const oldest = new Date(now.getTime() - KEEP_DAYS * DAY_MS).toISOString();
   updateJson(FILE, { entries: [] }, (data) => {
+    // When recording began, kept once. A report over a window longer than
+    // the log has existed must say so: on the first day after deploy, "0 of
+    // 32 agents active" beside "the meeting ran 7 of 7 days" read as a dead
+    // team when it meant an empty log.
+    if (!data.startedAt) data.startedAt = data.entries[0]?.at || entry.at;
     data.entries = [...data.entries.filter((e) => e.at >= oldest), entry].slice(-MAX_ENTRIES);
   });
   return entry;
+}
+
+/** When the log began recording (ISO), or null when nothing was ever recorded. */
+export function activitySince() {
+  const data = readJson(FILE, { entries: [] });
+  return data.startedAt || data.entries[0]?.at || null;
 }
 
 export function listActivity({ since = '', agentId = null } = {}) {

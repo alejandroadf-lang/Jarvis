@@ -700,6 +700,32 @@ so rather than inventing advice. The recommendations are for the founder
 only; no agent reads them, since a team told to "use more budget" has been
 given a reason to spend it.
 
+The agent and action figures come from the activity log, which exists only
+since it was deployed. When the log is younger than the window, the report
+says from which date those figures count, and it holds back the advice that
+an empty log would fake: "most of the roster was never asked" and "the
+budget is idle while little real work happens". The meeting, budget and
+queue figures have their own history and cover the whole window.
+
+### One team, several ventures: `FOCUS`
+
+There are no per-venture teams. Every agent serves every venture, and what
+decides where the work goes is what the agents are told matters. Without a
+stated split, the shared context said "only one thing can be the priority at
+a time", and the team single-tracked whichever venture looked closest to
+revenue while a second one sat untouched with its repo linked.
+
+`FOCUS v_123 60 v_456 40` sets the split (shares are normalised, so `3` and
+`1` mean 75/25); `FOCUS` shows it; `FOCUS CLEAR` removes it. While a split is
+set, the shared context every agent reads states it and tells them to work
+on every venture on it in about that proportion and to cover each in the
+daily plan (`finance/ventures.js` `setFocus`, `finance/context.js`). It is an
+instruction, not a gate: nothing refuses an action for being on the "wrong"
+venture. `CAPACITY` then shows where the successful actions actually went
+against the split, and recommends a nudge when a venture is 25 points or
+more off (on at least five actions), or a split when two or more ventures
+are active and none is set.
+
 ## Four roles for Happy Company
 
 Happy Company (`ventures/happycompany`) is a Jira and Confluence app that

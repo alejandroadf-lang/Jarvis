@@ -7,7 +7,7 @@ import { getLedger } from './ledger.js';
 import { usageSummary } from '../ventureUsage.js';
 import { economicsLast30 } from '../spend.js';
 import { buildKnowledgeContext } from '../workspace/knowledge.js';
-import { listVentures, listContacts, listReplies, describePricing, pipelineSummary, listObjectives } from './ventures.js';
+import { listVentures, listContacts, listReplies, describePricing, pipelineSummary, listObjectives, getFocus } from './ventures.js';
 import { listFiles } from '../deploy/github.js';
 import { describeDraftsForAgents } from '../outreachDrafts.js';
 import { getLatestWeeklyReflection } from '../weeklyReflections.js';
@@ -39,6 +39,14 @@ export function buildBusinessContext() {
   const { revenue, expenses, net } = getLedger();
   const active = listVentures().filter((v) => v.status === 'active');
   const activeList = active.length ? active.map(describeActiveVenture).join('\n') : 'none yet';
+  // The founder's split across ventures (FOCUS), when set. Every agent serves
+  // every venture: this is the only thing telling them how to divide the work.
+  const focus = getFocus();
+  const focusLine = focus.length
+    ? `the founder's split of the team's work across ventures, which is: ${focus
+        .map((f) => `${f.title} ${f.pct}%`)
+        .join(', ')}. Every agent works on every venture on that list, in about that proportion, and every daily plan covers each of them; do not let one venture take the whole team because it looks closer to revenue`
+    : 'the fact that only one thing can be the priority at a time';
 
   return `Money actually earned so far: $${revenue.toFixed(2)}. Real expenses paid: $${expenses.toFixed(2)}. Net: $${net.toFixed(2)}.
 
@@ -49,9 +57,9 @@ There is no seed capital and no budget ceiling here — nothing is blocked for
 lack of money, and no venture needs funding approval to start. Don't reason
 about affordability, runway, or what the treasury can bear; those aren't the
 constraints. What is scarce: the founder's attention, the daily model-spend
-budget every agent turn draws on, and the fact that only one thing can be
-the priority at a time. Choose accordingly — the question is never "can we
-afford this", it's "is this the most valuable thing to be working on".
+budget every agent turn draws on, and ${focusLine}. Choose accordingly — the
+question is never "can we afford this", it's "is this the most valuable thing
+to be working on".
 
 Money still matters in exactly two places: revenue a venture has genuinely
 earned, and an expense someone actually paid — log those with log_revenue

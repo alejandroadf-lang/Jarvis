@@ -35,6 +35,48 @@ function save(data) {
   writeJson(FILE, data);
 }
 
+// The founder's split of the team across ventures: {ventureId: percent}.
+//
+// There are no per-venture teams: every agent serves every venture, and what
+// decides where the work goes is what the agents are told matters. Without a
+// stated split, the shared context's "one thing can be the priority at a
+// time" made the team single-track whichever venture looked closest to
+// revenue, and a second venture sat untouched with its repo linked. FOCUS
+// sets the split; buildBusinessContext states it to every agent, and
+// capacity.js compares it with where the work actually went.
+export function setFocus(weights) {
+  const data = load();
+  const active = new Map(data.ventures.filter((v) => v.status === 'active').map((v) => [v.id, v]));
+  const entries = Object.entries(weights || {});
+  if (!entries.length) throw new Error('Name at least one venture and its share, e.g. FOCUS v_123 60 v_456 40.');
+  for (const [id, share] of entries) {
+    if (!active.has(id)) throw new Error(`No active venture ${id}. Check the id against VENTURES, which lists every active one.`);
+    if (!Number.isFinite(share) || share <= 0) throw new Error(`The share for ${id} must be a positive number.`);
+  }
+  const total = entries.reduce((a, [, share]) => a + share, 0);
+  // Shares are normalised, so "FOCUS a 3 b 1" means 75/25 and a split that
+  // does not add to 100 is still what the founder meant.
+  data.focus = Object.fromEntries(entries.map(([id, share]) => [id, Math.round((share / total) * 100)]));
+  save(data);
+  return data.focus;
+}
+
+export function clearFocus() {
+  const data = load();
+  delete data.focus;
+  save(data);
+}
+
+/** The split, limited to ventures still active: [{id, title, pct}], largest first; [] when none is set. */
+export function getFocus() {
+  const data = load();
+  const byId = new Map(data.ventures.filter((v) => v.status === 'active').map((v) => [v.id, v]));
+  return Object.entries(data.focus || {})
+    .filter(([id]) => byId.has(id))
+    .map(([id, pct]) => ({ id, title: byId.get(id).title, pct }))
+    .sort((a, b) => b.pct - a.pct);
+}
+
 function findOrThrow(data, id) {
   const venture = data.ventures.find((v) => v.id === id);
   if (!venture) throw new Error('Venture not found. Check the id against the business context — every active venture is listed there with its id.');
