@@ -9,7 +9,7 @@ five of the psychosocial hazards ISO 45003 asks employers to manage:
 
 | Dimension            | What it reads                                                                                   |
 | -------------------- | ----------------------------------------------------------------------------------------------- |
-| Hours and recovery   | Activity after hours, late at night, on weekends and holidays; long days; streaks; no week away |
+| Hours and recovery   | Activity after hours, late at night, on weekends and holidays; long days; streaks; no week away; work on days marked away |
 | Workload and pace    | Concentration, people far above the median open work, overdue, work in progress, sprint carry-over, inflow vs outflow |
 | Fragmentation        | Different items and separate bursts per person-day, mention load                                |
 | Deadline pressure    | Due dates bunching, priorities inflated to High, work created mid-sprint, due dates moved, load surge |
@@ -107,6 +107,7 @@ src/lib/disclosures.mjs ESRS S1, Top Employers and B Corp drafts from a pack
 src/lib/levels.mjs      Measuring, Acting, Sustaining
 src/lib/attestation.mjs signed attestations of a level (Ed25519)
 scripts/verify-attestation.mjs  checks an attestation offline
+src/lib/away.mjs        days each person marks away, and work done on them
 src/lib/outcomes.mjs    imported sickness absence and leavers: parsing, checks, no per-team output
 src/rovo.mjs            the Rovo agent's two read-only actions
 src/lib/brief.mjs       the team page condensed for Rovo

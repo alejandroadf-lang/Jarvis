@@ -37,7 +37,7 @@ is printed in every evidence pack. In short:
 | ISO 45001:2018 | What the auditor asks | Where the app answers it |
 |---|---|---|
 | 5.4 Consultation and participation | Were workers involved? | Consultation date recorded on the organisation page; the anonymous team pulse and its participation; the "What we measure" tab every employee can open |
-| 6.1.2.1 Hazard identification | Did you screen how work is organised? | Weekly screening of 22 indicators and 4 enablers per team |
+| 6.1.2.1 Hazard identification | Did you screen how work is organised? | Weekly screening of 23 indicators and 4 enablers per team |
 | 6.1.2.2 Risk assessment | How big is each risk? | Share of team-weeks at "act now" per hazard, with the trend inside the quarter |
 | 6.1.4 Planning action | What did you decide to do? | Actions teams committed to from the week's suggestions |
 | 7.4 Communication | How are results communicated? | Team page, weekly digest |

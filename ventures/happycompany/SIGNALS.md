@@ -118,7 +118,7 @@ daily snapshot the app already receives, with a day-bucket schema change ·
 | A4 | **Late-night share**: 22:00–05:00 local, weighted heavier than evening | as A1 | late actions ÷ all | ≤2% → ≥10% | strong (sleep; Claes bug link; Microsoft 22:00 inbox) | global teams with a chosen night owl | P1 | **v1.1** | **keep**, from 22:00 (built) |
 | A5 | **No-recovery streaks**: people active 7 days in a row, or 12+ days without two consecutive days off | activity days per pseudonym across the 21-day window | share of active people in a streak this week | 0% → ≥30% | strong (detachment research) | trips with Jira triage from the airport count as work: correct | P1 (uses existing buckets) | **v1.1** | **keep** (built) |
 | A6 | **Vacation absence**: active people with no gap of ≥5 workdays in 90 days | requires remembering, per pseudonym, the date of the last 5-day gap | share of people without a gap | ≤20% → ≥60% | medium (Expedia: 65% vacation-deprived; recovery fade-out) | part-timers; people new to the team | **P2** (one date per pseudonym, 90 days) | v2, needs your call | **keep**, on by default (built) |
-| A7 | Activity during declared leave | Jira has no leave data | – | – | – | – | – | no | no |
+| A7 | **Work on days marked away**: activity in this team on workdays a person marked away | each person marks their own days on the "My days away" tab; no reason asked | away-workdays with activity ÷ all away-workdays, per week, shown only with ≥3 people away | ≤10% → ≥50% | strong (detachment research; A6) | people who mark days and forget to unmark them; on-call cover agreed in advance | P2 (marked days per pseudonym, visible only to the person, deleted 21 days after the day) | v1.2 | **keep**, built (decision 9) |
 
 ### B. Workload and pace (ISO 45003 "workload and work pace")
 
@@ -262,6 +262,10 @@ agree the exact set. That pack is also the Marketplace Privacy & Security tab.
 6. Mentions are Jira only.
 7. Every signal has an admin switch; a switched-off signal leaves the score.
 8. "Happy Company" stays the working name; trademark search before listing.
+9. (Later the same day.) People mark their own days away in the app, with
+   no reason and no type: "away" only, never "sick", so no health data is
+   collected. It gives A7. Slack and calendar sync stay out (egress); HR's
+   quarterly paste stays the source for sickness absence figures.
 
 ---
 
