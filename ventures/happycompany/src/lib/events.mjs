@@ -23,6 +23,17 @@ const JIRA_KIND = {
   'avi:jira:commented:issue': 'comment',
 };
 
+// The mention event is not an action of the actor we count (the comment event
+// already is); it tells us who was *mentioned*. The field that names them is
+// assumed (see the header): every shape seen in the wild is accepted.
+export const JIRA_MENTION_EVENT = 'avi:jira:mentioned:issue';
+
+function mentionedIds(event) {
+  const raw = event.mentionedAccountIds || event.mentionedAccountId || event.mentioned?.accountId || event.mentioned || event.mentionedUsers;
+  const list = Array.isArray(raw) ? raw : raw ? [raw] : [];
+  return list.map((m) => (typeof m === 'string' ? m : m?.accountId)).filter(Boolean);
+}
+
 const CONFLUENCE_KIND = {
   'avi:confluence:created:page': 'created',
   'avi:confluence:updated:page': 'updated',
@@ -52,7 +63,25 @@ export function normaliseJiraEvent(event, receivedAt) {
   const projectKey = issue.fields?.project?.key || String(issue.key || '').split('-')[0];
   if (!PROJECT_KEY.test(projectKey)) return null;
   const at = event.comment?.created || event.comment?.updated || issue.fields?.updated || receivedAt;
-  return { product: 'jira', scope: jiraScope(projectKey), actor, at, kind };
+  return { product: 'jira', scope: jiraScope(projectKey), actor, at, kind, item: issue.id ? String(issue.id) : issue.key, status: statusChange(event) };
+}
+
+/** {from, to} status ids when an update event changed the status, else null. */
+export function statusChange(event) {
+  const items = event?.changelog?.items || [];
+  const change = items.find((i) => i?.field === 'status' || i?.fieldId === 'status');
+  if (!change) return null;
+  return { from: change.from ? String(change.from) : null, to: change.to ? String(change.to) : null };
+}
+
+/** {scope, mentioned: [accountId], at} for a mention event, or null. */
+export function normaliseJiraMention(event, receivedAt) {
+  if (event?.eventType !== JIRA_MENTION_EVENT || !event.issue) return null;
+  const projectKey = event.issue.fields?.project?.key || String(event.issue.key || '').split('-')[0];
+  if (!PROJECT_KEY.test(projectKey)) return null;
+  const mentioned = mentionedIds(event).filter((id) => id !== event.atlassianId);
+  if (!mentioned.length) return null;
+  return { product: 'jira', scope: jiraScope(projectKey), mentioned, at: event.comment?.created || receivedAt };
 }
 
 /**
@@ -74,6 +103,8 @@ export function normaliseConfluenceEvent(event, receivedAt) {
     actor,
     at,
     kind,
+    // A comment counts as touching its page, when the event says which.
+    item: String(content.pageId || content.blogPostId || content.container?.id || content.id || ''),
   };
 }
 

@@ -22,14 +22,17 @@ work from; the launch plan format follows `ventures/circadian/LAUNCH_PLAN.md`.
 `SIGNALS.md` is the catalogue: forty candidate signals across hours and
 recovery, workload, fragmentation, deadline pressure, rework, withdrawal and
 support, each with its evidence, false positives, privacy class and a
-proposed release. It is a proposal awaiting the founder's decision per row;
-nothing beyond the v1 skeleton is built until then.
+release. Decided 29 September 2026; step 1 (seventeen indicators across five
+dimensions) is built and tested, step 2 is the sprint signals, the rest
+waits for pilots.
 
 ## What exists today
 
 The app in this directory: two product-event triggers, a daily scheduled
 rollup, a page for Jira projects and Confluence spaces, pseudonymisation,
-the 5-person rule, retention, ISO 45003-mapped scoring, 41 tests. Not yet done
+the 5-person rule, retention, seventeen indicators in five ISO 45003-mapped
+dimensions, "three things to change this week", holidays and per-signal
+switches, 56 tests. Not yet done
 on a real site: `forge register`, the first deploy, and confirming the
 Confluence event payload shapes (README step 5).
 
@@ -131,5 +134,7 @@ Partners who run HR-adjacent implementations. Target by day 90: listing live,
   at the top of `src/app.mjs`); use a KVS transaction per day key if a pilot
   team's volumes make it visible.
 - Weekend-day input is a comma-separated field; replace with checkboxes.
+- The mention event's field naming the mentioned account is assumed until
+  the first `forge tunnel` run confirms it (README step 5).
 - The trend uses the last four weeks; add a per-team baseline once pilots
   have eight weeks of data.

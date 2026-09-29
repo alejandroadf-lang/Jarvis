@@ -1,9 +1,12 @@
 # Happy Company: the signals
 
-**Status: proposal for agreement, written overnight 28–29 September 2026.**
-Nothing beyond the v1 skeleton already in this directory gets built until the
-rows below are agreed. Each signal has a *Proposed* column; add your decision
-(keep / change / drop) and the agents build exactly that.
+**Status: agreed 29 September 2026, step 1 built.** The founder took the
+recommendations with one amendment: vacations are tricky, because project
+pressure makes people work nights, weekends and holidays, so the recovery
+signals were strengthened rather than parked. Public holidays count as rest
+days (a team setting), and the "no week away in three months" signal (A6) is
+in, because a vacation with Jira activity in it is not a vacation. Decisions
+are recorded in the *Decision* column; §8 says what is built.
 
 The person this is written for: someone working 8 to 12 hours a day, back to
 back calls, team chats all day, deadlines, MBOs and OKRs. Their Jira and
@@ -109,72 +112,72 @@ daily snapshot the app already receives, with a day-bucket schema change ·
 
 | # | Signal | Source | Team-level computation | Bands | Evidence | False positives | Privacy | Proposed | Decision |
 |---|---|---|---|---|---|---|---|---|---|
-| A1 | **After-hours share**: activity in quiet hours (default 20:00–07:00, each person's own Jira time zone) | issue and page event timestamps | after-hours actions ÷ all actions, per week | ≤8% → ≥25% | strong (Sonnentag, Belkin, Microsoft) | chosen split shifts (parents, the "triple peak" by choice); mitigated by A4 splitting late night out | P1 | v1, built | |
-| A2 | **Weekend share** | same, weekend days per team setting | weekend actions ÷ all | ≤4% → ≥15% | strong (Sonnentag "the weekend matters") | Sun–Thu work weeks (setting exists); on-call rotas | P1 | v1, built | |
-| A3 | **Long-span days**: person-days whose first and last action are ≥ 11 hours apart | first and last local hour per pseudonym per day | share of person-days with span ≥ 11 h | ≤10% → ≥35% | strong for hours (WHO/ILO 55 h); this is the direct "8 to 12 hours" signal | a 08:00 action and a 20:00 action with a free afternoon; still shows extended availability, which Microsoft's "infinite workday" data treats as the harm | P1 (two hours per pseudonym per day) | **v1.1** | |
-| A4 | **Late-night share**: 22:00–05:00 local, weighted heavier than evening | as A1 | late actions ÷ all | ≤2% → ≥10% | strong (sleep; Claes bug link; Microsoft 22:00 inbox) | global teams with a chosen night owl | P1 | **v1.1** | |
-| A5 | **No-recovery streaks**: people active 7 days in a row, or 12+ days without two consecutive days off | activity days per pseudonym across the 21-day window | share of active people in a streak this week | 0% → ≥30% | strong (detachment research) | trips with Jira triage from the airport count as work: correct | P1 (uses existing buckets) | **v1.1** | |
-| A6 | **Vacation absence**: active people with no gap of ≥5 workdays in 90 days | requires remembering, per pseudonym, the date of the last 5-day gap | share of people without a gap | ≤20% → ≥60% | medium (Expedia: 65% vacation-deprived; recovery fade-out) | part-timers; people new to the team | **P2** (one date per pseudonym, 90 days) | v2, needs your call | |
-| A7 | Activity during declared leave | Jira has no leave data | – | – | – | – | – | no | |
+| A1 | **After-hours share**: activity in quiet hours (default 20:00–07:00, each person's own Jira time zone) | issue and page event timestamps | after-hours actions ÷ all actions, per week | ≤8% → ≥25% | strong (Sonnentag, Belkin, Microsoft) | chosen split shifts (parents, the "triple peak" by choice); mitigated by A4 splitting late night out | P1 | v1, built | **keep** (built) |
+| A2 | **Weekend share** | same, weekend days per team setting | weekend actions ÷ all | ≤4% → ≥15% | strong (Sonnentag "the weekend matters") | Sun–Thu work weeks (setting exists); on-call rotas | P1 | v1, built | **keep**, holidays added (built) |
+| A3 | **Long-span days**: person-days whose first and last action are ≥ 11 hours apart | first and last local hour per pseudonym per day | share of person-days with span ≥ 11 h | ≤10% → ≥35% | strong for hours (WHO/ILO 55 h); this is the direct "8 to 12 hours" signal | a 08:00 action and a 20:00 action with a free afternoon; still shows extended availability, which Microsoft's "infinite workday" data treats as the harm | P1 (two hours per pseudonym per day) | **v1.1** | **keep**, 11 h (built) |
+| A4 | **Late-night share**: 22:00–05:00 local, weighted heavier than evening | as A1 | late actions ÷ all | ≤2% → ≥10% | strong (sleep; Claes bug link; Microsoft 22:00 inbox) | global teams with a chosen night owl | P1 | **v1.1** | **keep**, from 22:00 (built) |
+| A5 | **No-recovery streaks**: people active 7 days in a row, or 12+ days without two consecutive days off | activity days per pseudonym across the 21-day window | share of active people in a streak this week | 0% → ≥30% | strong (detachment research) | trips with Jira triage from the airport count as work: correct | P1 (uses existing buckets) | **v1.1** | **keep** (built) |
+| A6 | **Vacation absence**: active people with no gap of ≥5 workdays in 90 days | requires remembering, per pseudonym, the date of the last 5-day gap | share of people without a gap | ≤20% → ≥60% | medium (Expedia: 65% vacation-deprived; recovery fade-out) | part-timers; people new to the team | **P2** (one date per pseudonym, 90 days) | v2, needs your call | **keep**, on by default (built) |
+| A7 | Activity during declared leave | Jira has no leave data | – | – | – | – | – | no | no |
 
 ### B. Workload and pace (ISO 45003 "workload and work pace")
 
 | # | Signal | Source | Computation | Bands | Evidence | False positives | Privacy | Proposed | Decision |
 |---|---|---|---|---|---|---|---|---|---|
-| B1 | **Concentration**: busiest person's share of activity above an even share | activity counts | topShare − 1/n | ≤10% → ≥35% | medium (unfair distribution; Gallup "unfair treatment") | a scrum master who touches every ticket; a bot account (exclude app users) | P1 | v1, built | |
-| B2 | **Overloaded people**: ≥ 2× the team median open issues and ≥ 8 | daily JQL snapshot of unresolved issues | share of assignees over the line | 0% → ≥30% | strong (unmanageable workload, JD-R) | epics and umbrella tickets assigned to leads; mitigate by excluding issue types Epic/Initiative | P0 (snapshot keeps team figures only) | v1, built | |
-| B3 | **Overdue share** | duedate in snapshot | overdue ÷ open | ≤8% → ≥30% | medium | teams that do not use due dates (indicator shows "no data", not 100) | P0 | v1, built | |
-| B4 | **WIP per person**: issues in progress at once | snapshot, statusCategory = In Progress | mean in-progress per active assignee; share ≥ 5 | ≤2 → ≥5 | strong (multitasking, attention residue) | Kanban teams with explicit WIP limits will look good, correctly | P0 | **v1.1** | |
-| B5 | **Assignment churn**: issues reassigned 2+ times | changelog `assignee` in update events | reassigned ÷ created, per week | ≤5% → ≥20% | medium (handoffs, role ambiguity) | triage queues that assign twice by design | P0 (count per issue hash, 21 days) | v2 | |
-| B6 | **Unplanned work**: issues added to an active sprint | changelog `Sprint` while sprint active | added mid-sprint ÷ committed | ≤10% → ≥30% | medium (scope creep vs carry-over literature) | teams that plan continuously (Kanban): show as "not applicable" | P0 | **v1.1** (Scrum teams) | |
-| B7 | **Sprint carry-over**: incomplete issues when a sprint closes | sprint closed event, or a daily poll of recently closed sprints (the event is reported unreliable) | incomplete ÷ committed | <10% → >20% | strong benchmarks (10–20% concerning, >20% a problem) | deliberately long-lived spikes | P0 | **v1.1** | |
-| B8 | **Inflow vs outflow**: created vs resolved per week | created events; resolution from update events or snapshot | 4-week ratio | ≤1.1 → ≥1.5 | medium (backlog growth = pace pressure) | intake weeks after planning | P0 | **v1.1** | |
+| B1 | **Concentration**: busiest person's share of activity above an even share | activity counts | topShare − 1/n | ≤10% → ≥35% | medium (unfair distribution; Gallup "unfair treatment") | a scrum master who touches every ticket; a bot account (exclude app users) | P1 | v1, built | keep (built) |
+| B2 | **Overloaded people**: ≥ 2× the team median open issues and ≥ 8 | daily JQL snapshot of unresolved issues | share of assignees over the line | 0% → ≥30% | strong (unmanageable workload, JD-R) | epics and umbrella tickets assigned to leads; mitigate by excluding issue types Epic/Initiative | P0 (snapshot keeps team figures only) | v1, built | keep, containers excluded (built) |
+| B3 | **Overdue share** | duedate in snapshot | overdue ÷ open | ≤8% → ≥30% | medium | teams that do not use due dates (indicator shows "no data", not 100) | P0 | v1, built | keep (built) |
+| B4 | **WIP per person**: issues in progress at once | snapshot, statusCategory = In Progress | mean in-progress per active assignee; share ≥ 5 | ≤2 → ≥5 | strong (multitasking, attention residue) | Kanban teams with explicit WIP limits will look good, correctly | P0 | **v1.1** | **keep** (built) |
+| B5 | **Assignment churn**: issues reassigned 2+ times | changelog `assignee` in update events | reassigned ÷ created, per week | ≤5% → ≥20% | medium (handoffs, role ambiguity) | triage queues that assign twice by design | P0 (count per issue hash, 21 days) | v2 | v2 |
+| B6 | **Unplanned work**: issues added to an active sprint | changelog `Sprint` while sprint active | added mid-sprint ÷ committed | ≤10% → ≥30% | medium (scope creep vs carry-over literature) | teams that plan continuously (Kanban): show as "not applicable" | P0 | **v1.1** (Scrum teams) | step 2 |
+| B7 | **Sprint carry-over**: incomplete issues when a sprint closes | sprint closed event, or a daily poll of recently closed sprints (the event is reported unreliable) | incomplete ÷ committed | <10% → >20% | strong benchmarks (10–20% concerning, >20% a problem) | deliberately long-lived spikes | P0 | **v1.1** | step 2 |
+| B8 | **Inflow vs outflow**: created vs resolved per week | created events; resolution from update events or snapshot | 4-week ratio | ≤1.1 → ≥1.5 | medium (backlog growth = pace pressure) | intake weeks after planning | P0 | **v1.1** | step 2 |
 
 ### C. Fragmentation and interruption (the "many calls, many chats" day)
 
 | # | Signal | Source | Computation | Bands | Evidence | False positives | Privacy | Proposed | Decision |
 |---|---|---|---|---|---|---|---|---|---|
-| C1 | **Fragmentation**: distinct issues/pages touched per person-day, and number of separate activity bursts (gaps > 45 min) | hashed item id per event | median distinct items per person-day; share of person-days with ≥ 4 bursts | ≤4 items → ≥10; ≤2 bursts → ≥5 | strong (Mark: 23 min to refocus; Microsoft: interruption every 2 min) | triage roles (support leads) legitimately touch many items; show per role only if the team labels roles, otherwise accept | P1 (item hashes inside the day bucket) | **v1.1** | |
-| C2 | **Comment bursts**: comments within 5-minute clusters across several issues | derived from C1 with kind = comment | share of comments in bursts | ≤20% → ≥50% | medium | stand-up follow-ups | P1 | v2 | |
-| C3 | **Mention load**: @mentions received per active person per day | Jira `avi:jira:mentioned:issue` event (gives the mentioned account without reading text) | mentions ÷ active people ÷ day; concentration of mentions on one person | ≤3/day → ≥8/day; top person ≤ 25% → ≥ 50% | medium-strong (message load; Belkin's expectation effect) | announcement-style mentions of whole groups | P1 (count per pseudonym) | **v1.1**, Jira only (Confluence mentions need text) | |
-| C4 | **Response pressure**: time from a mention to the mentioned person's next action on that issue | C3 plus per-issue pending state | median response lag; share under 15 min out of hours | – | medium (anticipatory stress) | – | P1, short-lived | v2 | |
+| C1 | **Fragmentation**: distinct issues/pages touched per person-day, and number of separate activity bursts (gaps > 45 min) | hashed item id per event | median distinct items per person-day; share of person-days with ≥ 4 bursts | ≤4 items → ≥10; ≤2 bursts → ≥5 | strong (Mark: 23 min to refocus; Microsoft: interruption every 2 min) | triage roles (support leads) legitimately touch many items; show per role only if the team labels roles, otherwise accept | P1 (item hashes inside the day bucket) | **v1.1** | **keep** (built) |
+| C2 | **Comment bursts**: comments within 5-minute clusters across several issues | derived from C1 with kind = comment | share of comments in bursts | ≤20% → ≥50% | medium | stand-up follow-ups | P1 | v2 | v2 |
+| C3 | **Mention load**: @mentions received per active person per day | Jira `avi:jira:mentioned:issue` event (gives the mentioned account without reading text) | mentions ÷ active people ÷ day; concentration of mentions on one person | ≤3/day → ≥8/day; top person ≤ 25% → ≥ 50% | medium-strong (message load; Belkin's expectation effect) | announcement-style mentions of whole groups | P1 (count per pseudonym) | **v1.1**, Jira only (Confluence mentions need text) | **keep**, Jira only (built) |
+| C4 | **Response pressure**: time from a mention to the mentioned person's next action on that issue | C3 plus per-issue pending state | median response lag; share under 15 min out of hours | – | medium (anticipatory stress) | – | P1, short-lived | v2 | v2 |
 
 ### D. Deadline and goal pressure (MBOs, OKRs; ISO 45003 "time pressure")
 
 | # | Signal | Source | Computation | Bands | Evidence | False positives | Privacy | Proposed | Decision |
 |---|---|---|---|---|---|---|---|---|---|
-| D1 | **Due-date crunch**: open issues due within the same 5-day window | duedate in snapshot | max 5-day density ÷ median density | ≤2× → ≥4× | medium (quarter-end and release crunch) | release trains by design; still a pressure period | P0 | **v1.1** | |
-| D2 | **Slipped deadlines**: issues whose due date moved 2+ times | changelog `duedate` in update events | slipped ÷ issues with due dates | ≤10% → ≥35% | medium (unrealistic planning, Gallup time pressure) | roadmap grooming | P0 (per issue hash, 21 days) | **v1.1** | |
-| D3 | **Quarter-end surge**: activity in the last 10 days of a quarter vs the quarter's weekly average | existing weekly totals | ratio | ≤1.3× → ≥2× | medium (MBO/OKR cycle) | fiscal years that do not end on calendar quarters (setting) | P0 | **v1.1** | |
-| D4 | **Priority inflation**: open issues at High or Highest | priority in snapshot | share | ≤20% → ≥50% | medium (when everything is urgent, nothing is; unreasonable time pressure) | incident projects | P0 | **v1.1** | |
-| D5 | **Blocked work**: flagged impediments | Jira `Flagged` field | flagged ÷ in progress | ≤10% → ≥30% | medium (low control) | – | P0 | v2 | |
-| D6 | **Goal churn**: OKRs marked at risk / off track, goals per team | Atlassian Goals via Teamwork Graph API | – | – | – | – | – | v3: the API is Early Access, test organisations only | |
-| D7 | Late edits to status/OKR pages by title | would require reading page titles | – | – | – | – | text | **no**; labels are metadata and could be an opt-in later | |
+| D1 | **Due-date crunch**: open issues due within the same 5-day window | duedate in snapshot | max 5-day density ÷ median density | ≤2× → ≥4× | medium (quarter-end and release crunch) | release trains by design; still a pressure period | P0 | **v1.1** | **keep** (built) |
+| D2 | **Slipped deadlines**: issues whose due date moved 2+ times | changelog `duedate` in update events | slipped ÷ issues with due dates | ≤10% → ≥35% | medium (unrealistic planning, Gallup time pressure) | roadmap grooming | P0 (per issue hash, 21 days) | **v1.1** | step 2 |
+| D3 | **Quarter-end surge**: activity in the last 10 days of a quarter vs the quarter's weekly average | existing weekly totals | ratio | ≤1.3× → ≥2× | medium (MBO/OKR cycle) | fiscal years that do not end on calendar quarters (setting) | P0 | **v1.1** | step 2 |
+| D4 | **Priority inflation**: open issues at High or Highest | priority in snapshot | share | ≤20% → ≥50% | medium (when everything is urgent, nothing is; unreasonable time pressure) | incident projects | P0 | **v1.1** | **keep** (built) |
+| D5 | **Blocked work**: flagged impediments | Jira `Flagged` field | flagged ÷ in progress | ≤10% → ≥30% | medium (low control) | – | P0 | v2 | v2 |
+| D6 | **Goal churn**: OKRs marked at risk / off track, goals per team | Atlassian Goals via Teamwork Graph API | – | – | – | – | – | v3: the API is Early Access, test organisations only | watch |
+| D7 | Late edits to status/OKR pages by title | would require reading page titles | – | – | – | – | text | **no**; labels are metadata and could be an opt-in later | no |
 
 ### E. Rework and efficacy (the "reduced professional efficacy" dimension)
 
 | # | Signal | Source | Computation | Bands | Evidence | False positives | Privacy | Proposed | Decision |
 |---|---|---|---|---|---|---|---|---|---|
-| E1 | **Reopen rate**: Done → not Done transitions | changelog `status` with status categories (cached from the status API) | reopened ÷ resolved, 4 weeks | ≤5% → ≥15% | strong (rework literature; ~8% typical) | workflows that use Done as a review gate | P0 | **v1.1** | |
-| E2 | **Cycle-time drift**: median in-progress→done vs the team's own 8-week baseline | changelog timestamps; start time per issue hash until done | ratio to baseline | ≤1.2× → ≥2× | medium | scope changes | P0 (issue hash → start, 90 days) | v2 | |
-| E3 | **Edit churn** in Confluence: pages with many versions by many editors in a short span | `version.number` in page events | share of edited pages with ≥ 8 versions in 7 days | – | weak | living documents | P0 | v2 | |
-| E4 | **Estimation miss**: points committed vs delivered | sprint API | – | – | medium | – | P0 | v2 (Scrum) | |
+| E1 | **Reopen rate**: Done → not Done transitions | changelog `status` with status categories (cached from the status API) | reopened ÷ resolved, 4 weeks | ≤5% → ≥15% | strong (rework literature; ~8% typical) | workflows that use Done as a review gate | P0 | **v1.1** | **keep** (built) |
+| E2 | **Cycle-time drift**: median in-progress→done vs the team's own 8-week baseline | changelog timestamps; start time per issue hash until done | ratio to baseline | ≤1.2× → ≥2× | medium | scope changes | P0 (issue hash → start, 90 days) | v2 | v2 |
+| E3 | **Edit churn** in Confluence: pages with many versions by many editors in a short span | `version.number` in page events | share of edited pages with ≥ 8 versions in 7 days | – | weak | living documents | P0 | v2 | v2 |
+| E4 | **Estimation miss**: points committed vs delivered | sprint API | – | – | medium | – | P0 | v2 (Scrum) | v2 |
 
 ### F. Withdrawal (the cynicism pathway) — handle with care
 
 | # | Signal | Source | Computation | Bands | Evidence | False positives | Privacy | Proposed | Decision |
 |---|---|---|---|---|---|---|---|---|---|
-| F1 | **Participation drop**: people whose activity fell > 60% for 3+ weeks while the team's did not | weekly counts per pseudonym over 6 weeks | share of previously active people who dropped | 0% → ≥25% | medium (BurnRiSc used review participation) | leave, role change, parental leave: indistinguishable | **P2** | v2 only if a works council would accept it; **default off**; or drop | |
-| F2 | **Silent issues**: issues where only one person ever comments | comment events per issue hash | share of active issues | – | weak | solo work by design | P0 | v2 | |
-| F3 | **Unread work** in Confluence: pages created that nobody else views within 14 days | Confluence analytics API (`/analytics/content/{id}/viewers`, classic scope) | share of new pages with ≤1 viewer | ≤20% → ≥50% | medium (isolation, futility → cynicism) | drafts, personal spaces (exclude) | P0 | v2 | |
+| F1 | **Participation drop**: people whose activity fell > 60% for 3+ weeks while the team's did not | weekly counts per pseudonym over 6 weeks | share of previously active people who dropped | 0% → ≥25% | medium (BurnRiSc used review participation) | leave, role change, parental leave: indistinguishable | **P2** | v2 only if a works council would accept it; **default off**; or drop | **out** for now; revisit after the first works-council conversation |
+| F2 | **Silent issues**: issues where only one person ever comments | comment events per issue hash | share of active issues | – | weak | solo work by design | P0 | v2 | v2 |
+| F3 | **Unread work** in Confluence: pages created that nobody else views within 14 days | Confluence analytics API (`/analytics/content/{id}/viewers`, classic scope) | share of new pages with ≤1 viewer | ≤20% → ≥50% | medium (isolation, futility → cynicism) | drafts, personal spaces (exclude) | P0 | v2 | v2 |
 
 ### G. Support and single points of failure (ISO 45003 "support, role clarity")
 
 | # | Signal | Source | Computation | Bands | Evidence | False positives | Privacy | Proposed | Decision |
 |---|---|---|---|---|---|---|---|---|---|
-| G1 | **Bus factor**: components or epics with a single active contributor | component / parent in events (metadata) | share of active components with one contributor | ≤20% → ≥50% | medium (isolation, no backup, no vacation possible) | tiny teams | P1 | v2 | |
-| G2 | **Ownerless overdue work** | already in the snapshot (`unassigned`, overdue) | count and share | – | medium (team overwhelmed) | intake queues | P0 | **v1.1** (presentation only) | |
-| G3 | Manager responsiveness | needs an org chart the app does not have | – | – | – | – | – | no | |
+| G1 | **Bus factor**: components or epics with a single active contributor | component / parent in events (metadata) | share of active components with one contributor | ≤20% → ≥50% | medium (isolation, no backup, no vacation possible) | tiny teams | P1 | v2 | v2 |
+| G2 | **Ownerless overdue work** | already in the snapshot (`unassigned`, overdue) | count and share | – | medium (team overwhelmed) | intake queues | P0 | **v1.1** (presentation only) | **keep** (built, as a note) |
+| G3 | Manager responsiveness | needs an org chart the app does not have | – | – | – | – | – | no | no |
 
 ---
 
@@ -247,17 +250,18 @@ agree the exact set. That pack is also the Marketplace Privacy & Security tab.
 
 ---
 
-## 7. Decisions for you
+## 7. Decisions taken (29 September 2026)
 
-1. The seven groups A–G: any to strike entirely?
-2. A3 long-span threshold: 10, 11 or 12 hours?
-3. A4 late-night boundary: 22:00, or 23:00?
-4. F1 participation drop: in with opt-in and default off, or out?
-5. A6 vacation absence: accept the 90-day per-pseudonym date, or out?
-6. C3 mentions Jira-only: fine, or drop mentions until Confluence can do it?
-7. Per-signal admin toggles: yes (recommended), or one global switch?
-8. The name. "Happy Company" is your phrase; keep it or change before the
-   listing. A trademark search comes first either way.
+1. All seven groups stay.
+2. A long day is 11 hours from first to last action (a team setting, 8–16).
+3. Late night starts at 22:00 and ends at 05:00 (team settings).
+4. F1 participation drop is out until a works council has been asked.
+5. A6 is in, on by default: three dates per pseudonym (first seen, last
+   seen, last rest), forgotten 120 days after the person was last seen.
+   Holidays are a team setting and count as rest days everywhere.
+6. Mentions are Jira only.
+7. Every signal has an admin switch; a switched-off signal leaves the score.
+8. "Happy Company" stays the working name; trademark search before listing.
 
 ---
 
@@ -265,7 +269,7 @@ agree the exact set. That pack is also the Marketplace Privacy & Security tab.
 
 | Step | Signals | What changes | Effort |
 |---|---|---|---|
-| 1 | A3, A4, A5, B4, C1, C3, D1, D4, E1, G2 | day-bucket schema (three fields), snapshot fields (in-progress, priority, due-date density), `mentioned` event, status-category cache, five-dimension scorecard, "three things" block, per-signal toggles | 2 agent-days, tests included |
+| 1 ✅ | A3, A4, A5, A6, B4, C1, C3, D1, D4, E1, G2 | day-bucket schema (hours, item hashes, mentions per pseudonym), the people record for rests, snapshot fields (in progress, priority, due-date density, ownerless overdue), `mentioned` event, status-category cache, five-dimension scorecard, "three things to change this week", holidays and per-signal switches in settings | done: 56 tests |
 | 2 | B6, B7, B8, D2, D3 | sprint changelog parsing, closed-sprint poll, created/resolved counts, due-date change counts, quarter setting | 1–2 agent-days |
 | 3 | works-council pack, Privacy & Security tab text, listing copy | documents | 1 agent-day |
 | v2 | A6, B5, C2, C4, D5, E2, E3, F2, F3, G1 | each its own PR after pilots ask | as needed |
