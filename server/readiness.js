@@ -45,8 +45,16 @@ import { getVenture, rateLimitState, pathAllowed, assertChecksNotOverdue } from 
  * message carry one — a missing GITHUB_TOKEN is a Railway variable, and
  * pretending otherwise would be worse than saying nothing.
  */
-function gate(name, open, detail, fix = '', founderCommand = '') {
-  return { name, open, detail, fix, founderCommand };
+//
+// `where` says who opens a gate that has no command: 'railway' for a server
+// variable, 'team' for work the agents do themselves or a gate that clears on
+// its own, 'none' when nothing will. It exists because the founder's brief
+// once filed every command-less gate under "these need the Railway settings",
+// so an unapproved daily plan (a message away) read as a server setting.
+// `founderFix` is the same fix in the founder's words where the agent's
+// ("call run_checks") would mean nothing to them.
+function gate(name, open, detail, fix = '', founderCommand = '', { where = 'team', founderFix = '' } = {}) {
+  return { name, open, detail, fix, founderCommand, where, founderFix };
 }
 
 function haltGate() {
@@ -59,6 +67,7 @@ function haltGate() {
       ? 'REAL_ACTIONS_DISABLED is set on the server — only the founder can unset it.'
       : 'The founder resumes real actions from the Ventures panel or by WhatsApp.',
     state.envLocked ? '' : 'RESUME',
+    { where: state.envLocked ? 'railway' : 'team' },
   );
 }
 
@@ -72,18 +81,24 @@ function spendGate() {
     open,
     `$${spent.toFixed(2)} of $${cap.toFixed(2)} used today.`,
     open ? '' : 'Nothing more runs today. The founder raises DAILY_SPEND_CAP_USD, or this waits for tomorrow.',
+    '',
+    { where: 'railway' },
   );
 }
 
 function ventureGate(venture, id) {
   if (!venture) {
-    return gate('Venture', false, `No venture with id "${id}".`, 'Check the id against the business context.');
+    return gate('Venture', false, `No venture with id "${id}".`, 'Check the id against the business context.', '', {
+      founderFix: 'Check the id against VENTURES.',
+    });
   }
   return gate(
     'Venture active',
     venture.status === 'active',
     `"${venture.title}" is ${venture.status}.`,
     venture.status === 'active' ? '' : 'A killed venture cannot act. Nothing will change this.',
+    '',
+    { where: 'none' },
   );
 }
 
@@ -96,8 +111,11 @@ function planGate(ventureId, action, target) {
   }
   const approved = getApprovedPlan();
   if (!approved) {
-    const plan = getPlan();
-    const pending = plan?.pending;
+    // getPlan returns the plan itself (pending before approved), so a waiting
+    // plan is one whose status says so. Reading `.pending` off it was always
+    // undefined, and a plan sitting on the founder's phone was reported as
+    // no plan at all.
+    const pending = getPlan()?.status === 'pending';
     return gate(
       'Approved daily plan',
       false,
@@ -105,6 +123,12 @@ function planGate(ventureId, action, target) {
       pending
         ? 'The founder approves or rejects it. You can submit a better one at any time — there is no queue.'
         : 'Submit one with submit_daily_plan covering this action. It can be approved in one message.',
+      pending ? 'PLAN' : '',
+      {
+        founderFix: pending
+          ? 'PLAN shows it; APPROVE opens this.'
+          : 'Ask the team, in one message, for a plan covering this; then APPROVE it.',
+      },
     );
   }
   const covered = isCoveredByApprovedPlan({ ventureId, action, target });
@@ -113,6 +137,8 @@ function planGate(ventureId, action, target) {
     covered,
     covered ? `The approved plan covers "${action}".` : `The approved plan does not cover "${action}"${target ? ` on ${target}` : ''}.`,
     covered ? '' : 'Do what is in the plan, or submit a new one covering this — it replaces the current one on approval.',
+    '',
+    { founderFix: 'Ask the team for a plan that covers it; it replaces the current one when you APPROVE it.' },
   );
 }
 
@@ -138,6 +164,8 @@ function capGates(entries, timestampKey, scope, label) {
       state.cooldownOk,
       state.cooldownOk ? 'Clear.' : `${Math.ceil(state.cooldownRemainingMs / 1000)}s left.`,
       state.cooldownOk ? '' : 'Wait it out. This one clears on its own.',
+      '',
+      { founderFix: 'Clears on its own within minutes.' },
     ),
   ];
 }
@@ -147,7 +175,9 @@ function checksGate(venture) {
     assertChecksNotOverdue(venture);
     return gate('Checks up to date', true, 'Nothing overdue.', '');
   } catch (err) {
-    return gate('Checks up to date', false, err.message, 'Call run_checks. This one you can open yourself.');
+    return gate('Checks up to date', false, err.message, 'Call run_checks. This one you can open yourself.', '', {
+      founderFix: 'The team runs its checks (run_checks); nothing for you to send.',
+    });
   }
 }
 
@@ -166,6 +196,8 @@ export function deployReadiness(ventureId, { path } = {}) {
       isGithubConfigured(),
       isGithubConfigured() ? 'GITHUB_TOKEN is set.' : 'No GITHUB_TOKEN on this server.',
       isGithubConfigured() ? '' : 'The founder sets GITHUB_TOKEN in the deployment environment.',
+      '',
+      { where: 'railway' },
     ),
     haltGate(),
     spendGate(),
@@ -180,6 +212,7 @@ export function deployReadiness(ventureId, { path } = {}) {
       Boolean(venture.repo),
       venture.repo ? `${venture.repo.owner}/${venture.repo.name}, branch ${venture.repo.branch}.` : 'No repo linked.',
       venture.repo ? '' : 'The founder links one in the Ventures panel — or the team links it itself if the repo is in AUTONOMOUS_DEPLOY_REPOS.',
+      venture.repo ? '' : `LINK ${ventureId} <owner/repo> <paths>`,
     ),
   );
   if (!venture.repo) return summarize(gates, 'deploy');
@@ -192,6 +225,17 @@ export function deployReadiness(ventureId, { path } = {}) {
       venture.repo.enabled ? '' : 'The founder turns this on in the Ventures panel. One switch.',
       venture.repo.enabled ? '' : `DEPLOY ON ${ventureId}`,
     ),
+    ...(venture.repo.reviewOnly
+      ? [
+          gate(
+            'Direct commits allowed',
+            false,
+            'Pull requests only: every change is proposed as a pull request and the founder merges it.',
+            'Use open_pull_request. Direct commits come back only if the founder lifts pull-requests-only.',
+            `REVIEW OFF ${ventureId}`,
+          ),
+        ]
+      : []),
     gate(
       'Path in scope',
       path ? pathAllowed(venture.repo, path) : true,
@@ -212,6 +256,21 @@ export function deployReadiness(ventureId, { path } = {}) {
 }
 
 /**
+ * The gates on proposing a change as a pull request: the deploy gates without
+ * the daily plan and without pull-requests-only, neither of which applies to
+ * a proposal (see authorizePullRequest). A pull request lands nothing, so
+ * requiring a pre-approved plan to propose work would be a deadlock, and
+ * pull-requests-only exists to route work here, not to stop it.
+ */
+export function pullRequestReadiness(ventureId, { path } = {}) {
+  const report = deployReadiness(ventureId, { path });
+  return summarize(
+    report.gates.filter((g) => g.name !== 'Approved daily plan' && g.name !== 'Direct commits allowed'),
+    'open a pull request',
+  );
+}
+
+/**
  * Every gate on sending a real customer email.
  */
 export function outreachReadiness(ventureId, { to } = {}) {
@@ -222,6 +281,8 @@ export function outreachReadiness(ventureId, { to } = {}) {
       isEmailConfigured(),
       isEmailConfigured() ? 'SMTP is set.' : 'No SMTP on this server.',
       isEmailConfigured() ? '' : 'The founder sets SMTP_HOST and REPORT_EMAIL_TO in the deployment environment.',
+      '',
+      { where: 'railway' },
     ),
     // Reported even though nothing blocks on it, because a company that can
     // send and not receive is broken in a way no refusal will ever mention.
@@ -230,6 +291,8 @@ export function outreachReadiness(ventureId, { to } = {}) {
       isInboxConfigured(),
       isInboxConfigured() ? 'Inbound mail is readable with check_replies.' : 'No inbound mailbox — replies are invisible.',
       isInboxConfigured() ? '' : 'The founder sets IMAP_HOST, IMAP_USER and IMAP_PASS. Outreach works without it; you just never hear back.',
+      '',
+      { where: 'railway' },
     ),
     haltGate(),
     spendGate(),
@@ -338,15 +401,22 @@ export function formatReadinessBrief(report) {
 
   // Gates the founder cannot open from a message still get named — a missing
   // SMTP_HOST is a Railway variable, and silently omitting it would leave them
-  // believing the two commands below are the whole story.
-  const elsewhere = report.shut
-    .filter((g) => !g.founderCommand && g.fix)
-    .map((g) => `  · ${g.name} — ${g.fix}`);
+  // believing the commands above are the whole story. Only the gates that
+  // really are server variables go under Railway: the rest clear by the
+  // team's work or by waiting, and filing them there sent the founder to a
+  // settings page for what was a message.
+  const noCommand = report.shut.filter((g) => !g.founderCommand && (g.founderFix || g.fix));
+  const railway = noCommand.filter((g) => g.where === 'railway').map((g) => `  · ${g.name} — ${g.fix}`);
+  const other = noCommand.filter((g) => g.where !== 'railway').map((g) => `  · ${g.name} — ${g.founderFix || g.fix}`);
+  const planHint = report.shut
+    .filter((g) => g.founderCommand && g.founderFix)
+    .map((g) => `  · ${g.name} — ${g.founderFix}`);
 
   return [
     `Blocked on ${report.action} — ${report.shut.length} of ${report.gates.length}:`,
     ...lines,
-    ...(commands.length ? ['', 'Send any of these to fix it:', ...commands.map((c) => `  ${c}`)] : []),
-    ...(elsewhere.length ? ['', 'These are not a message — they need the Railway settings:', ...elsewhere] : []),
+    ...(commands.length ? ['', 'Send any of these to fix it:', ...commands.map((c) => `  ${c}`), ...planHint] : []),
+    ...(other.length ? ['', 'No setting needed:', ...other] : []),
+    ...(railway.length ? ['', 'These are not a message — they need the Railway settings:', ...railway] : []),
   ].join('\n');
 }

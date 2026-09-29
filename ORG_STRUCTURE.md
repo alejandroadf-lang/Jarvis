@@ -2501,6 +2501,46 @@ A test asserts that every `founderCommand` the report suggests is one
 something the parser rejects is worse than one that stays quiet: they send it,
 nothing happens, and they stop trusting the report.
 
+### Who opens a gate that has no command
+
+The brief once filed every gate without a command under "these need the
+Railway settings". An unapproved daily plan has no command of its own (the
+team submits a plan, then the founder approves it), so a plan gate read as a
+server variable, and a founder was sent to a settings page for what was a
+message. Each gate now says who opens it (`where`: `railway` for a server
+variable, `team` for work the agents do or a gate that clears on its own,
+`none` when nothing will) and, where the agent's fix would mean nothing to the
+founder, a `founderFix` in their words. Only real variables go under Railway;
+the rest go under "No setting needed". A plan waiting on the founder carries
+`PLAN`, which shows it with APPROVE and REJECT.
+
+That fix also found a bug: the plan gate read `.pending` off the plan
+`getPlan()` returns, which never has that field, so a plan sitting on the
+founder's phone was reported as "no plan is approved" to agents and founder
+alike.
+
+READY also says when a commit is blocked but proposing is not: "The team can
+still open pull requests: proposing needs no plan." A venture that can only
+commit after an approved plan is not a stuck venture, and saying it was is how
+a founder spends a morning unblocking work that was never blocked.
+
+### Pull requests only: `REVIEW ON`
+
+`REVIEW ON <ventureId>` makes every change to a venture's repo a pull request
+the founder merges. `deploy_code`, `deploy_changes` and `revert_commit` then
+refuse and point at `open_pull_request`, which needs no daily plan, so the
+setting routes work rather than stopping it. `REVIEW OFF` allows direct
+commits again. It is for a venture whose code runs somewhere the founder wants
+to read every change first: Happy Company runs inside other companies' Jira.
+
+- `LINK` keeps it: re-linking is also how paths get widened, and a wider scope
+  must not quietly drop the review.
+- READY judges a review-only venture on proposing, which is all it may do, and
+  never suggests `REVIEW OFF` as a fix.
+- `check_ready` reports "Direct commits allowed" shut for a direct commit or a
+  revert, and leaves it out for `open_pull_request`.
+- `VENTURES` shows "pull requests only" next to the repo.
+
 ## The €1M gap, applied
 
 The deep-research assessment (September 2026) found the company ahead of most

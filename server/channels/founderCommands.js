@@ -37,6 +37,7 @@ import {
   setOutreachEnabled,
   setDeploymentEnabled,
   setDeploymentCaps,
+  setReviewOnly,
   setServiceUrl,
   serviceUrl,
   clearServiceUrl,
@@ -62,7 +63,7 @@ import { describePerformance, describeAgent, KEEP_DAYS } from '../activityLog.js
 import { capacityReport, describeCapacity } from '../capacity.js';
 import { describeDegradation } from '../degradation.js';
 import { isEvalRunning } from '../eval/run.js';
-import { deployReadiness, outreachReadiness, formatReadinessBrief } from '../readiness.js';
+import { deployReadiness, pullRequestReadiness, outreachReadiness, formatReadinessBrief } from '../readiness.js';
 import { listIssues, addIssue, removeIssue, describeSupportDesk, listTickets } from '../realtime/supportDesk.js';
 
 const COMMANDS = [
@@ -130,6 +131,10 @@ const COMMANDS = [
   { kind: 'outreach_on', re: /^outreach\s+on\s+(\S+)$/i, arg: 'ventureId' },
   { kind: 'deploy_off', re: /^deploy(?:ments?)?\s+off\s+(\S+)$/i, arg: 'ventureId' },
   { kind: 'deploy_on', re: /^deploy(?:ments?)?\s+on\s+(\S+)$/i, arg: 'ventureId' },
+  // Pull requests only: "review on v_123" makes every change a pull request
+  // the founder merges; "review off v_123" allows direct commits again.
+  { kind: 'review_on', re: /^review\s+on\s+(v_\S+)$/i, arg: 'ventureId' },
+  { kind: 'review_off', re: /^review\s+off\s+(v_\S+)$/i, arg: 'ventureId' },
   // "caps v_123 12 40" — commits per day, then per week.
   { kind: 'caps', re: /^caps\s+(v_\S+)\s+(\d+)(?:\s+(\d+))?$/i },
   { kind: 'service_url_clear', re: /^url\s+clear\s+(v_\S+)$/i, arg: 'ventureId' },
@@ -353,7 +358,7 @@ export function parseFounderCommand(text) {
 
 function describeVenture(venture) {
   const repo = venture.repo
-    ? `${venture.repo.owner}/${venture.repo.name} (${venture.repo.enabled ? 'deploy ON' : 'deploy off'})`
+    ? `${venture.repo.owner}/${venture.repo.name} (${venture.repo.enabled ? 'deploy ON' : 'deploy off'}${venture.repo.reviewOnly ? ', pull requests only' : ''})`
     : 'no repo';
   const outreach = venture.outreach
     ? `outreach ${venture.outreach.enabled ? 'ON' : 'off'} → ${venture.outreach.allowedRecipients.join(', ') || 'nobody'}`
@@ -474,6 +479,7 @@ URL CLEAR <ventureId> — revoke that
 OUTREACH <ventureId> <emails or @domains> — grant and enable an outreach scope
 OUTREACH OFF <ventureId> — revoke it
 CAPS <ventureId> <per day> [per week] — how often they may commit
+REVIEW ON <ventureId> — pull requests only: every change waits for you to merge it (REVIEW OFF allows direct commits)
 PRICE <ventureId> <floor/month> [<per unit> <unit>] [ccy] — the price, on record
 BOOKING <ventureId> <https://...> — where a prospect books a call
 CONSENT <ventureId> <email> — record consent from a .de/.it address
@@ -566,22 +572,36 @@ export async function runFounderCommand(command, deps = {}) {
           : 'No active ventures, so nothing is blocked. Ask the team to start one.';
       }
 
+      // A pull-requests-only venture is judged on proposing, which is all it
+      // is allowed to do; judging it on committing would report it blocked
+      // forever by the founder's own choice.
+      const shipping = (venture) =>
+        venture.repo?.reviewOnly ? pullRequestReadiness(venture.id) : deployReadiness(venture.id);
+
       const sections = ventures.map((venture) => {
-        const deploy = deployReadiness(venture.id);
+        const report = shipping(venture);
         // Outreach is only worth reporting once the founder has set a scope up.
         // Before that the answer is always the same missing scope, and printing
         // it next to every venture teaches the founder to skim the whole thing.
         const outreach = venture.outreach ? outreachReadiness(venture.id) : null;
 
-        const parts = [`"${venture.title}" [${venture.id}]`, formatReadinessBrief(deploy)];
+        const parts = [`"${venture.title}" [${venture.id}]`];
+        if (venture.repo?.reviewOnly) parts.push('Pull requests only: every change waits for you to merge it.');
+        parts.push(formatReadinessBrief(report));
+        // A commit blocked only by the plan still leaves proposing open, and
+        // saying so is the difference between "the team is stuck" and "the
+        // team can work; it cannot land without you".
+        if (!report.ready && !venture.repo?.reviewOnly && pullRequestReadiness(venture.id).ready) {
+          parts.push('', 'The team can still open pull requests: proposing needs no plan.');
+        }
         if (outreach && !outreach.ready) parts.push('', formatReadinessBrief(outreach));
         return parts.join('\n');
       });
 
-      const stuck = ventures.filter((v) => !deployReadiness(v.id).ready).length;
+      const stuck = ventures.filter((v) => !shipping(v).ready).length;
       const headline = stuck
-        ? `${stuck} of ${ventures.length} venture${ventures.length === 1 ? '' : 's'} cannot commit right now.`
-        : `Nothing is blocking ${ventures.length === 1 ? 'the venture' : 'any venture'} from committing. If the team says it is blocked, the blocker is not a permission.`;
+        ? `${stuck} of ${ventures.length} venture${ventures.length === 1 ? '' : 's'} cannot ship right now.`
+        : `Nothing is blocking ${ventures.length === 1 ? 'the venture' : 'any venture'} from shipping. If the team says it is blocked, the blocker is not a permission.`;
 
       return `${headline}\n\n${sections.join('\n\n---\n\n')}`;
     }
@@ -1022,6 +1042,20 @@ export async function runFounderCommand(command, deps = {}) {
     case 'deploy_on': {
       const venture = setDeploymentEnabled(command.ventureId, true);
       return `Deployments on for "${venture.title}" → ${venture.repo.owner}/${venture.repo.name}.`;
+    }
+
+    case 'review_on': {
+      const venture = setReviewOnly(command.ventureId, true);
+      return (
+        `"${venture.title}" now takes pull requests only. The team proposes every change with open_pull_request, which needs no daily plan; ` +
+        `nothing reaches ${venture.repo.owner}/${venture.repo.name}@${venture.repo.branch} until you merge it on GitHub. REVIEW OFF ${venture.id} allows direct commits again.` +
+        (venture.repo.enabled ? '' : `\n\nRepo writes are still off, so no pull request can open yet: DEPLOY ON ${venture.id}.`)
+      );
+    }
+
+    case 'review_off': {
+      const venture = setReviewOnly(command.ventureId, false);
+      return `"${venture.title}" may commit directly again, within its caps and the approved daily plan. REVIEW ON ${venture.id} brings back pull requests only.`;
     }
 
     case 'deploy_off': {
