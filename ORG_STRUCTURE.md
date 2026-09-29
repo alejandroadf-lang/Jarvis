@@ -646,6 +646,29 @@ consulted**. Scaling the same shape to 150 multiplies unconsulted headcount,
 not output. The machinery here makes a larger roster *viable*; it doesn't
 make it *right*. Let the operations data decide the number.
 
+## Is anyone actually working? `AGENTS`
+
+Send `AGENTS` (or `PERFORMANCE`, or `AGENTS 30` for a longer window) on
+WhatsApp and the reply sorts every agent into four groups for the last seven
+days: did real work (actions that succeeded, by tool, and when it last acted),
+tried but every action was refused, advised only (consulted or led a turn,
+took no action), and idle (never asked). It ends with queued work done,
+failed and open, and the day's model spend. `AGENT forge_engineer` shows one
+agent: consultations, actions done and refused by tool, the ventures it
+touched, and its last eight events.
+
+It reads `server/activityLog.js`, which `agentRunner.js` writes on every
+consultation, every action and every turn it leads, done or refused, keyed
+by the agent the runner knows is acting (never self-reported). The
+profit-share ledger was the obvious source and the wrong one: it keeps only
+the kinds of work that earn credit, so opening a pull request, completing a
+task or drafting an email is dropped there, and a view read from it would
+have called the Forge Engineer idle on a day it opened three pull requests.
+Refusals are kept on purpose, because "blocked five times" and "did nothing"
+need different fixes; the reply points at `READY` for the first. The log
+holds who, what, when and whether it worked, never inputs or text, for 30
+days.
+
 ## Four roles for Happy Company
 
 Happy Company (`ventures/happycompany`) is a Jira and Confluence app that
