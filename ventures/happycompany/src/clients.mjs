@@ -10,7 +10,9 @@
 // URL-encodes interpolated values, which is what stops an issue key or account
 // id from becoming a path traversal.
 
-import { PROJECT_KEY } from './lib/events.mjs';
+import { PROJECT_KEY, DIGEST_LABEL } from './lib/events.mjs';
+
+export { DIGEST_LABEL };
 
 async function json(response, what) {
   if (!response.ok) {
@@ -137,6 +139,72 @@ export function jiraClient(api, route) {
       return out;
     },
 
+    /** The app's own account id, so its own digest posts are never counted as work. */
+    async selfAccountId() {
+      const me = await json(await api.asApp().requestJira(route`/rest/api/3/myself`), 'app identity');
+      return me?.accountId || null;
+    },
+
+    /** A project's display name. */
+    async projectName(projectKey) {
+      if (!PROJECT_KEY.test(projectKey)) return projectKey;
+      const p = await json(await api.asApp().requestJira(route`/rest/api/3/project/${projectKey}`), 'project lookup');
+      return p?.name || projectKey;
+    },
+
+    /**
+     * Post the weekly digest as an issue in the project, labelled so the app
+     * can recognise its own posts. Uses the project's first non-subtask
+     * issue type; the description is Atlassian Document Format.
+     */
+    async postDigest(projectKey, { summary, paragraphs }) {
+      if (!PROJECT_KEY.test(projectKey)) throw new Error(`refusing to post to project key ${JSON.stringify(projectKey)}`);
+      const meta = await json(await api.asApp().requestJira(route`/rest/api/3/issue/createmeta/${projectKey}/issuetypes`), 'issue types');
+      const types = meta?.issueTypes || meta?.values || [];
+      const type = types.find((t) => !t.subtask) || types[0];
+      if (!type) throw new Error('no issue type available for the digest');
+      const body = {
+        fields: {
+          project: { key: projectKey },
+          issuetype: { id: String(type.id) },
+          summary,
+          labels: [DIGEST_LABEL],
+          description: {
+            type: 'doc',
+            version: 1,
+            content: paragraphs.map((text) => ({ type: 'paragraph', content: text ? [{ type: 'text', text }] : [] })),
+          },
+        },
+      };
+      const created = await json(
+        await api.asApp().requestJira(route`/rest/api/3/issue`, {
+          method: 'POST',
+          headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        }),
+        'digest issue',
+      );
+      return { id: created?.key || created?.id || null };
+    },
+
+    /** The viewer's own groups, for the organisation view's access rule. */
+    async myGroups() {
+      const me = await json(await api.asUser().requestJira(route`/rest/api/3/myself?expand=groups`), 'my groups');
+      return (me?.groups?.items || []).map((g) => g.name).filter(Boolean);
+    },
+
+    /** Whether the viewer is a Jira administrator. Fails closed. */
+    async isSiteAdmin() {
+      try {
+        const res = await api.asUser().requestJira(route`/rest/api/3/mypermissions?permissions=ADMINISTER`);
+        if (!res.ok) return false;
+        const data = await res.json();
+        return Boolean(data?.permissions?.ADMINISTER?.havePermission);
+      } catch {
+        return false;
+      }
+    },
+
     /** Whether the current viewer administers the project. */
     async canAdminister(projectKey) {
       if (!PROJECT_KEY.test(projectKey)) return false;
@@ -153,6 +221,72 @@ export function jiraClient(api, route) {
 export function confluenceClient(api, route) {
   const get = async (path, what) => json(await api.asApp().requestConfluence(path), what);
   return {
+    /** The app's own account id, so its own posts are never counted as work. */
+    async selfAccountId() {
+      const me = await get(route`/wiki/rest/api/user/current`, 'app identity');
+      return me?.accountId || null;
+    },
+
+    /**
+     * Whether the viewer administers Confluence itself. Reads the viewer's
+     * own operations and looks for "administer" on the application. Fails
+     * closed. The expand parameter is on the tunnel-run checklist.
+     */
+    async isSiteAdmin() {
+      try {
+        const res = await api.asUser().requestConfluence(route`/wiki/rest/api/user/current?expand=operations`);
+        if (!res.ok) return false;
+        const me = await res.json();
+        return (me?.operations || []).some((op) => op?.operation === 'administer' && (op?.targetType === 'application' || !op?.targetType));
+      } catch {
+        return false;
+      }
+    },
+
+    /** The viewer's own groups. */
+    async myGroups() {
+      try {
+        const me = await get(route`/wiki/rest/api/user/current?expand=groups`, 'my groups');
+        return (me?.groups?.results || me?.groups || []).map((g) => g?.name).filter(Boolean);
+      } catch {
+        return [];
+      }
+    },
+
+    async spaceName(spaceId) {
+      if (!/^\d+$/.test(String(spaceId))) return String(spaceId);
+      const space = await get(route`/wiki/api/v2/spaces/${spaceId}`, 'space lookup');
+      return space?.name || String(spaceId);
+    },
+
+    /** Post the weekly digest as a blog post in the space. `html` is storage format. */
+    async postDigest(spaceId, { title, html }) {
+      if (!/^\d+$/.test(String(spaceId))) throw new Error(`refusing to post to space ${JSON.stringify(spaceId)}`);
+      const created = await json(
+        await api.asApp().requestConfluence(route`/wiki/api/v2/blogposts`, {
+          method: 'POST',
+          headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+          body: JSON.stringify({ spaceId: String(spaceId), status: 'current', title, body: { representation: 'storage', value: html } }),
+        }),
+        'digest blog post',
+      );
+      return { id: created?.id ? String(created.id) : null };
+    },
+
+    /** Create a page in the space (the quarterly evidence pack). */
+    async createPage(spaceId, { title, html }) {
+      if (!/^\d+$/.test(String(spaceId))) throw new Error(`refusing to post to space ${JSON.stringify(spaceId)}`);
+      const created = await json(
+        await api.asApp().requestConfluence(route`/wiki/api/v2/pages`, {
+          method: 'POST',
+          headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+          body: JSON.stringify({ spaceId: String(spaceId), status: 'current', title, body: { representation: 'storage', value: html } }),
+        }),
+        'evidence page',
+      );
+      return { id: created?.id ? String(created.id) : null };
+    },
+
     /**
      * Whether the current viewer administers the space. Asks Confluence for the
      * operations *this user* may perform on the space; "administer" is the

@@ -17,6 +17,11 @@
 // three and, if none is present, asks for a lookup by content id, which the
 // app resolves through the Confluence REST API.
 
+// Every issue the app posts (the weekly digest) carries this label, and
+// events on labelled issues are ignored, so the digest never counts as the
+// team's work. The app's own account is also ignored (see app.mjs).
+export const DIGEST_LABEL = 'happy-company';
+
 export const JIRA_KIND = {
   'avi:jira:created:issue': 'created',
   'avi:jira:updated:issue': 'updated',
@@ -62,6 +67,7 @@ export function normaliseJiraEvent(event, receivedAt) {
   if (!kind || !issue || !actor) return null;
   const projectKey = issue.fields?.project?.key || String(issue.key || '').split('-')[0];
   if (!PROJECT_KEY.test(projectKey)) return null;
+  if ((issue.fields?.labels || []).includes(DIGEST_LABEL)) return null;
   const at = event.comment?.created || event.comment?.updated || issue.fields?.updated || receivedAt;
   return { product: 'jira', scope: jiraScope(projectKey), actor, at, kind, item: issue.id ? String(issue.id) : issue.key, status: statusChange(event), tags: changelogTags(event) };
 }

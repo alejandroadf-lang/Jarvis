@@ -49,6 +49,8 @@ Every fact the app stores, and where in the code it is written:
 | Actions the team committed to and whether they happened, with no record of who committed or closed them | per team per week | `src/features/actions.mjs` |
 | Launch or incident weeks the team marked | up to 2 a quarter | `src/features/actions.mjs` |
 | Audit trail: settings changes (with the administrator's pseudonym), committed and closed actions (with nobody's) | 3 years | `src/features/audit.mjs` |
+| Which weekly digests were posted, and where | 26 weeks | `src/features/digest.mjs` |
+| Project and space display names, cached for the organisation view | 7 days | `src/app.mjs`, `teamName` |
 
 ### What is never collected
 
@@ -58,6 +60,29 @@ Every fact the app stores, and where in the code it is written:
 - Anything from Slack, Teams, e-mail, calendars or any system outside Jira
   and Confluence. The app has no network access outside Atlassian.
 - Anything about people who merely view the page.
+
+### What the app writes
+
+Two things, both off until an administrator turns them on:
+
+- **The weekly digest**: on the team's Monday, one Jira issue labelled
+  `happy-company` in the project, or one blog post in the Confluence space,
+  with exactly what the team page shows for the completed week (grade,
+  trend, the three things, the use ban). It is visible to whoever can see
+  the project or space, which is the same audience as the team page. Weeks
+  with too few people are never posted.
+- **The quarterly evidence page** (Confluence), described in `ISO.md`.
+
+The app's own posts are never counted as the team's work.
+
+### The organisation view
+
+Site administrators, and members of the groups they name, see coverage,
+the share of teams in sustainable conditions (C or better), recovery time,
+action completion and an alphabetical list of teams at D or E for two weeks
+or more. Teams are never ranked, no team's score is shown there, and teams
+with too few people are counted but never named. Access is checked on every
+request and fails closed.
 
 ## 4. Pseudonymisation
 
@@ -150,7 +175,10 @@ Numbered so they can be adopted as they are or struck one by one.
 5. **Access.** The Team health page is visible to the members of the
    project or space it describes and to their manager. Settings may be
    changed only by project administrators (Jira) or space administrators
-   (Confluence).
+   (Confluence). The organisation view is visible to site administrators
+   and to these groups only: [HR, health and safety, …]. It lists teams
+   that could use support alphabetically and never ranks them. The weekly
+   digest is [on/off] and the quarterly evidence page is [on/off].
 6. **Retention.** Data is retained as set out in §5 of the pack and not
    longer. Neither party may export or copy the data.
 7. **Transparency.** Employees are informed before activation with the

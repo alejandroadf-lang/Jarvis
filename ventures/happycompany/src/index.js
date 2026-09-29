@@ -17,10 +17,12 @@ function logShape(event) {
   console.log(`[happycompany] shape of ${event?.eventType || 'unknown event'}:\n  ${eventShape(event).join('\n  ')}`);
 }
 
+const jiraApi = jiraClient(api, route);
+const confluenceApi = confluenceClient(api, route);
 const app = createApp({
   store: forgeStore(kvs, WhereConditions),
-  jira: jiraClient(api, route),
-  confluence: confluenceClient(api, route),
+  jira: jiraApi,
+  confluence: confluenceApi,
 });
 
 export async function onJiraEvent(event) {
@@ -55,4 +57,24 @@ resolver.define('closeAction', ({ payload, context }) =>
   app.closeAction({ ...placeOf(context), week: payload?.week, key: payload?.key, done: payload?.done }),
 );
 resolver.define('freezeWeek', ({ context }) => app.freezeWeek(placeOf(context)));
+
+// The organisation view. Only its own page may call these, and the viewer
+// is checked on every call: a site administrator, or a member of a group an
+// administrator named. Both checks fail closed.
+const ORG_MODULES = { 'happycompany-jira-org': 'jira', 'happycompany-confluence-org': 'confluence' };
+
+async function viewerOf(context) {
+  const product = ORG_MODULES[context?.moduleKey];
+  if (!product) throw new Error('The organisation view is only available from its own page.');
+  const client = product === 'jira' ? jiraApi : confluenceApi;
+  const [isAdmin, groups] = await Promise.all([client.isSiteAdmin(), client.myGroups().catch(() => [])]);
+  return { product, viewer: { isAdmin, groups } };
+}
+
+resolver.define('organisationView', async ({ context }) => app.organisationView(await viewerOf(context)));
+resolver.define('saveOrgSettings', async ({ payload, context }) =>
+  app.saveOrgSettings({ ...(await viewerOf(context)), settings: payload?.settings, by: context?.accountId || null }),
+);
+resolver.define('estimateCost', async ({ payload, context }) => app.estimateCost({ ...(await viewerOf(context)), inputs: payload?.inputs }));
+
 export const handler = resolver.getDefinitions();
