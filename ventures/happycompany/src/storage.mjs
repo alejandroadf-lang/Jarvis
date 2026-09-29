@@ -16,6 +16,8 @@
 //   attest:{product}:{YYYY-Qn}    a signed attestation of that quarter's level
 //   attestation:publicKey     the installation's attestation public key
 //   backfill:{scope}          progress of the Jira history backfill
+//   qscores:{product}:{YYYY-Qn}   per-team mean score and D/E weeks of a closed quarter
+//   outcomes:{product}:{YYYY-Qn}  imported team absence rates and leavers
 //   secret "salt"             the installation's pseudonym key
 //   secret "attestationKey"   the attestation private key
 

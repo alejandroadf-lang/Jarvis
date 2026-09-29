@@ -94,7 +94,24 @@ harassment, recognition and career, job security, the physical environment,
 emotional demands, and more). Those must be assessed another way, with
 workers. The pack says so in its own text.
 
-## 5. Levels: Measuring, Acting, Sustaining
+## 5. Lagging indicators: sickness absence and leavers
+
+ISO 45001 9.1 and ISO 45004 expect leading indicators (what the grade is)
+to be read alongside lagging ones. An administrator can import, per team
+and closed quarter, headcount, sickness absence rate and leavers from the
+HR system (`src/lib/outcomes.mjs`). The organisation page then shows the
+organisation's absence and turnover, a rank correlation between each
+team's grade in the quarter before and its absence (does the grade see it
+coming?), and, when at least three teams sit on each side, the absence of
+teams that spent a quarter mostly at D or E against the others. The
+evidence pack carries the organisation's figures as its lagging indicators.
+
+They never feed the grade (a team would look healthier because people
+came in sick), are never shown per team, and teams under 10 people are
+refused, because sickness absence is health data. No HR system is connected:
+the app has no outside connections, so figures are pasted by hand.
+
+## 6. Levels: Measuring, Acting, Sustaining
 
 `src/lib/levels.mjs`. Judged on a quarter's pack. Provisional thresholds,
 method `hc-2026.10`, set from the research rather than customer data; they
@@ -110,7 +127,7 @@ The organisation page shows each criterion as met or not yet, and what the
 next level needs. Levels are for the organisation, never for a team or a
 manager.
 
-## 6. Signed attestations
+## 7. Signed attestations
 
 `src/lib/attestation.mjs`. A site administrator can sign the level a closed
 quarter reached. The statement carries the organisation name, product,
@@ -131,7 +148,7 @@ recommended.*
   Not that the figures describe the organisation truthfully: the app sees
   Jira and Confluence metadata only.
 
-## 7. ISO 45001's revision
+## 8. ISO 45001's revision
 
 ISO 45001 is under revision, with publication expected around 2027. The
 drafts discussed publicly make psychosocial risk more explicit rather than
@@ -140,7 +157,7 @@ when it is published, the clause list in `frameworks.mjs` is updated against
 it and the method version moves. Check the published standard, not this
 paragraph.
 
-## 8. What the customer still has to do
+## 9. What the customer still has to do
 
 The app is a screening input to the psychosocial risk assessment, not the
 assessment. The employer still has to consult workers (in Germany, agree a
@@ -149,7 +166,7 @@ cover, decide and resource the controls, hold the management review, and
 keep the assessment itself. The pack is written to be attached to that
 work, not to replace it.
 
-## 9. Working with certification bodies
+## 10. Working with certification bodies
 
 Certification bodies may not consult for the organisations they certify,
 so they will not recommend a tool; their training arms and the auditors'

@@ -20,10 +20,14 @@ work-related burnout on a validated scale?
   Copenhagen Burnout Inventory (Kristensen et al., 2005), asked in the team
   pulse when validation mode is on (`CBI_ITEMS`, `src/lib/pulse.mjs`),
   scored 0–100 as published, one reversed item. The CBI is free to use.
+- **Sickness absence** (secondary), where the organisation imports it: each
+  team's absence rate in the quarter after the grade quarter, teams of 10 or
+  more (`src/lib/outcomes.mjs`). This asks whether the grade sees absence
+  coming, which is the claim buyers care about most.
 - **Face validity**, the pulse statement "The grade on our team page matches
   how the last few weeks felt" (1–5).
 
-The two are linked only at team level. By design the app cannot link a
+All are linked only at team level. By design the app cannot link a
 person's pulse answer to their activity, and the protocol does not try.
 
 ## Design
@@ -40,6 +44,10 @@ consulted before start in every organisation that has one.
 2. Primary: rho ≤ −0.3 (moderate or stronger agreement) at the end of the
    second quarter.
 3. Face validity: mean agreement with the match statement ≥ 3.5 of 5.
+4. Secondary: where absence is imported, rho between a quarter's grade
+   score and the next quarter's absence rate ≤ −0.3. Absence has many
+   causes outside work, so a weaker result here does not overturn a good
+   primary result; it is reported beside it.
 
 The organisation view computes rho and the verdict with the thresholds in
 `src/lib/validation.mjs` (≤ −0.5 strong, ≤ −0.3 moderate, < 0 weak, else

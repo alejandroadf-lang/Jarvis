@@ -186,6 +186,15 @@ export function evidenceMarkdown(p) {
   L.push('## Actions (organisational controls)');
   L.push(`${p.actions.teams} teams committed to ${p.actions.committed} changes to how work is organised; ${p.actions.done} of ${p.actions.closed} closed actions were done (${pct(p.actions.completion)}).`);
   L.push('');
+  if (p.outcomes !== undefined) {
+    L.push('## Outcomes (lagging indicators, imported from the HR system)');
+    L.push(
+      p.outcomes
+        ? `Sickness absence ${p.outcomes.absenceRate}% across ${p.outcomes.teams} teams and ${p.outcomes.headcount} people${p.outcomes.quarterlyTurnover === null ? '' : `; ${p.outcomes.quarterlyTurnover}% of people left during the quarter`}. Team-level figures only, teams of 10 or more; they do not feed the grade.`
+        : 'No absence or leaver figures imported for this quarter.',
+    );
+    L.push('');
+  }
   L.push('## Worker participation');
   L.push(`Consultation with workers' representatives recorded: ${p.participation.consultationRecorded ? `yes${p.participation.consultationDate ? `, ${p.participation.consultationDate}` : ''}` : 'no'}. Anonymous team pulse: ${p.participation.pulseTeams} teams, ${p.participation.responses} responses.`);
   for (const s of p.participation.statements.filter((x) => x.shown)) L.push(`- ${s.standard}: "${s.text}" ${pct(s.favourable)} agree (n=${s.n}).`);

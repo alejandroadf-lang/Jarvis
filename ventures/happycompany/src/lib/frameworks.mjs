@@ -141,7 +141,7 @@ export const ISO45001_EVIDENCE = Object.freeze([
   { clause: '7.4', topic: 'Communication', evidence: 'The weekly digest and the employee transparency page.' },
   { clause: '7.5', topic: 'Documented information', evidence: 'The audit trail of settings, signal switches, actions and evidence packs, kept three years; quarterly evidence snapshots kept three years.' },
   { clause: '8.1.2', topic: 'Eliminating hazards and reducing risks (organisational controls)', evidence: 'The suggested changes are organisational controls on how work is organised, not individual resilience measures.' },
-  { clause: '9.1.1', topic: 'Monitoring, measurement, analysis and performance evaluation', evidence: 'Weekly indicators with published method and bands; these are leading indicators in the sense of ISO 45004.' },
+  { clause: '9.1.1', topic: 'Monitoring, measurement, analysis and performance evaluation', evidence: 'Weekly indicators with published method and bands, leading indicators in the sense of ISO 45004; sickness absence and leavers per quarter, imported by the organisation, as lagging indicators, with a check of whether the grade anticipated them.' },
   { clause: '9.3', topic: 'Management review', evidence: 'The quarterly evidence pack, with the organisation summary and trends, as a management review input.' },
   { clause: '10.2', topic: 'Incident, nonconformity and corrective action', evidence: 'Teams at D or E for two weeks or more, their committed actions and whether they were done.' },
   { clause: '10.3', topic: 'Continual improvement', evidence: 'Trends, recovery times, action completion and organisation levels quarter on quarter.' },

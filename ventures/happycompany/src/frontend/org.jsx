@@ -87,8 +87,103 @@ function Summary({ s }) {
   );
 }
 
-function CostEstimator({ strainedPeople }) {
-  const [inputs, setInputs] = useState({ salary: '', replacementCostShare: '', extraTurnover: '', absenceDays: '', workingDays: '220' });
+// Sickness absence and leavers, pasted from the HR system once a quarter.
+// Organisation figures only: no team's own rate is ever shown.
+function Outcomes({ outcomes, canImport, onImported }) {
+  const closedQuarters = (() => {
+    const d = new Date();
+    let y = d.getUTCFullYear();
+    let q = Math.ceil((d.getUTCMonth() + 1) / 3);
+    const out = [];
+    for (let i = 0; i < 4; i++) {
+      q -= 1;
+      if (q === 0) {
+        q = 4;
+        y -= 1;
+      }
+      out.push(`${y}-Q${q}`);
+    }
+    return out;
+  })();
+  const [quarter, setQuarter] = useState(closedQuarters[0]);
+  const [text, setText] = useState('');
+  const [message, setMessage] = useState(null);
+  const run = async () => {
+    try {
+      const r = await invoke('importOutcomes', { quarter, text });
+      const dropped = r.dropped.length ? ` ${r.dropped.length} team${r.dropped.length === 1 ? '' : 's'} under 10 people were left out and not stored.` : '';
+      setMessage({ appearance: 'success', text: `${r.replaced ? 'Replaced' : 'Imported'} ${quarter}: ${r.teams} teams.${dropped}` });
+      setText('');
+      await onImported();
+    } catch (err) {
+      setMessage({ appearance: 'error', text: err.message });
+    }
+  };
+  const latest = outcomes?.latest;
+  const check = outcomes?.check;
+  const gap = outcomes?.gap;
+  return (
+    <Stack space="space.150">
+      <Heading size="small">Sickness absence and leavers</Heading>
+      {latest ? (
+        <Stack space="space.100">
+          <Text>{`${latest.quarter}: sickness absence ${latest.absenceRate}% across ${latest.teams} teams and ${latest.headcount} people${latest.quarterlyTurnover === null ? '' : `; ${latest.quarterlyTurnover}% of people left`}.`}</Text>
+          {check && (
+            <Text>
+              {check.quarterBefore.rho !== null
+                ? `Grade in the quarter before against this absence, across ${check.quarterBefore.teams} teams: rank correlation ${check.quarterBefore.rho}. ${check.verdict}`
+                : check.sameQuarter.rho !== null
+                  ? `Grade against absence in the same quarter, across ${check.sameQuarter.teams} teams: rank correlation ${check.sameQuarter.rho}. ${check.verdict}`
+                  : check.verdict}
+            </Text>
+          )}
+          {gap && (
+            <SectionMessage appearance="information">
+              <Text>{`After a quarter mostly at D or E, ${gap.strained.teams} teams had ${gap.strained.absenceRate}% absence in ${gap.quarter}; the other ${gap.sustainable.teams} teams had ${gap.sustainable.absenceRate}%. ${gap.caveat}`}</Text>
+            </SectionMessage>
+          )}
+        </Stack>
+      ) : (
+        <Text>No figures yet. Once a quarter, paste each team’s headcount, sickness absence rate and leavers from your HR system, and the app checks whether the grade saw the absence coming.</Text>
+      )}
+      <Text>These figures never change a team’s grade and are never shown per team. Teams under 10 people are refused, because one long absence would identify someone. Sickness absence is health data: agree this import with your works council or employee representatives first.</Text>
+      {canImport && (
+        <Stack space="space.100">
+          <Label labelFor="hc-out-q">Quarter</Label>
+          <Select
+            inputId="hc-out-q"
+            options={closedQuarters.map((q) => ({ label: q, value: q }))}
+            value={{ label: quarter, value: quarter }}
+            onChange={(option) => option && setQuarter(option.value)}
+          />
+          <Label labelFor="hc-out-rows">One row per team: project key or space id, headcount, absence rate %, leavers (e.g. OPS, 24, 4.5, 1)</Label>
+          <TextArea id="hc-out-rows" value={text} onChange={(e) => setText(e.target.value)} />
+          <Inline space="space.100">
+            <Button onClick={run} isDisabled={!text.trim()}>
+              Import figures
+            </Button>
+          </Inline>
+        </Stack>
+      )}
+      {message && (
+        <SectionMessage appearance={message.appearance}>
+          <Text>{message.text}</Text>
+        </SectionMessage>
+      )}
+    </Stack>
+  );
+}
+
+function CostEstimator({ strainedPeople, measured }) {
+  // With imported absence and leaver figures, the gap between strained and
+  // other teams is the starting value; the customer can still change it.
+  const [inputs, setInputs] = useState({
+    salary: '',
+    replacementCostShare: '',
+    extraTurnover: measured?.suggestedExtraTurnover != null ? String(measured.suggestedExtraTurnover) : '',
+    absenceDays: measured ? String(measured.suggestedAbsenceDays) : '',
+    workingDays: '220',
+  });
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const field = (name) => (e) => setInputs({ ...inputs, [name]: e.target.value });
@@ -103,7 +198,11 @@ function CostEstimator({ strainedPeople }) {
   return (
     <Stack space="space.150">
       <Heading size="small">What strain may be costing (your assumptions)</Heading>
-      <Text>{`${strainedPeople} people work in teams graded D or E this week. Everything else below is your own estimate.`}</Text>
+      <Text>
+        {measured
+          ? `${strainedPeople} people work in teams graded D or E this week. Extra absence and turnover start from your imported ${measured.quarter} figures; salary and replacement cost are your own.`
+          : `${strainedPeople} people work in teams graded D or E this week. Everything else below is your own estimate.`}
+      </Text>
       <Label labelFor="hc-salary">Average annual salary cost per person</Label>
       <Textfield id="hc-salary" type="number" value={inputs.salary} onChange={field('salary')} />
       <Label labelFor="hc-repl">Cost of replacing one person, as a share of a year’s salary (e.g. 0.5)</Label>
@@ -364,7 +463,8 @@ function App() {
           <Text key={n}>{n}</Text>
         ))}
       </Stack>
-      <CostEstimator strainedPeople={view.summary.strainedPeople} />
+      <Outcomes outcomes={view.outcomes} canImport={view.canConfigure} onImported={load} />
+      <CostEstimator strainedPeople={view.summary.strainedPeople} measured={view.outcomes?.gap || null} />
       <Evidence canConfigure={view.canConfigure} orgSettings={view.orgSettings} onSaved={load} />
       {view.canConfigure && <Access settings={view.orgSettings} onSaved={load} />}
     </Stack>

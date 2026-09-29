@@ -87,6 +87,9 @@ resolver.define('issueAttestation', async ({ payload, context }) =>
 resolver.define('publishEvidence', async ({ payload, context }) =>
   app.publishEvidence({ ...(await viewerOf(context)), quarter: payload?.quarter, by: context?.accountId || null }),
 );
+resolver.define('importOutcomes', async ({ payload, context }) =>
+  app.importOutcomes({ ...(await viewerOf(context)), quarter: payload?.quarter, text: payload?.text, by: context?.accountId || null }),
+);
 resolver.define('estimateCost', async ({ payload, context }) => app.estimateCost({ ...(await viewerOf(context)), inputs: payload?.inputs }));
 
 export const handler = resolver.getDefinitions();

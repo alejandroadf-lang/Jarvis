@@ -49,6 +49,12 @@ attestation anyone can check offline. In Jira, a project administrator can
 fill in the last three weeks from issue history so the first card appears
 on day one.
 
+HR can paste each team's sickness absence rate and leavers once a
+quarter. The app checks whether the grade saw the absence coming, feeds
+the cost estimator the organisation's own figures and adds them to the
+evidence pack as lagging indicators. They never change a grade, never
+appear per team, and teams under 10 people are refused.
+
 Admins set quiet hours, late night, weekend days, public holidays and
 the long-day threshold, and can switch any signal off. The scoring bands are
 starting points to be calibrated in pilots, and the page says so.
@@ -101,6 +107,7 @@ src/lib/disclosures.mjs ESRS S1, Top Employers and B Corp drafts from a pack
 src/lib/levels.mjs      Measuring, Acting, Sustaining
 src/lib/attestation.mjs signed attestations of a level (Ed25519)
 scripts/verify-attestation.mjs  checks an attestation offline
+src/lib/outcomes.mjs    imported sickness absence and leavers: parsing, checks, no per-team output
 src/rovo.mjs            the Rovo agent's two read-only actions
 src/lib/brief.mjs       the team page condensed for Rovo
 src/frontend/index.jsx  the page, UI Kit
