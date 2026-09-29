@@ -39,7 +39,7 @@ export const MAX_ITEMS_PER_PERSON_DAY = 200;
 export const BURSTY_BURSTS = 4; // separate activity runs in a day that count as fragmented
 
 export function emptyBucket() {
-  return { v: 2, total: 0, afterHours: 0, late: 0, weekend: 0, kinds: {}, people: {} };
+  return { v: 2, total: 0, afterHours: 0, late: 0, weekend: 0, kinds: {}, tags: {}, people: {} };
 }
 
 function inWindow(hour, start, end) {
@@ -77,13 +77,17 @@ function person(bucket, who) {
 }
 
 /** Adds one action to a bucket. Returns the same bucket for chaining. */
-export function recordActivity(bucket, { actor, hour, weekday, day, kind = 'activity', item = null }, settings = DEFAULT_SETTINGS) {
+export function recordActivity(bucket, { actor, hour, weekday, day, kind = 'activity', item = null, tags = [] }, settings = DEFAULT_SETTINGS) {
   if (!actor) throw new Error('an activity needs a pseudonymous actor');
   bucket.total += 1;
   if (isAfterHours(hour, settings)) bucket.afterHours += 1;
   if (isLate(hour, settings)) bucket.late += 1;
   if (isRestDay(weekday, day, settings)) bucket.weekend += 1;
   bucket.kinds[kind] = (bucket.kinds[kind] || 0) + 1;
+  // Tags are facts about the action beyond its kind: a due date moved, say.
+  // One action can carry several; kinds are one per action.
+  if (!bucket.tags) bucket.tags = {};
+  for (const tag of tags) bucket.tags[tag] = (bucket.tags[tag] || 0) + 1;
   const p = person(bucket, actor);
   p.n += 1;
   if (!p.hours.includes(hour)) p.hours.push(hour);
@@ -131,6 +135,7 @@ export function periodMetrics(dayBuckets, settings = DEFAULT_SETTINGS) {
   let late = 0;
   let weekend = 0;
   const kinds = {};
+  const tags = {};
   const perPerson = {};
   const mentionsPerPerson = {};
   let personDays = 0;
@@ -144,6 +149,7 @@ export function periodMetrics(dayBuckets, settings = DEFAULT_SETTINGS) {
     late += b.late || 0;
     weekend += b.weekend;
     for (const [k, n] of Object.entries(b.kinds || {})) kinds[k] = (kinds[k] || 0) + n;
+    for (const [k, n] of Object.entries(b.tags || {})) tags[k] = (tags[k] || 0) + n;
     for (const [who, p] of Object.entries(b.people || {})) {
       if (p.mentions) mentionsPerPerson[who] = (mentionsPerPerson[who] || 0) + p.mentions;
       if (!p.n) continue; // mentioned but not active that day
@@ -181,6 +187,8 @@ export function periodMetrics(dayBuckets, settings = DEFAULT_SETTINGS) {
     mentionsPerPersonDay: personDays ? mentionTotal / personDays : null,
     mentionTopShare: mentionTotal ? mentionTop / mentionTotal : null,
     reopenRate: resolved + reopened ? reopened / (resolved + reopened) : null,
+    dueMoves: tags.dueMoved || 0,
     kinds,
+    tags,
   };
 }

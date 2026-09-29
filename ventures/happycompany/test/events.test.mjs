@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { normaliseJiraEvent, normaliseJiraMention, normaliseConfluenceEvent, scopeFromExtension, statusChange, PROJECT_KEY } from '../src/lib/events.mjs';
+import { normaliseJiraEvent, normaliseJiraMention, normaliseConfluenceEvent, scopeFromExtension, statusChange, changelogTags, PROJECT_KEY } from '../src/lib/events.mjs';
 
 const received = '2026-09-28T09:00:00.000Z';
 
@@ -13,7 +13,7 @@ test('a Jira issue event becomes actor + time + project', () => {
     },
     received,
   );
-  assert.deepEqual(a, { product: 'jira', scope: 'jira:OPS', actor: '557058:abc', at: '2026-09-28T23:10:00.000+0700', kind: 'updated', item: '10001', status: null });
+  assert.deepEqual(a, { product: 'jira', scope: 'jira:OPS', actor: '557058:abc', at: '2026-09-28T23:10:00.000+0700', kind: 'updated', item: '10001', status: null, tags: [] });
   assert.ok(!JSON.stringify(a).includes('secret'));
 });
 
@@ -42,6 +42,11 @@ test('a status change is read off the changelog; a mention names who was mention
   assert.deepEqual(statusChange(event), { from: '10001', to: '3' });
   assert.deepEqual(normaliseJiraEvent(event, received).status, { from: '10001', to: '3' });
   assert.equal(statusChange({ changelog: { items: [] } }), null);
+
+  // A due date moved is a tag; a due date set for the first time is not.
+  assert.deepEqual(changelogTags({ changelog: { items: [{ field: 'duedate', from: '2026-10-01', to: '2026-10-15' }] } }), ['dueMoved']);
+  assert.deepEqual(changelogTags({ changelog: { items: [{ field: 'duedate', from: null, to: '2026-10-15' }] } }), []);
+  assert.deepEqual(changelogTags({}), []);
 
   const mention = normaliseJiraMention(
     { eventType: 'avi:jira:mentioned:issue', atlassianId: 'author', issue: { key: 'OPS-7' }, mentionedAccountIds: ['a', 'b', 'author'], comment: { created: '2026-09-28T08:00:00.000Z' } },

@@ -1,6 +1,6 @@
 # Happy Company: the signals
 
-**Status: agreed 29 September 2026, step 1 built.** The founder took the
+**Status: agreed 29 September 2026, steps 1 and 2 built.** The founder took the
 recommendations with one amendment: vacations are tricky, because project
 pressure makes people work nights, weekends and holidays, so the recovery
 signals were strengthened rather than parked. Public holidays count as rest
@@ -129,9 +129,9 @@ daily snapshot the app already receives, with a day-bucket schema change ·
 | B3 | **Overdue share** | duedate in snapshot | overdue ÷ open | ≤8% → ≥30% | medium | teams that do not use due dates (indicator shows "no data", not 100) | P0 | v1, built | keep (built) |
 | B4 | **WIP per person**: issues in progress at once | snapshot, statusCategory = In Progress | mean in-progress per active assignee; share ≥ 5 | ≤2 → ≥5 | strong (multitasking, attention residue) | Kanban teams with explicit WIP limits will look good, correctly | P0 | **v1.1** | **keep** (built) |
 | B5 | **Assignment churn**: issues reassigned 2+ times | changelog `assignee` in update events | reassigned ÷ created, per week | ≤5% → ≥20% | medium (handoffs, role ambiguity) | triage queues that assign twice by design | P0 (count per issue hash, 21 days) | v2 | v2 |
-| B6 | **Unplanned work**: issues added to an active sprint | changelog `Sprint` while sprint active | added mid-sprint ÷ committed | ≤10% → ≥30% | medium (scope creep vs carry-over literature) | teams that plan continuously (Kanban): show as "not applicable" | P0 | **v1.1** (Scrum teams) | step 2 |
-| B7 | **Sprint carry-over**: incomplete issues when a sprint closes | sprint closed event, or a daily poll of recently closed sprints (the event is reported unreliable) | incomplete ÷ committed | <10% → >20% | strong benchmarks (10–20% concerning, >20% a problem) | deliberately long-lived spikes | P0 | **v1.1** | step 2 |
-| B8 | **Inflow vs outflow**: created vs resolved per week | created events; resolution from update events or snapshot | 4-week ratio | ≤1.1 → ≥1.5 | medium (backlog growth = pace pressure) | intake weeks after planning | P0 | **v1.1** | step 2 |
+| B6 | **Unplanned work**: issues added to an active sprint | changelog `Sprint` while sprint active | added mid-sprint ÷ committed | ≤10% → ≥30% | medium (scope creep vs carry-over literature) | teams that plan continuously (Kanban): show as "not applicable" | P0 | **v1.1** (Scrum teams) | **built** (created after sprint start) |
+| B7 | **Sprint carry-over**: incomplete issues when a sprint closes | sprint closed event, or a daily poll of recently closed sprints (the event is reported unreliable) | incomplete ÷ committed | <10% → >20% | strong benchmarks (10–20% concerning, >20% a problem) | deliberately long-lived spikes | P0 | **v1.1** | **built** (daily poll, JQL `sprint = id`) |
+| B8 | **Inflow vs outflow**: created vs resolved per week | created events; resolution from update events or snapshot | 4-week ratio | ≤1.1 → ≥1.5 | medium (backlog growth = pace pressure) | intake weeks after planning | P0 | **v1.1** | **built** (4-week ratio) |
 
 ### C. Fragmentation and interruption (the "many calls, many chats" day)
 
@@ -147,8 +147,8 @@ daily snapshot the app already receives, with a day-bucket schema change ·
 | # | Signal | Source | Computation | Bands | Evidence | False positives | Privacy | Proposed | Decision |
 |---|---|---|---|---|---|---|---|---|---|
 | D1 | **Due-date crunch**: open issues due within the same 5-day window | duedate in snapshot | max 5-day density ÷ median density | ≤2× → ≥4× | medium (quarter-end and release crunch) | release trains by design; still a pressure period | P0 | **v1.1** | **keep** (built) |
-| D2 | **Slipped deadlines**: issues whose due date moved 2+ times | changelog `duedate` in update events | slipped ÷ issues with due dates | ≤10% → ≥35% | medium (unrealistic planning, Gallup time pressure) | roadmap grooming | P0 (per issue hash, 21 days) | **v1.1** | step 2 |
-| D3 | **Quarter-end surge**: activity in the last 10 days of a quarter vs the quarter's weekly average | existing weekly totals | ratio | ≤1.3× → ≥2× | medium (MBO/OKR cycle) | fiscal years that do not end on calendar quarters (setting) | P0 | **v1.1** | step 2 |
+| D2 | **Slipped deadlines**: issues whose due date moved 2+ times | changelog `duedate` in update events | slipped ÷ issues with due dates | ≤10% → ≥35% | medium (unrealistic planning, Gallup time pressure) | roadmap grooming | P0 (per issue hash, 21 days) | **v1.1** | **built** (moves ÷ dated open work) |
+| D3 | **Quarter-end surge**: activity in the last 10 days of a quarter vs the quarter's weekly average | existing weekly totals | ratio | ≤1.3× → ≥2× | medium (MBO/OKR cycle) | fiscal years that do not end on calendar quarters (setting) | P0 | **v1.1** | **built** as a general load surge against the 8-week median |
 | D4 | **Priority inflation**: open issues at High or Highest | priority in snapshot | share | ≤20% → ≥50% | medium (when everything is urgent, nothing is; unreasonable time pressure) | incident projects | P0 | **v1.1** | **keep** (built) |
 | D5 | **Blocked work**: flagged impediments | Jira `Flagged` field | flagged ÷ in progress | ≤10% → ≥30% | medium (low control) | – | P0 | v2 | v2 |
 | D6 | **Goal churn**: OKRs marked at risk / off track, goals per team | Atlassian Goals via Teamwork Graph API | – | – | – | – | – | v3: the API is Early Access, test organisations only | watch |
@@ -270,8 +270,8 @@ agree the exact set. That pack is also the Marketplace Privacy & Security tab.
 | Step | Signals | What changes | Effort |
 |---|---|---|---|
 | 1 ✅ | A3, A4, A5, A6, B4, C1, C3, D1, D4, E1, G2 | day-bucket schema (hours, item hashes, mentions per pseudonym), the people record for rests, snapshot fields (in progress, priority, due-date density, ownerless overdue), `mentioned` event, status-category cache, five-dimension scorecard, "three things to change this week", holidays and per-signal switches in settings | done: 56 tests |
-| 2 | B6, B7, B8, D2, D3 | sprint changelog parsing, closed-sprint poll, created/resolved counts, due-date change counts, quarter setting | 1–2 agent-days |
-| 3 | works-council pack, Privacy & Security tab text, listing copy | documents | 1 agent-day |
+| 2 ✅ | B6, B7, B8, D2, D3 | daily poll of closed sprints per board with one JQL per new sprint (carry-over, work created mid-sprint), created against resolved over four weeks, due-date moves against dated open work, this week's activity per person against the eight-week median (the quarter-end surge, without a quarter setting) | done: 61 tests |
+| 3 ✅ | works-council pack, Privacy & Security tab text, listing copy | `WORKS_COUNCIL.md` | done |
 | v2 | A6, B5, C2, C4, D5, E2, E3, F2, F3, G1 | each its own PR after pilots ask | as needed |
 | watch | D6, Teamwork Graph | when it leaves Early Access | – |
 

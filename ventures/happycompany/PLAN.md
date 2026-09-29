@@ -22,17 +22,17 @@ work from; the launch plan format follows `ventures/circadian/LAUNCH_PLAN.md`.
 `SIGNALS.md` is the catalogue: forty candidate signals across hours and
 recovery, workload, fragmentation, deadline pressure, rework, withdrawal and
 support, each with its evidence, false positives, privacy class and a
-release. Decided 29 September 2026; step 1 (seventeen indicators across five
-dimensions) is built and tested, step 2 is the sprint signals, the rest
-waits for pilots.
+release. Decided 29 September 2026; steps 1 and 2 (twenty-two indicators
+across five dimensions, including the sprint signals) are built and tested,
+the rest waits for pilots.
 
 ## What exists today
 
 The app in this directory: two product-event triggers, a daily scheduled
 rollup, a page for Jira projects and Confluence spaces, pseudonymisation,
-the 5-person rule, retention, seventeen indicators in five ISO 45003-mapped
+the 5-person rule, retention, twenty-two indicators in five ISO 45003-mapped
 dimensions, "three things to change this week", holidays and per-signal
-switches, 56 tests. Not yet done
+switches, 61 tests. Not yet done
 on a real site: `forge register`, the first deploy, and confirming the
 Confluence event payload shapes (README step 5).
 
@@ -127,6 +127,9 @@ Partners who run HR-adjacent implementations. Target by day 90: listing live,
 
 ## Known gaps to close before the paid listing
 
+- `WORKS_COUNCIL.md` says settings may be changed only by project
+  administrators; that is true in Jira and not yet in Confluence. Close
+  the gap before a Confluence-only customer signs.
 - Confluence settings form has no space-admin check (Jira gates to project
   admins). Add a check through the space permissions API or hide the form
   for non-admins.

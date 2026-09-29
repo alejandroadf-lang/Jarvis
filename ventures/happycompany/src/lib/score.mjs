@@ -42,12 +42,17 @@ export const BANDS = Object.freeze({
   overloadedShare: { good: 0.0, poor: 0.3, label: 'People carrying far more open work than the team', dimension: 'workload' },
   overdueShare: { good: 0.08, poor: 0.3, label: 'Open work that is overdue', dimension: 'workload' },
   wipMean: { good: 2, poor: 5, label: 'Work in progress per person', dimension: 'workload' },
+  carryOverShare: { good: 0.1, poor: 0.25, label: 'Sprint work carried over', dimension: 'workload' },
+  inflowRatio: { good: 1.1, poor: 1.5, label: 'New work arriving faster than it is finished', dimension: 'workload' },
   itemsMedian: { good: 4, poor: 10, label: 'Different items touched in a day', dimension: 'fragmentation' },
   burstyShare: { good: 0.1, poor: 0.4, label: 'Days broken into many separate bursts', dimension: 'fragmentation' },
   mentionsPerPersonDay: { good: 3, poor: 8, label: 'Mentions received per person per day', dimension: 'fragmentation' },
   mentionTopShare: { good: 0.25, poor: 0.5, label: 'Mentions landing on one person', dimension: 'fragmentation' },
   dueCrunch: { good: 2, poor: 4, label: 'Due dates bunching into one week', dimension: 'deadline' },
   highPriorityShare: { good: 0.2, poor: 0.5, label: 'Open work marked High or Highest', dimension: 'deadline' },
+  unplannedShare: { good: 0.1, poor: 0.3, label: 'Work created mid-sprint', dimension: 'deadline' },
+  dueMoveRate: { good: 0.1, poor: 0.35, label: 'Due dates being moved', dimension: 'deadline' },
+  loadSurge: { good: 1.3, poor: 2, label: 'Workload surge this week', dimension: 'deadline' },
   reopenRate: { good: 0.05, poor: 0.15, label: 'Work reopened after being done', dimension: 'rework' },
 });
 
@@ -106,6 +111,11 @@ export function indicatorValues(metrics, snapshot) {
     overloadedShare: s.overloadedShare ?? null,
     overdueShare: s.overdueShare ?? null,
     wipMean: s.wipMean ?? null,
+    carryOverShare: m.carryOverShare ?? null,
+    inflowRatio: m.inflowRatio ?? null,
+    unplannedShare: m.unplannedShare ?? null,
+    dueMoveRate: m.dueMoveRate ?? null,
+    loadSurge: m.loadSurge ?? null,
     itemsMedian: m.itemsMedian ?? null,
     burstyShare: m.burstyShare ?? null,
     mentionsPerPersonDay: m.mentionsPerPersonDay ?? null,
@@ -143,6 +153,11 @@ const TEXT = {
   dueCrunch: (v) => [`The busiest due-date week holds ${num(v)}× the usual load.`, 'Spread the dates, or accept now that some will slip.'],
   highPriorityShare: (v) => [`${pct(v)} of open work is marked High or Highest.`, 'When everything is urgent nothing is. Agree a priority budget.'],
   reopenRate: (v) => [`${pct(v)} of finished work was reopened.`, 'Rework is demoralising. Look at the definition of done and the review step.'],
+  carryOverShare: (v) => [`${pct(v)} of sprint work was carried over unfinished.`, 'Commit to less next sprint, on purpose, and see whether the carry-over stops.'],
+  inflowRatio: (v) => [`New work arrives ${num(v)}× as fast as work gets finished.`, 'The backlog is growing. Decide what will not be done, and say so.'],
+  unplannedShare: (v) => [`${pct(v)} of sprint work was created after the sprint started.`, 'Protect the sprint: unplanned work goes to a named slot, not on top.'],
+  dueMoveRate: (v) => [`Due dates moved ${num(v)} times per dated item this week.`, 'Dates that keep moving stop meaning anything and keep the pressure on. Re-plan once, properly.'],
+  loadSurge: (v) => [`This week carried ${num(v)}× the usual activity per person.`, 'Quarter ends and releases are predictable. Plan the surge down next time, or plan the recovery after it.'],
 };
 
 /** The full scorecard for one period. `disabled` is the admin's per-signal switch set. */

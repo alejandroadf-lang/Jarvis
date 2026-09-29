@@ -244,6 +244,63 @@ test('the daily rollup keeps the people record, aggregates completed weeks, snap
   assert.equal(find('deadline', 'highPriorityShare').status, 'act');
   assert.equal(find('workload', 'wipMean').value, 1.7);
   assert.deepEqual(report.current.openWork, { day: '2026-09-30', openTotal: 10, unassigned: 0, unassignedOverdue: 0, people: 3 });
+  assert.ok(report.notes.some((n) => n.includes('No closed sprints')));
+  assert.equal(find('workload', 'carryOverShare').value, null);
+});
+
+test('sprints are polled once, and the multi-week indicators derive from the weekly metrics', async () => {
+  const store = memoryStore();
+  let sprintFetches = 0;
+  const jira = {
+    openIssues: async () => [...Array(10)].map((_, i) => ({ assignee: `p${i % 3}`, overdue: false, inProgress: false, high: false, due: i < 8 ? '2026-10-20' : null })),
+    boards: async () => [{ id: '7' }],
+    closedSprints: async () => [{ id: '2', startDate: '2026-09-14T00:00:00Z', completeDate: '2026-09-28T09:00:00Z' }],
+    sprintIssues: async () => {
+      sprintFetches += 1;
+      return [
+        ...Array.from({ length: 6 }, () => ({ done: true, created: '2026-09-10T00:00:00Z', resolved: '2026-09-20T00:00:00Z' })),
+        { done: false, created: '2026-09-10T00:00:00Z', resolved: null },
+        { done: false, created: '2026-09-22T00:00:00Z', resolved: null },
+      ];
+    },
+    statusCategories: async () => ({ 1: 'new', 3: 'indeterminate', 10001: 'done' }),
+  };
+  const app = createApp({ store, jira, now: clock(), log: quiet });
+
+  // Eight calm baseline weeks, then a week with three times the activity,
+  // due dates moved on most updates, and more created than resolved.
+  await populate(app, { people: 6, weeks: 9 });
+  const change = (field, from, to) => ({ changelog: { items: [{ field, from, to }] } });
+  for (let d = 0; d < 5; d++) {
+    const day = dayOf(2026, 8, 28 + d);
+    for (let p = 0; p < 6; p++) {
+      await app.onJiraEvent(jiraEvent(`557058:${p}`, `${day}T11:00:00.000Z`, `OPS-${p}`, change('duedate', '2026-10-01', '2026-10-08')));
+      await app.onJiraEvent({ eventType: 'avi:jira:created:issue', atlassianId: `557058:${p}`, issue: { id: `9${d}${p}`, key: `OPS-9${d}${p}`, fields: { updated: `${day}T12:00:00.000Z` } } });
+      if (p < 2) await app.onJiraEvent(jiraEvent(`557058:${p}`, `${day}T13:00:00.000Z`, `OPS-${p}`, change('status', '3', '10001')));
+    }
+  }
+
+  const first = await app.dailyRollup();
+  assert.equal(first.sprints, 1);
+  assert.equal((await app.dailyRollup()).sprints, 0);
+  assert.equal(sprintFetches, 1);
+  assert.deepEqual(await store.get('sprintsSeen:jira:OPS'), ['2']);
+
+  const report = await app.teamHealth({ scope: 'jira:OPS', product: 'jira' });
+  const find = (dim, key) => report.current.dimensions[dim].indicators.find((i) => i.key === key);
+  assert.equal(report.current.week, '2026-W40');
+  assert.equal(find('workload', 'carryOverShare').value, 0.25);
+  assert.equal(find('deadline', 'unplannedShare').value, 0.125);
+  assert.ok(find('deadline', 'loadSurge').value >= 2.5, String(find('deadline', 'loadSurge').value));
+  assert.equal(find('deadline', 'loadSurge').status, 'act');
+  assert.equal(find('workload', 'inflowRatio').value, 3); // 30 created, 10 resolved
+  assert.equal(find('deadline', 'dueMoveRate').value, 3.75); // 30 moves over 8 dated items
+  // Several indicators bottom out this week; the three actions are the first three at zero.
+  assert.equal(report.current.actions.length, 3);
+  assert.ok(report.current.actions.some((a) => ['loadSurge', 'dueMoveRate', 'inflowRatio'].includes(a.key)));
+  // Earlier weeks have no sprint within the fallback window and no baseline yet.
+  assert.ok(report.weeks.length === 13);
+  assert.ok(!report.notes.some((n) => n.includes('No closed sprints')));
 });
 
 test('a rollup failure on one project does not stop the others', async () => {

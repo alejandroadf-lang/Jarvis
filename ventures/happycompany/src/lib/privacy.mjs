@@ -60,12 +60,15 @@ export function publicMetrics(metrics) {
   // this copies field by field so a future field has to be added here on purpose.
   const {
     total, contributors, personDays, afterHoursShare, lateShare, weekendShare, topShare, hhi,
-    longSpanShare, burstyShare, itemsMedian, mentionsPerPersonDay, mentionTopShare, reopenRate,
-    streakShare, noRestShare, kinds,
+    longSpanShare, burstyShare, itemsMedian, mentionsPerPersonDay, mentionTopShare, reopenRate, dueMoves,
+    streakShare, noRestShare, carryOverShare, unplannedShare, inflowRatio, loadSurge, dueMoveRate, kinds,
   } = metrics;
   return {
     suppressed: false, total, contributors, personDays, afterHoursShare, lateShare, weekendShare, topShare, hhi,
-    longSpanShare, burstyShare, itemsMedian, mentionsPerPersonDay, mentionTopShare, reopenRate,
-    streakShare: streakShare ?? null, noRestShare: noRestShare ?? null, kinds: kinds || {},
+    longSpanShare, burstyShare, itemsMedian, mentionsPerPersonDay, mentionTopShare, reopenRate, dueMoves: dueMoves || 0,
+    streakShare: streakShare ?? null, noRestShare: noRestShare ?? null,
+    carryOverShare: carryOverShare ?? null, unplannedShare: unplannedShare ?? null,
+    inflowRatio: inflowRatio ?? null, loadSurge: loadSurge ?? null, dueMoveRate: dueMoveRate ?? null,
+    kinds: kinds || {},
   };
 }

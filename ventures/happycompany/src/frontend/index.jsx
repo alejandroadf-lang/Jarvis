@@ -36,12 +36,17 @@ const SIGNAL_LABELS = {
   overloadedShare: 'People carrying far more open work than the team',
   overdueShare: 'Overdue open work',
   wipMean: 'Work in progress per person',
+  carryOverShare: 'Sprint work carried over',
+  inflowRatio: 'New work arriving faster than it is finished',
   itemsMedian: 'Different items touched in a day',
   burstyShare: 'Days broken into many bursts',
   mentionsPerPersonDay: 'Mentions received per person per day',
   mentionTopShare: 'Mentions landing on one person',
   dueCrunch: 'Due dates bunching into one week',
   highPriorityShare: 'Open work marked High or Highest',
+  unplannedShare: 'Work created mid-sprint',
+  dueMoveRate: 'Due dates being moved',
+  loadSurge: 'Workload surge this week',
   reopenRate: 'Work reopened after being done',
 };
 
