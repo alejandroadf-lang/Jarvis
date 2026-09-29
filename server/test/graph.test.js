@@ -68,10 +68,13 @@ test('both teams are drawn — the company is not one roster', async () => {
 // before the Devil's Advocate was added, and the number a founder reads off the
 // picture has to be the number the company actually has. This is the one place
 // that pins it.
-test('the company is 28 agents across two teams, and the graph says so', () => {
+// 32 since the four Happy Company roles (Forge Engineer, Privacy &
+// Works-Council Officer, Occupational Health Researcher, Pilot & Partnerships
+// Manager) joined under the CTO and COO.
+test('the company is 32 agents across two teams, and the graph says so', () => {
   const g = graph.buildGraph();
-  assert.equal(g.nodes.length, 28, 'update this deliberately when the roster changes');
-  assert.equal(g.meta.agentCount, 28);
+  assert.equal(g.nodes.length, 32, 'update this deliberately when the roster changes');
+  assert.equal(g.meta.agentCount, 32);
   assert.deepEqual(g.meta.roots.map((r) => r.id), ['ceo', 'venture_partner']);
 });
 
@@ -169,9 +172,18 @@ test('agents pinned to Anthropic by a server tool are flagged, across both teams
   // ran on the frontier tier for other reasons, so in their case the pin costs
   // nothing; that is why it was these two and not the Marketing Manager, who
   // would have been promoted off the cheap tier to get the same tools.
+  //
+  // Ten with the four Happy Company roles. Each also holds action tools, which
+  // keep an agent on the frontier model on their own (models.js), so here too
+  // the pin changes no model and no cost: it buys them current Forge docs,
+  // regulator guidance, research papers and prospects to read.
   assert.deepEqual(pinned, [
     'cmo',
+    'forge_engineer',
+    'health_researcher',
     'market_researcher',
+    'pilot_manager',
+    'privacy_officer',
     'sales_commercial_manager',
     'scale_strategist',
     'seo_specialist',
