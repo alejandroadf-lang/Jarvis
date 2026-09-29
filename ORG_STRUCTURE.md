@@ -91,6 +91,10 @@ Product Manager`).
 | Brand Strategist | CMO | Voice consistency, competitive positioning research |
 | Security Reviewer | CTO | Vulnerability review (OWASP Top 10, secrets, unsafe patterns) |
 | QA & Test Engineer | CTO | Code review rigor, test coverage, correctness |
+| Atlassian Forge Engineer | CTO | Happy Company's code: Forge manifest, UI Kit, storage, scopes, Marketplace rules |
+| Privacy & Works-Council Officer | CTO | Reviews every Happy Company change and claim against its privacy promises, GDPR and works-council law |
+| Occupational Health Researcher | CTO | Burnout and psychosocial-risk evidence, ISO and national frameworks, Happy Company's thresholds and validation |
+| Pilot & Partnerships Manager | COO | Happy Company pilots, partner outreach (drafts only), the Marketplace listing |
 
 This is deliberately close to how a real early-stage IT company is
 structured — a lean C-suite, with one specialist owning each of the
@@ -641,6 +645,44 @@ At 27 agents, the Agent Operations Engineer's own data showed **18 were never
 consulted**. Scaling the same shape to 150 multiplies unconsulted headcount,
 not output. The machinery here makes a larger roster *viable*; it doesn't
 make it *right*. Let the operations data decide the number.
+
+## Four roles for Happy Company
+
+Happy Company (`ventures/happycompany`) is a Jira and Confluence app that
+grades teams' working conditions and produces psychosocial-risk evidence
+for ISO 45001 audits and works councils. The generic roster could not run
+it: nobody knew Atlassian Forge, nobody owned the privacy promises every
+customer's works agreement quotes, nobody kept the science behind the
+thresholds current, and nobody ran pilots. So four roles joined
+(`server/agents/orgChart.js`, after the Devil's Advocate):
+
+| Role | Can | Cannot |
+|---|---|---|
+| Atlassian Forge Engineer (CTO) | read the repo, queue work, commit to a branch, open pull requests, run and read checks, revert, search Forge docs | send anything to anyone, link repos, merge |
+| Privacy & Works-Council Officer (CTO) | read the repo, search regulators' guidance, record verdicts as venture notes | change code, write to anyone |
+| Occupational Health Researcher (CTO) | read the repo, search research and standards, record findings, queue concrete work for the engineer | change code, write to anyone |
+| Pilot & Partnerships Manager (COO) | find prospects and partners, keep the pipeline, read replies, draft outreach | send outreach (the founder releases every draft), change code |
+
+Their tools are the existing ones, taken by name from the Engineering Lead
+and the Sales & Commercial Manager (`actionsFrom`), so every scope, cap,
+plan approval and kill-switch check applies unchanged and a tool fixed in
+one place is fixed for all. All four carry web search and fetch; they also
+hold action tools, which keep an agent on the frontier model anyway, so
+the research costs no model change.
+
+The privacy gate is carried by the org chart, not by trust. The CTO is told
+to send any change touching what is collected, retention, who sees what or
+group-size thresholds to the Privacy & Works-Council Officer before a pull
+request opens, and to treat its STOP as a question for the founder. The
+engineer's own prompt says the same, the promises are quoted verbatim in
+both prompts, and every change still lands as a pull request the founder
+merges. `server/test/happyCompanyRoles.test.js` pins what each role can and
+cannot do, and the clauses that hold the gate.
+
+What they still need from the founder before they can work on it: Happy
+Company registered as a venture with its objectives, and its repo linked
+with `allowedPaths` limited to it (moving it to its own repo is the cleaner
+boundary, because this one also holds the company's own server).
 
 ## Three roles a conventional org chart wouldn't have
 
@@ -1232,7 +1274,7 @@ anything at all. A list sorts by name; a graph sorts by structure, and
 structure is the question — *who did the CEO actually talk to* is one look at a
 picture and a paragraph of prose.
 
-`GET /graph` draws all twenty-eight agents as a force-directed graph, live from
+`GET /graph` draws all thirty-two agents as a force-directed graph, live from
 `server/graph.js` — **both teams**. The first version drew only the Executive
 Team and reported "22 agents", which is not the company: the Venture Studio is
 six more, it runs every morning in the second phase of the sync, and its trace
@@ -1289,7 +1331,7 @@ switch, because nothing about the company differs between them — they are two
 projections of one `/api/graph` response, not two features.
 
 The graph answers *who reports to whom, and where did this morning's question
-travel*. The office answers *who is at their desk*: twenty-eight desks on two
+travel*. The office answers *who is at their desk*: thirty-two desks on two
 floors, the monitor lit only for an agent that actually ran, the root at the
 head of its floor. Same hues, same ring for the agents pinned to Anthropic, so
 the two views never disagree.
@@ -1300,7 +1342,7 @@ wrong first:
 - **Rows step `+1` in x and `−1` in y.** `isoY` depends on `x + y`, so holding
   that constant keeps a row level on screen while `isoX` — which depends on
   `x − y` — marches it to the right. Laying a row out along x alone makes it run
-  diagonally, and twenty-eight desks collapse into a thin band across one corner.
+  diagonally, and thirty-two desks collapse into a thin band across one corner.
 - **Nameplates are staggered by column.** They are far wider than the desks they
   label, so column pitch is set by the text, and alternating columns sit higher
   so two long titles side by side still cannot collide.
