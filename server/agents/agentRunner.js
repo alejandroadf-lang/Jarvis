@@ -860,7 +860,7 @@ export async function runAgent({
         // entries by title; no `id` so the graph's activity map, which counts
         // agents consulted, ignores it.
         // Every action, done or refused, for the founder's AGENTS command.
-        recordActivity({ agentId: agent.id, kind: 'action', tool: toolUse.name, ok, ventureId: toolUse.input?.ventureId || null, ms: Date.now() - actionStarted });
+        recordActivity({ agentId: agent.id, kind: 'action', tool: toolUse.name, ok, ventureId: toolUse.input?.ventureId || null, ms: Date.now() - actionStarted, refusal: ok ? null : resultText });
         trace.push({
           kind: 'action',
           title: `${ok ? '⚙' : '⚠'} ${toolUse.name}`,

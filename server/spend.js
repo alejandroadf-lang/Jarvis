@@ -35,6 +35,12 @@ export function dailyCapUsd() {
   return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_DAILY_CAP_USD;
 }
 
+/** {"YYYY-MM-DD": usd} for the last `days` days that had any spend (oldest kept: DAYS_KEPT). */
+export function spendByDay(days = 7, now = new Date()) {
+  const since = dayKey(new Date(now.getTime() - (days - 1) * 24 * 60 * 60 * 1000));
+  return Object.fromEntries(Object.entries(load().days).filter(([day]) => day >= since));
+}
+
 export function getSpendToday() {
   return load().days[dayKey()] || 0;
 }
