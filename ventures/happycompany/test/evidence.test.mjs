@@ -227,6 +227,9 @@ test('the rollup packs the closed quarter once; only admins attest a level it re
   assert.equal(view.live, false);
   assert.equal(view.pack.scope.teams, 1);
   assert.equal(view.pack.participation.responses, 6);
+  const q = await store.get('qscores:jira:2026-Q3');
+  assert.deepEqual(Object.keys(q), ['jira:OPS'], 'per-team quarter scores kept for the absence check');
+  assert.equal(q['jira:OPS'].graded, 3);
   assert.equal(view.level.level, 'none');
   assert.ok(!view.markdown.includes('557058'), 'no account id in the pack');
   await assert.rejects(app.issueAttestation({ product: 'jira', viewer: admin, quarter: '2026-Q3' }), /did not reach Measuring.*consulted/);

@@ -41,6 +41,7 @@ import { sprintSummary, sprintMetricsForWeek, SPRINT_LOOKBACK_DAYS, SPRINT_FALLB
 import { buildEvidence, evidenceMarkdown, evidenceHtml } from './lib/evidence.mjs';
 import { disclosures } from './lib/disclosures.mjs';
 import { organisationLevel } from './lib/levels.mjs';
+import { parseOutcomes, outcomeSummary, predictiveCheck, strainGap } from './lib/outcomes.mjs';
 import { newKeyPair, keyId, signAttestation, attestationPayload } from './lib/attestation.mjs';
 
 export const WEEKS_SHOWN = 12;
@@ -692,6 +693,7 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
       product,
       generatedAt: now().toISOString(),
       summary,
+      outcomes: await outcomesView(product),
       canConfigure: Boolean(viewer?.isAdmin),
       orgSettings: viewer?.isAdmin ? settings : undefined,
       notes: [
@@ -773,6 +775,7 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
     const summaryTeams = [];
     const auditRows = [];
     const disabled = {};
+    const teamScores = {};
     const inRange = (e) => e.at.slice(0, 10) >= first && e.at.slice(0, 10) <= last;
     for (const { scope } of scopes) {
       const team = await computeTeam({ scope, product, shown: EVIDENCE_WEEKS });
@@ -796,6 +799,14 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
         actions: completion,
         pulse: { on: tallies.length > 0, tallies },
       });
+      // Per team, for checking the grade against imported absence later:
+      // the quarter's mean score and how many graded weeks were D or E.
+      const graded = qWeeks.filter((w) => w.score !== null);
+      teamScores[scope] = {
+        mean: graded.length ? Math.round(graded.reduce((a, w) => a + w.score, 0) / graded.length) : null,
+        graded: graded.length,
+        strained: graded.filter((w) => w.grade === 'D' || w.grade === 'E').length,
+      };
       summaryTeams.push({
         name,
         weeks: qWeeks.map((w) => ({ week: w.week, grade: w.grade, score: w.score })),
@@ -805,13 +816,15 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
       auditRows.push(...(await audit.entries(scope, { since: first })).filter(inRange));
     }
     auditRows.push(...(await audit.entries(`org:${product}`, { since: first })).filter(inRange));
-    return { product, quarter, weeks, generatedAt: now().toISOString(), teams, summary: organisationSummary(summaryTeams), audit: auditRows, disabled, orgSettings: org };
+    return { product, quarter, weeks, generatedAt: now().toISOString(), teams, summary: organisationSummary(summaryTeams), audit: auditRows, disabled, orgSettings: org, teamScores };
   }
 
   /** Packs a closed quarter once. Returns whether a new pack was stored. */
   async function snapshotEvidence(product, quarter) {
     if (await store.get(evidenceKey(product, quarter))) return false;
-    const pack = buildEvidence(await evidenceInput(product, quarter));
+    const input = await evidenceInput(product, quarter);
+    const pack = buildEvidence(input);
+    if (pack.scope.teams) await store.set(`qscores:${product}:${quarter}`, input.teamScores);
     // An empty quarter is stored too, so the rollup does not rebuild it daily.
     await store.set(evidenceKey(product, quarter), pack.scope.teams ? pack : { quarter, empty: true });
     await audit.log(`org:${product}`, 'evidence.snapshot', { quarter, teams: pack.scope.teams });
@@ -842,6 +855,8 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
       if (chosen !== current) throw new Error(`There is no evidence pack for ${chosen}. Packs exist for quarters the app was installed for, from the first full quarter.`);
       pack = buildEvidence(await evidenceInput(product, current));
     }
+    // Absence figures arrive after a quarter is packed, so they join at view time.
+    pack = await withOutcomes(product, pack);
     const previous = stored.find((p) => p.quarter === previousQuarter(pack.quarter)) || null;
     return {
       product,
@@ -898,7 +913,7 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
     const title = `${pack.title} (${product === 'jira' ? 'Jira' : 'Confluence'})${pack.organisation ? `, ${pack.organisation}` : ''}`;
     let created;
     try {
-      created = await confluence.createPage(org.evidenceSpaceId, { title, html: evidenceHtml(pack) });
+      created = await confluence.createPage(org.evidenceSpaceId, { title, html: evidenceHtml(await withOutcomes(product, pack)) });
     } catch (err) {
       throw new Error(`Confluence did not accept the page. Check that Happy Company is installed in Confluence and the space id ${org.evidenceSpaceId} exists: ${err.message}`);
     }
@@ -985,6 +1000,44 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
     }
     if (state.done) await audit.log(scope, 'backfill.done', { issues: state.issues, events: state.events });
     return counted;
+  }
+
+  // ## Sickness absence and leavers (see src/lib/outcomes.mjs)
+
+  const outcomesKey = (product, quarter) => `outcomes:${product}:${quarter}`;
+
+  /** Site administrators paste one closed quarter's team figures from the HR system. */
+  async function importOutcomes({ product, viewer, quarter, text, by = null }) {
+    if (!viewer?.isAdmin) throw new Error('Only site administrators can import absence and leaver figures.');
+    if (!QUARTER.test(String(quarter))) throw new Error('quarter must be written like 2026-Q3');
+    const today = todayUtc();
+    if (quarter >= quarterOf(today)) throw new Error(`${quarter} has not ended yet. Import a quarter once it is closed.`);
+    if (quarter < quarterOf(addDays(today, -AUDIT_RETAIN_DAYS))) throw new Error(`${quarter} is older than the three years figures are kept.`);
+    const knownScopes = ((await store.get('scopes')) || []).filter((s) => s.product === product).map((s) => s.scope);
+    const { rows, dropped } = parseOutcomes(text, { product, knownScopes });
+    const replaced = Boolean(await store.get(outcomesKey(product, quarter)));
+    await store.set(outcomesKey(product, quarter), { quarter, importedAt: now().toISOString(), rows });
+    await audit.log(`org:${product}`, 'outcomes.import', { quarter, teams: rows.length, dropped: dropped.length, replaced }, by ? pseudonym(by, await salt()) : null);
+    return { quarter, teams: rows.length, dropped, replaced, summary: outcomeSummary({ quarter, rows }) };
+  }
+
+  /** What the organisation page shows: organisation figures and the checks, never a team's own rate. */
+  async function outcomesView(product) {
+    const records = (await store.list(`outcomes:${product}:`)).map((r) => r.value).filter(Boolean).sort((a, b) => (a.quarter < b.quarter ? -1 : 1));
+    if (!records.length) return { quarters: [], latest: null, check: null, gap: null };
+    // Checked on the latest import: its absence against the same quarter's
+    // grades and the quarter before's. The strain gap needs the quarter
+    // before's grades, since it asks what followed a strained quarter.
+    const latest = records.at(-1);
+    const sameScores = await store.get(`qscores:${product}:${latest.quarter}`);
+    const priorScores = await store.get(`qscores:${product}:${previousQuarter(latest.quarter)}`);
+    const check = predictiveCheck({ quarter: latest.quarter, sameScores, priorScores, record: latest });
+    const gap = strainGap(priorScores, latest);
+    return { quarters: records.map((r) => outcomeSummary(r)), latest: outcomeSummary(records.at(-1)), check, gap };
+  }
+
+  async function withOutcomes(product, pack) {
+    return { ...pack, outcomes: outcomeSummary(await store.get(outcomesKey(product, pack.quarter))) };
   }
 
   async function saveSettings({ scope, product, projectKey, spaceId, settings, by = null }) {
@@ -1138,6 +1191,8 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
     const oldestQuarterKept = quarterOf(addDays(today, -AUDIT_RETAIN_DAYS));
     summary.deleted += await expire('evidence:', (k) => k.slice(-7) < oldestQuarterKept);
     summary.deleted += await expire('attest:', (k) => k.slice(-7) < oldestQuarterKept);
+    summary.deleted += await expire('outcomes:', (k) => k.slice(-7) < oldestQuarterKept);
+    summary.deleted += await expire('qscores:', (k) => k.slice(-7) < oldestQuarterKept);
     summary.deleted += await expire('audit:org:', (_k, v) => (v?.at || '').slice(0, 10) < addDays(today, -AUDIT_RETAIN_DAYS));
     return summary;
   }
@@ -1161,6 +1216,7 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
     allTeams,
     teamName,
     evidenceView,
+    importOutcomes,
     teamBrief,
     requestBackfill,
     issueAttestation,

@@ -60,6 +60,8 @@ Every fact the app stores, and where in the code it is written:
 | Organisation evidence settings: whether and when workers' representatives were consulted, the organisation name, the Confluence space for evidence pages | per product | `src/features/org.mjs`, `validateOrgSettings` |
 | Signed attestations of the organisation's level, and the installation's public key (the private key is in the secret store) | 3 years | `src/lib/attestation.mjs` |
 | Progress of a history backfill: issues read, actions counted | per team | `src/app.mjs`, `runBackfill` |
+| Per team per closed quarter: mean grade score, graded weeks, weeks at D or E | 3 years | `src/app.mjs`, `snapshotEvidence` |
+| **Only if the employer imports them:** per team per closed quarter, headcount, sickness absence rate (one decimal) and number of leavers, as pasted from the HR system; teams under 10 people refused and never stored | 3 years | `src/lib/outcomes.mjs`, `parseOutcomes` |
 
 ### What is never collected
 
@@ -133,6 +135,30 @@ nothing. The text goes to Rovo, which runs inside Atlassian under
 Atlassian's AI terms; the customer's Rovo settings decide whether Rovo is
 available at all. Clause 12 lets the parties switch it off in the agreement.
 
+### Sickness absence and leavers (optional, imported by hand)
+
+A site administrator may paste, once a quarter, each team's headcount,
+sickness absence rate and number of leavers from the HR system. The app
+uses them for three things only: to check across teams whether the grade
+anticipated absence, to give the cost estimator the organisation's own
+figures, and as the lagging indicators in the evidence pack.
+
+The rate of sickness absence is health data (Art. 9 GDPR), even without
+reasons or names, so:
+
+- it is imported per team and quarter, never per person, and never
+  connected to an HR system automatically;
+- teams under 10 people are refused at import and not stored;
+- no team's own rate is shown anywhere: the organisation page shows the
+  organisation's rate, a rank correlation across teams, and a comparison
+  of groups of at least three teams each;
+- it never changes a grade, is never shown on a team page, in the digest
+  or to the Rovo agent;
+- every import is recorded in the audit trail with the administrator's
+  pseudonym.
+
+Clause 15 below decides whether it is used at all.
+
 ### The organisation view
 
 Site administrators, and members of the groups they name, see coverage,
@@ -168,6 +194,7 @@ personal data, not anonymous data, and it is treated as such below.
 | Time zone cache | 30 days | deleted |
 | People record (three dates per pseudonym) | while the person is active; a pseudonym unseen for 120 days is removed | removed (`FORGET_AFTER_DAYS`) |
 | Quarterly evidence packs and attestations (team-level figures only) | 3 years | deleted by the daily job |
+| Per-team quarter scores and imported absence and leaver figures | 3 years | deleted by the daily job |
 | Audit trail | 3 years | deleted by the daily job (`AUDIT_RETAIN_DAYS`) |
 | Everything | on uninstall | Atlassian removes the app's storage with the installation |
 
@@ -207,6 +234,11 @@ personal data, not anonymous data, and it is treated as such below.
   as the legitimate interest. A data protection impact assessment is
   recommended because the processing concerns employees; §3 to §6 of this
   document are its input.
+- **Imported sickness absence** is health data. It needs its own basis
+  under Article 9 GDPR (in Germany Art. 9(2)(b) with § 26 (3) BDSG, or a
+  works agreement that covers it) and should be named in the impact
+  assessment. Without that, leave the import unused: nothing else in the
+  app depends on it.
 - **Employee information** (Articles 13/14 GDPR): a one-page notice, §9.
 
 ## 8. Works agreement template
@@ -288,6 +320,13 @@ their lawyers, not legal advice.
     by either party with three months' notice. Until a new agreement is
     concluded, clauses 2, 3 and 6 continue to apply to data already
     collected; the software is otherwise switched off.
+15. **Sickness absence and leavers.** Importing team-level sickness absence
+    rates and leavers is [permitted / not permitted]. If permitted: only
+    per team and closed quarter, only for teams of 10 or more, never with
+    reasons for absence or names, and only for the purposes in §3 of the
+    pack. The data protection officer confirms the legal basis (Art. 9(2)(b)
+    GDPR with §26(3) BDSG, or the national equivalent) before the first
+    import.
 
 > [Place, date]
 >
@@ -311,11 +350,11 @@ health page. Questions: [HR contact].*
 
 | Question | Answer |
 |---|---|
-| Does the app store End User data? | Yes: pseudonymised activity counts and hours, hashed item ids, per-team aggregates. No content. |
+| Does the app store End User data? | Yes: pseudonymised activity counts and hours, hashed item ids, per-team aggregates. No content. If the customer imports them, team-level sickness absence rates (health data, teams of 10 or more only). |
 | Where? | Forge hosted storage, in the customer's Atlassian data residency region. |
 | Does the app egress data outside Atlassian? | No. No remotes, no external fetch, no analytics. Runs on Atlassian. |
 | Sub-processors | Atlassian only. |
-| Retention | Per-person counts 21 days; team aggregates 26 weeks; snapshots 91 days; sprint summaries 182 days; deleted on uninstall. |
+| Retention | Per-person counts 21 days; team aggregates 26 weeks; snapshots 91 days; sprint summaries 182 days; quarterly evidence, team quarter scores and imported absence figures 3 years; deleted on uninstall. |
 | Encryption | At rest and in transit by Atlassian's Forge platform. |
 | Access by the vendor | None. The vendor cannot read any installation's storage. |
 | Certifications | None of the vendor's own yet; the platform's are Atlassian's. |
