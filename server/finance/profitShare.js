@@ -90,6 +90,31 @@ export const CONTRIBUTION_KINDS = {
   // So when revenue lands on a venture, the agents who did real work on that
   // venture are credited in proportion to the money — see distributeRevenue.
   revenue_earned: { label: 'Worked on a venture that earned', weight: 0 },
+
+  // The handlers had been recording these all along and recordContribution
+  // was dropping them, because they were never added here: a pull request
+  // earned nothing, so the one agent that may only ship through pull requests
+  // (the Forge Engineer) could never earn at all. Weights follow the same
+  // rules as the table above, flat-ish and never above the real thing.
+  //
+  // A pull request earns what shipped code earns: it is the same work, done
+  // the safer way, and paying less for it would teach agents to prefer the
+  // direct commit. A payment that actually arrived is an outcome and pays
+  // like one. Clerical steps pay 1. A revert pays 1 so committing and
+  // undoing cannot out-earn committing once.
+  open_pull_request: { label: 'Opened a pull request', weight: 5 },
+  payment_received: { label: 'Created the link a customer paid through', weight: 5 },
+  complete_task: { label: 'Finished a queued task', weight: 2 },
+  create_payment_link: { label: 'Created a payment link', weight: 2 },
+  draft_customer_email: { label: 'Drafted outreach for the founder', weight: 1 },
+  update_pipeline: { label: 'Updated a deal in the pipeline', weight: 1 },
+  check_replies: { label: 'Filed a reply from a contact', weight: 1 },
+  revert_commit: { label: 'Reverted a commit', weight: 1 },
+  // Recorded so the history is complete, paid nothing: both are free,
+  // unbounded and self-triggered, and paying for them would pay agents to
+  // call a calculator. Their worth shows up in the work they informed.
+  calculate: { label: 'Checked a calculation', weight: 0 },
+  verify_claim: { label: 'Checked a source', weight: 0 },
 };
 
 // How much credit a dollar of revenue is worth, relative to the table above.

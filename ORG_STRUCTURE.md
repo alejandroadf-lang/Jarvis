@@ -661,9 +661,14 @@ It reads `server/activityLog.js`, which `agentRunner.js` writes on every
 consultation, every action and every turn it leads, done or refused, keyed
 by the agent the runner knows is acting (never self-reported). The
 profit-share ledger was the obvious source and the wrong one: it keeps only
-the kinds of work that earn credit, so opening a pull request, completing a
-task or drafting an email is dropped there, and a view read from it would
-have called the Forge Engineer idle on a day it opened three pull requests.
+the kinds of work that earn credit, and until the same week it silently
+dropped ten kinds the handlers recorded (a pull request, a finished task, a
+payment a customer sent), so a view read from it would have called the Forge
+Engineer idle on a day it opened three pull requests. Those kinds now earn
+credit (`CONTRIBUTION_KINDS`: a pull request pays what shipped code pays,
+clerical steps 1, calculations and source checks are recorded but pay 0), and
+`profitShare.test.js` fails if a handler ever records a kind the ledger does
+not know. The activity log still records everything, credited or not.
 Refusals are kept on purpose, because "blocked five times" and "did nothing"
 need different fixes; the reply points at `READY` for the first. The log
 holds who, what, when and whether it worked, never inputs or text, for 30
