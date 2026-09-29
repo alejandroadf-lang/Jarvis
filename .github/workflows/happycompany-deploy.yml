@@ -1,0 +1,142 @@
+name: Happy Company deploy
+
+# Deploys the Forge app in ventures/happycompany from GitHub, so a merge is
+# the whole release and nobody needs the Forge CLI on a laptop.
+#
+# - A push to main that touches ventures/happycompany deploys to STAGING.
+#   Production is never reached by a push: every production release is a
+#   person pressing "Run workflow" and choosing it, because production is
+#   other companies' Jira.
+# - Never runs on pull_request. A pull request's code would run with the
+#   Forge token in reach, and the agents propose their work as pull requests.
+#
+# Needs, in the repo's Settings → Secrets and variables → Actions:
+#   secrets   FORGE_EMAIL      the Atlassian account's e-mail
+#             FORGE_API_TOKEN  an API token from id.atlassian.com (never chat)
+#   variable  FORGE_APP_ID     ari:cloud:ecosystem::app/..., from the developer
+#                              console; only needed while manifest.yml still
+#                              holds the placeholder id
+# Without the secrets a push deploy is skipped with a note (main stays green
+# before Forge is set up); a manual run fails and names what is missing.
+
+on:
+  push:
+    branches: [main]
+    paths: ['ventures/happycompany/**']
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Forge environment
+        type: choice
+        options: [staging, development, production]
+        default: staging
+      install_site:
+        description: 'Optional: also install or upgrade on this site (example.atlassian.net), in Jira and Confluence'
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: happycompany-deploy-${{ inputs.environment || 'staging' }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # A GitHub environment per Forge environment, so production can be given
+    # required reviewers and its own secrets in Settings → Environments.
+    environment: forge-${{ inputs.environment || 'staging' }}
+    defaults:
+      run:
+        working-directory: ventures/happycompany
+    env:
+      FORGE_ENV: ${{ inputs.environment || 'staging' }}
+      FORGE_EMAIL: ${{ secrets.FORGE_EMAIL }}
+      FORGE_API_TOKEN: ${{ secrets.FORGE_API_TOKEN }}
+      FORGE_APP_ID: ${{ vars.FORGE_APP_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check Forge credentials and app id
+        id: config
+        run: |
+          missing=""
+          [ -n "$FORGE_EMAIL" ] || missing="$missing FORGE_EMAIL"
+          [ -n "$FORGE_API_TOKEN" ] || missing="$missing FORGE_API_TOKEN"
+          if grep -q 'REPLACE-WITH-THE-ID' manifest.yml && [ -z "$FORGE_APP_ID" ]; then
+            missing="$missing FORGE_APP_ID"
+          fi
+          if [ -z "$missing" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          msg="Not deployed: set$missing in Settings → Secrets and variables → Actions (FORGE_APP_ID is a variable, the others are secrets). See ventures/happycompany/README.md, 'Deploying from GitHub'."
+          echo "ready=false" >> "$GITHUB_OUTPUT"
+          echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "::error::$msg"
+            exit 1
+          fi
+          echo "::notice::$msg"
+
+      - uses: actions/setup-node@v4
+        if: steps.config.outputs.ready == 'true'
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ventures/happycompany/package-lock.json
+
+      - name: Install and test
+        if: steps.config.outputs.ready == 'true'
+        run: |
+          npm ci
+          npm test
+
+      - name: Install the Forge CLI
+        if: steps.config.outputs.ready == 'true'
+        run: |
+          npm install -g @forge/cli@14
+          forge settings set usage-analytics false
+
+      # The id is set in the job's checkout only, never committed: the
+      # placeholder in the repo is what makes a deploy by anyone else fail.
+      - name: Set the app id
+        if: steps.config.outputs.ready == 'true' && env.FORGE_APP_ID
+        run: |
+          grep -q 'REPLACE-WITH-THE-ID' manifest.yml || { echo "manifest.yml already carries an app id; FORGE_APP_ID is not used."; exit 0; }
+          case "$FORGE_APP_ID" in
+            ari:cloud:ecosystem::app/*) ;;
+            *) echo "::error::FORGE_APP_ID must look like ari:cloud:ecosystem::app/<uuid>; it is the App ID on the app's page in the developer console."; exit 1 ;;
+          esac
+          sed -i "s|ari:cloud:ecosystem::app/REPLACE-WITH-THE-ID-FROM-forge-register|$FORGE_APP_ID|" manifest.yml
+          grep -q "$FORGE_APP_ID" manifest.yml
+
+      - name: Lint
+        if: steps.config.outputs.ready == 'true'
+        run: forge lint -e "$FORGE_ENV"
+
+      - name: Deploy
+        if: steps.config.outputs.ready == 'true'
+        run: forge deploy --non-interactive -e "$FORGE_ENV"
+
+      # Installing is once per site and product; after that, the same command
+      # with --upgrade takes new scopes. Both are tried, install first.
+      - name: Install or upgrade on a site
+        if: steps.config.outputs.ready == 'true' && inputs.install_site
+        env:
+          SITE: ${{ inputs.install_site }}
+        run: |
+          case "$SITE" in
+            *.atlassian.net) ;;
+            *) echo "::error::install_site must be a site like example.atlassian.net, without https://"; exit 1 ;;
+          esac
+          for product in jira confluence; do
+            forge install --non-interactive --confirm-scopes -e "$FORGE_ENV" --site "$SITE" --product "$product" \
+              || forge install --non-interactive --confirm-scopes --upgrade -e "$FORGE_ENV" --site "$SITE" --product "$product"
+          done
+
+      - name: Summary
+        if: steps.config.outputs.ready == 'true'
+        run: echo "Deployed Happy Company to Forge **$FORGE_ENV** from ${GITHUB_SHA::7}." >> "$GITHUB_STEP_SUMMARY"

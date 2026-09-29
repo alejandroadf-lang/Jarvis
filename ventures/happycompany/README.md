@@ -146,6 +146,40 @@ login, so run it once after `forge login`.
 Deploying needs an Atlassian account, a free developer site for Jira and one
 for Confluence (https://go.atlassian.com/cloud-dev), and the Forge CLI.
 
+### Deploying from GitHub (no laptop)
+
+`.github/workflows/happycompany-deploy.yml` runs the Forge CLI in GitHub
+Actions. Set up once, from a browser:
+
+1. Create the app in the developer console
+   (https://developer.atlassian.com/console/myapps → Create → Forge app) and
+   copy its App ID (`ari:cloud:ecosystem::app/…`). If the console does not
+   offer it, `forge register` run once anywhere prints the same id.
+2. Create an API token at https://id.atlassian.com/manage-profile/security/api-tokens.
+3. In the GitHub repo, Settings → Secrets and variables → Actions: secrets
+   `FORGE_EMAIL` (the account's e-mail) and `FORGE_API_TOKEN` (the token);
+   variable `FORGE_APP_ID` (the App ID). The token goes there and nowhere
+   else: not a chat, not a commit.
+4. Actions → "Happy Company deploy" → Run workflow: environment `staging`,
+   `install_site` your developer site (`you.atlassian.net`). It tests, lints,
+   deploys and installs in Jira and Confluence.
+
+After that, every merge to `main` that touches `ventures/happycompany/`
+deploys to **staging** by itself. **Production** is only ever a manual run
+choosing it: it is other companies' Jira. Give the `forge-production`
+environment a required reviewer (Settings → Environments) so even a manual run
+waits for you. The workflow never runs on pull requests, since the agents
+propose their work as pull requests and a pull request's code would run with
+the token in reach; `test/deployWorkflow.test.mjs` pins both rules. Without the
+secrets, a push deploy is skipped with a note and a manual run fails naming
+what to set.
+
+The id is written into the manifest only inside the job, so the placeholder
+stays in the repo. Step 5 below (the event-shape check) still wants the CLI:
+`forge variables` and `forge logs` are run by hand.
+
+### Deploying from a laptop
+
 1. `npm install -g @forge/cli && forge login` — with an API token from your
    Atlassian account, never pasted anywhere else.
 2. `npm install` in this directory, then `forge register` and put the printed
