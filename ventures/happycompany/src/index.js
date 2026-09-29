@@ -47,5 +47,12 @@ function placeOf(context) {
 
 const resolver = new Resolver();
 resolver.define('teamHealth', ({ context }) => app.teamHealth(placeOf(context)));
-resolver.define('saveSettings', ({ payload, context }) => app.saveSettings({ ...placeOf(context), settings: payload?.settings }));
+resolver.define('saveSettings', ({ payload, context }) =>
+  app.saveSettings({ ...placeOf(context), settings: payload?.settings, by: context?.accountId || null }),
+);
+resolver.define('commitActions', ({ payload, context }) => app.commitActions({ ...placeOf(context), keys: payload?.keys }));
+resolver.define('closeAction', ({ payload, context }) =>
+  app.closeAction({ ...placeOf(context), week: payload?.week, key: payload?.key, done: payload?.done }),
+);
+resolver.define('freezeWeek', ({ context }) => app.freezeWeek(placeOf(context)));
 export const handler = resolver.getDefinitions();

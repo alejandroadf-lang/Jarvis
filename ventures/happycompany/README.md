@@ -16,8 +16,12 @@ five of the psychosocial hazards ISO 45003 asks employers to manage:
 | Rework               | Work reopened after being done                                                                  |
 
 The grade (A–E), the five dimension scores, "three things to change this
-week" and a 12-week trend appear on a "Team health" page in the project or
-space. Admins set quiet hours, late night, weekend days, public holidays and
+week", what would lift the grade to the next letter, and a 12-week trend
+appear on a "Team health" page in the project or space. The team commits to
+the changes it will try, says a week later whether they happened, and earns
+badges for improvement (never for a grade level). A "What we measure" tab
+tells every employee what is and is not counted, and states the use ban in
+`TERMS.md`. Admins set quiet hours, late night, weekend days, public holidays and
 the long-day threshold, and can switch any signal off. The scoring bands are
 starting points to be calibrated in pilots, and the page says so.
 
@@ -48,6 +52,11 @@ src/lib/score.mjs       indicators → dimensions → grade, ISO 45003 mapping
 src/lib/events.mjs      product event → {who, when, which team}
 src/lib/openwork.mjs    the daily open-work snapshot (Jira)
 src/lib/shape.mjs       development-only log of event structure, never values
+src/lib/progress.mjs    what would lift the grade to the next letter
+src/lib/badges.mjs      improvement badges and action streaks with freeze weeks
+src/lib/transparency.mjs  what is measured, never measured, and the use ban
+src/features/actions.mjs  the commit-and-close action loop
+src/features/audit.mjs  the audit trail (ISO 45001 7.5), 3 years
 src/lib/sprints.mjs     carry-over and unplanned work per closed sprint (Jira)
 src/frontend/index.jsx  the page, UI Kit
 test/                   node:test, runs without Forge

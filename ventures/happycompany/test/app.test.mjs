@@ -134,7 +134,8 @@ test('team health is suppressed below the minimum group and graded above it', as
   assert.equal(report.current.dimensions.hours.status, 'good');
   assert.deepEqual(report.current.actions, []);
   assert.equal(report.weeks.length, 13);
-  assert.equal(report.weeks.filter((w) => w.dimensions).length, 1); // only the current week carries the detail
+  assert.equal(report.weeks.filter((w) => w.dimensions).length, 0); // weeks carry grades only
+  assert.ok(report.current.dimensions); // the detail lives on the current week
   const serialised = JSON.stringify(report);
   assert.ok(!serialised.includes('"people"'));
   assert.ok(!serialised.includes('557058'));
@@ -193,7 +194,7 @@ test('streaks and rests: a team that works every day is flagged, the people reco
   await store.set('people:jira:OPS', record);
   const again = await app.teamHealth({ scope: 'jira:OPS', product: 'jira' });
   const rest2 = again.current.dimensions.hours.indicators.find((i) => i.key === 'noRestShare');
-  assert.ok(Math.abs(rest2.value - 5 / 6) < 1e-9);
+  assert.equal(rest2.value, 0.85); // 5 of 6, shown to the nearest 5%
   assert.equal(rest2.status, 'act');
   assert.match(rest2.action, /vacation with Jira in it/);
 });
@@ -290,11 +291,11 @@ test('sprints are polled once, and the multi-week indicators derive from the wee
   const find = (dim, key) => report.current.dimensions[dim].indicators.find((i) => i.key === key);
   assert.equal(report.current.week, '2026-W40');
   assert.equal(find('workload', 'carryOverShare').value, 0.25);
-  assert.equal(find('deadline', 'unplannedShare').value, 0.125);
+  assert.equal(find('deadline', 'unplannedShare').value, 0.15); // 1 in 8, shown to the nearest 5%
   assert.ok(find('deadline', 'loadSurge').value >= 2.5, String(find('deadline', 'loadSurge').value));
   assert.equal(find('deadline', 'loadSurge').status, 'act');
   assert.equal(find('workload', 'inflowRatio').value, 3); // 30 created, 10 resolved
-  assert.equal(find('deadline', 'dueMoveRate').value, 3.75); // 30 moves over 8 dated items
+  assert.equal(find('deadline', 'dueMoveRate').value, 3.8); // 30 moves over 8 dated items, to one decimal
   // Several indicators bottom out this week; the three actions are the first three at zero.
   assert.equal(report.current.actions.length, 3);
   assert.ok(report.current.actions.some((a) => ['loadSurge', 'dueMoveRate', 'inflowRatio'].includes(a.key)));

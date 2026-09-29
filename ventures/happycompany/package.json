@@ -16,5 +16,8 @@
     "@forge/react": "^12.3.0",
     "@forge/resolver": "^2.0.0",
     "react": "^18.2.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.12"
   }
 }

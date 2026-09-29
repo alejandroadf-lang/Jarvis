@@ -87,6 +87,8 @@ export function statusOf(score) {
   return 'act';
 }
 
+export { mean as meanOf };
+
 export function gradeOf(score) {
   if (score === null) return null;
   if (score >= 85) return 'A';
@@ -130,7 +132,10 @@ export function indicatorValues(metrics, snapshot) {
   return values;
 }
 
-const pct = (v) => `${Math.round(v * 100)}%`;
+// Shown to the nearest 5%: close enough to act on, too coarse to single out
+// one person's contribution in a small team (one action in twenty moves an
+// exact share by 5 points; rounded, it usually does not).
+const pct = (v) => `${Math.round(v * 20) * 5}%`;
 const num = (v) => (Number.isInteger(v) ? String(v) : v.toFixed(1));
 
 // What the number means, and what a manager could do about it. Two sentences,
@@ -185,6 +190,15 @@ export function scorecard(metrics, snapshot, disabled = {}) {
     .sort((a, b) => a.score - b.score)
     .slice(0, 3);
   return { score, grade: gradeOf(score), status: statusOf(score), dimensions, actions };
+}
+
+export const GRADE_FLOORS = Object.freeze({ A: 85, B: 70, C: 55, D: 40, E: 0 });
+
+/** A value as the browser may see it: shares to 5%, other figures to one decimal. */
+export function publicValue(key, value) {
+  if (value === null || value === undefined) return null;
+  const isShare = key.endsWith('Share') || key === 'concentration' || key === 'reopenRate';
+  return isShare ? Math.round(value * 20) / 20 : Math.round(value * 10) / 10;
 }
 
 /** Change against the mean of earlier scores. ±5 points is noise. */

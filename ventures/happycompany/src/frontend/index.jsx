@@ -5,14 +5,21 @@ import React, { useEffect, useState } from 'react';
 import ForgeReconciler, {
   Box,
   Button,
+  Checkbox,
   Heading,
   Inline,
   Label,
   LineChart,
+  List,
+  ListItem,
   Lozenge,
   ProgressBar,
   SectionMessage,
   Stack,
+  Tab,
+  TabList,
+  TabPanel,
+  Tabs,
   Text,
   TextArea,
   Textfield,
@@ -24,7 +31,6 @@ const APPEARANCE = { good: 'success', watch: 'moved', act: 'removed', unknown: '
 const WORD = { good: 'Fine', watch: 'Watch', act: 'Act now', unknown: 'No data' };
 const ARROW = { up: 'improving', down: 'worsening', flat: 'steady' };
 
-// Labels for the per-signal switches, in the order the score uses them.
 const SIGNAL_LABELS = {
   afterHoursShare: 'Activity outside working hours',
   lateShare: 'Activity late at night',
@@ -60,6 +66,7 @@ function Indicator({ indicator }) {
 }
 
 function Dimension({ dimension }) {
+  if (!dimension.indicators.length) return null;
   return (
     <Stack space="space.100">
       <Inline space="space.100" alignBlock="center">
@@ -75,16 +82,19 @@ function Dimension({ dimension }) {
   );
 }
 
-function Actions({ actions }) {
-  if (!actions?.length) return null;
+function PathToNext({ path }) {
+  if (!path || !path.target || !path.levers.length) return null;
+  const best = path.levers[0];
   return (
-    <SectionMessage title="Three things to change this week" appearance="warning">
-      <Stack space="space.100">
-        {actions.map((a) => (
-          <Text key={a.key}>
-            {a.text} {a.action}
+    <SectionMessage title={`What gets you to ${path.target}`} appearance="information">
+      <Stack space="space.075">
+        <Text>{`${path.pointsNeeded} points to go.`}</Text>
+        {path.levers.map((l) => (
+          <Text key={l.key}>
+            {`${l.label}: bringing it to healthy lifts the score to ${l.liftsTo}${l.reaches ? `, which is ${path.target}.` : '.'}`}
           </Text>
         ))}
+        {!best.reaches && path.pair?.reaches && <Text>{'No single change gets there; the top two together would.'}</Text>}
       </Stack>
     </SectionMessage>
   );
@@ -107,7 +117,7 @@ function Scorecard({ report }) {
       <SectionMessage title="Too few people to show" appearance="information">
         <Text>
           Fewer than {minGroup} people were active in week {current.week}, so no figures are shown. This protects
-          individuals; the grade needs {minGroup} or more active people.
+          individuals.
         </Text>
       </SectionMessage>
     );
@@ -118,7 +128,7 @@ function Scorecard({ report }) {
         <Heading size="xlarge">{current.grade}</Heading>
         <Stack space="space.050">
           <Text>
-            Team health {current.score} / 100, week {current.week}, {current.contributors} people active
+            Working conditions {current.score} / 100, week {current.week}, {current.contributors} people active
           </Text>
           <Text>
             {trend.delta === null
@@ -129,10 +139,15 @@ function Scorecard({ report }) {
       </Inline>
       <ProgressBar
         value={current.score / 100}
-        ariaLabel={`Team health ${current.score} of 100`}
+        ariaLabel={`Working conditions ${current.score} of 100`}
         appearance={current.status === 'good' ? 'success' : 'default'}
       />
-      <Actions actions={current.actions} />
+      {report.checks.map((c) => (
+        <SectionMessage key={c.key} title="Check this improvement" appearance="warning">
+          <Text>{c.text}</Text>
+        </SectionMessage>
+      ))}
+      <PathToNext path={report.path} />
       <Inline space="space.400" shouldWrap>
         {Object.values(current.dimensions).map((dimension) => (
           <Dimension key={dimension.key} dimension={dimension} />
@@ -145,7 +160,174 @@ function Scorecard({ report }) {
 function History({ weeks }) {
   const points = weeks.filter((w) => w.score !== null).map((w) => [w.week, w.score]);
   if (points.length < 2) return null;
-  return <LineChart data={points} xAccessor={0} yAccessor={1} title="Weekly team health" height={220} />;
+  return <LineChart data={points} xAccessor={0} yAccessor={1} title="Weekly working conditions" height={220} />;
+}
+
+function Badges({ badges }) {
+  if (!badges.length) return null;
+  return (
+    <Stack space="space.100">
+      <Heading size="small">Earned by this team</Heading>
+      <Inline space="space.100" shouldWrap>
+        {badges.map((b) => (
+          <Lozenge key={b.key} appearance="success" isBold>
+            {b.times > 1 ? `${b.label} ×${b.times}` : b.label}
+          </Lozenge>
+        ))}
+      </Inline>
+      {badges.map((b) => (
+        <Text key={`${b.key}-t`}>{`${b.label}: ${b.text}`}</Text>
+      ))}
+      <Text>Badges reward changes the team made, never a grade level. Only this team sees them.</Text>
+    </Stack>
+  );
+}
+
+function Loop({ report, reload }) {
+  const { current, loop } = report;
+  const [picked, setPicked] = useState([]);
+  const [message, setMessage] = useState(null);
+  const committedKeys = new Set(loop.committed.map((i) => i.key));
+  const open = current.actions.filter((a) => !committedKeys.has(a.key));
+  const run = async (fn, ok) => {
+    try {
+      await fn();
+      setMessage({ appearance: 'success', text: ok });
+      setPicked([]);
+      await reload();
+    } catch (err) {
+      setMessage({ appearance: 'error', text: err.message });
+    }
+  };
+
+  return (
+    <Stack space="space.300">
+      {loop.toClose.map((w) => (
+        <SectionMessage key={w.week} title={`Did it happen? Week ${w.week}`} appearance="information">
+          <Stack space="space.100">
+            {w.items.map((i) => (
+              <Inline key={i.key} space="space.100" alignBlock="center" shouldWrap>
+                <Text>{i.action}</Text>
+                <Button onClick={() => run(() => invoke('closeAction', { week: w.week, key: i.key, done: true }), 'Recorded as done.')}>
+                  Done
+                </Button>
+                <Button
+                  appearance="subtle"
+                  onClick={() => run(() => invoke('closeAction', { week: w.week, key: i.key, done: false }), 'Recorded as not done.')}
+                >
+                  Not this time
+                </Button>
+              </Inline>
+            ))}
+          </Stack>
+        </SectionMessage>
+      ))}
+
+      <Stack space="space.100">
+        <Heading size="small">This week</Heading>
+        {loop.committed.length > 0 && (
+          <List type="unordered">
+            {loop.committed.map((i) => (
+              <ListItem key={i.key}>
+                <Text>{`${i.action}${i.done === true ? ' (done)' : i.done === false ? ' (not done)' : ''}`}</Text>
+              </ListItem>
+            ))}
+          </List>
+        )}
+        {open.length > 0 && loop.committed.length < 3 && (
+          <Stack space="space.100">
+            <Text>Pick what the team will try this week. You will be asked next week whether it happened.</Text>
+            {open.map((a) => (
+              <Checkbox
+                key={a.key}
+                id={`hc-pick-${a.key}`}
+                label={`${a.text} ${a.action}`}
+                isChecked={picked.includes(a.key)}
+                onChange={(e) => setPicked(e.target.checked ? [...picked, a.key] : picked.filter((k) => k !== a.key))}
+              />
+            ))}
+            <Inline space="space.100">
+              <Button
+                appearance="primary"
+                isDisabled={!picked.length}
+                onClick={() => run(() => invoke('commitActions', { keys: picked }), 'Committed. See you next week.')}
+              >
+                Commit
+              </Button>
+            </Inline>
+          </Stack>
+        )}
+        {!current.actions.length && <Text>Nothing needs changing this week.</Text>}
+      </Stack>
+
+      <Stack space="space.100">
+        <Heading size="small">Track record</Heading>
+        <Text>
+          {loop.completion.rate === null
+            ? 'No actions closed yet.'
+            : `${loop.completion.done} of ${loop.completion.closed} closed actions done (${Math.round(loop.completion.rate * 100)}%).`}
+        </Text>
+        <Text>{loop.streak.length ? `Current streak: ${loop.streak.length} weeks with an action done.` : 'No streak yet.'}</Text>
+        <Inline space="space.100" alignBlock="center" shouldWrap>
+          <Button appearance="subtle" onClick={() => run(() => invoke('freezeWeek'), 'This week is marked as a launch or incident week.')}>
+            Mark this week as a launch or incident week
+          </Button>
+          <Text>It neither breaks nor extends the streak. Two a quarter.</Text>
+        </Inline>
+      </Stack>
+
+      <Badges badges={report.badges} />
+
+      {message && (
+        <SectionMessage appearance={message.appearance}>
+          <Text>{message.text}</Text>
+        </SectionMessage>
+      )}
+    </Stack>
+  );
+}
+
+function WhatWeMeasure({ t }) {
+  return (
+    <Stack space="space.300">
+      <SectionMessage title="How this may be used" appearance="warning">
+        <Text>{t.useBan}</Text>
+      </SectionMessage>
+      <Stack space="space.100">
+        <Heading size="small">What is measured</Heading>
+        {t.measured
+          .filter((d) => d.signals.length)
+          .map((d) => (
+            <Text key={d.key}>{`${d.label}: ${d.signals.join('; ')}.`}</Text>
+          ))}
+      </Stack>
+      <Stack space="space.100">
+        <Heading size="small">What is never measured</Heading>
+        <List type="unordered">
+          {t.neverMeasured.map((l) => (
+            <ListItem key={l}>
+              <Text>{l}</Text>
+            </ListItem>
+          ))}
+        </List>
+      </Stack>
+      <Stack space="space.100">
+        <Heading size="small">The rules</Heading>
+        <List type="unordered">
+          {t.rules.map((l) => (
+            <ListItem key={l}>
+              <Text>{l}</Text>
+            </ListItem>
+          ))}
+        </List>
+      </Stack>
+      <Text>{t.limits}</Text>
+      <Text>
+        These are the psychosocial hazards ISO 45003 asks employers to manage that leave traces in Jira and Confluence.
+        The others (job control, support, relationships, role clarity, change) do not, and are not scored.
+      </Text>
+    </Stack>
+  );
 }
 
 // Controlled fields rather than a form library: what is on screen is exactly
@@ -160,6 +342,7 @@ function Settings({ settings, indicatorKeys, onSaved }) {
     weekendDays: settings.weekendDays.join(','),
     holidays: (settings.holidays || []).join('\n'),
     longSpanHours: String(settings.longSpanHours),
+    minGroup: String(settings.minGroup ?? 5),
     signals: { ...(settings.signals || {}) },
   });
   const [message, setMessage] = useState(null);
@@ -170,8 +353,7 @@ function Settings({ settings, indicatorKeys, onSaved }) {
   const save = async () => {
     setSaving(true);
     try {
-      const saved = await invoke('saveSettings', { settings: form });
-      await onSaved(saved);
+      await onSaved(await invoke('saveSettings', { settings: form }));
       setMessage({ appearance: 'success', text: 'Saved. New activity is classified with these settings.' });
     } catch (err) {
       setMessage({ appearance: 'error', text: err.message });
@@ -182,7 +364,7 @@ function Settings({ settings, indicatorKeys, onSaved }) {
 
   return (
     <Stack space="space.150">
-      <Heading size="small">Settings</Heading>
+      <Text>Only project or space administrators can save these settings. Every change is recorded in the audit trail.</Text>
       <Label labelFor="hc-tz">Team time zone (IANA name, e.g. Europe/Berlin)</Label>
       <Textfield id="hc-tz" value={form.timeZone} onChange={field('timeZone')} />
       <Inline space="space.200" shouldWrap>
@@ -205,6 +387,10 @@ function Settings({ settings, indicatorKeys, onSaved }) {
         <Stack space="space.050">
           <Label labelFor="hc-span">A long day is this many hours first to last action</Label>
           <Textfield id="hc-span" type="number" value={form.longSpanHours} onChange={field('longSpanHours')} />
+        </Stack>
+        <Stack space="space.050">
+          <Label labelFor="hc-min">Show nothing for fewer than this many people (5 to 10)</Label>
+          <Textfield id="hc-min" type="number" value={form.minGroup} onChange={field('minGroup')} />
         </Stack>
       </Inline>
       <Label labelFor="hc-we">Weekend days, 0 = Sunday … 6 = Saturday</Label>
@@ -250,25 +436,44 @@ function App() {
   }
   if (!report) return <Text>Loading team health…</Text>;
 
+  const toClose = report.loop.toClose.reduce((n, w) => n + w.items.length, 0);
   return (
-    <Stack space="space.400">
-      <Scorecard report={report} />
-      <History weeks={report.weeks} />
-      <Box>
-        <Stack space="space.050">
-          <Heading size="xsmall">How to read this</Heading>
-          {report.notes.map((note) => (
-            <Text key={note}>{note}</Text>
-          ))}
-          <Text>
-            Hours and recovery, workload, fragmentation, deadline pressure and rework are the psychosocial hazards ISO
-            45003 asks employers to manage that leave traces in Jira and Confluence. The others (job control, support,
-            role clarity, change) do not, and are not scored.
-          </Text>
-        </Stack>
-      </Box>
-      <Settings key={report.generatedAt} settings={report.settings} indicatorKeys={report.indicatorKeys} onSaved={async () => load()} />
-    </Stack>
+    <Tabs id="hc-tabs">
+      <TabList>
+        <Tab>Working conditions</Tab>
+        <Tab>{toClose ? `Actions (${toClose} to close)` : 'Actions'}</Tab>
+        <Tab>What we measure</Tab>
+        <Tab>Settings</Tab>
+      </TabList>
+      <TabPanel>
+        <Box padding="space.200">
+          <Stack space="space.400">
+            <Scorecard report={report} />
+            <History weeks={report.weeks} />
+            <Stack space="space.050">
+              {report.notes.map((note) => (
+                <Text key={note}>{note}</Text>
+              ))}
+            </Stack>
+          </Stack>
+        </Box>
+      </TabPanel>
+      <TabPanel>
+        <Box padding="space.200">
+          <Loop report={report} reload={load} />
+        </Box>
+      </TabPanel>
+      <TabPanel>
+        <Box padding="space.200">
+          <WhatWeMeasure t={report.transparency} />
+        </Box>
+      </TabPanel>
+      <TabPanel>
+        <Box padding="space.200">
+          <Settings key={report.generatedAt} settings={report.settings} indicatorKeys={report.indicatorKeys} onSaved={async () => load()} />
+        </Box>
+      </TabPanel>
+    </Tabs>
   );
 }
 
