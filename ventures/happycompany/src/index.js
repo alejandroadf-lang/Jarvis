@@ -9,6 +9,13 @@ import { createApp } from './app.mjs';
 import { forgeStore } from './storage.mjs';
 import { jiraClient, confluenceClient } from './clients.mjs';
 import { scopeFromExtension } from './lib/events.mjs';
+import { eventShape, shapeLoggingOn } from './lib/shape.mjs';
+
+// Development only: see src/lib/shape.mjs. Structure, never values.
+function logShape(event) {
+  if (!shapeLoggingOn()) return;
+  console.log(`[happycompany] shape of ${event?.eventType || 'unknown event'}:\n  ${eventShape(event).join('\n  ')}`);
+}
 
 const app = createApp({
   store: forgeStore(kvs, WhereConditions),
@@ -17,10 +24,12 @@ const app = createApp({
 });
 
 export async function onJiraEvent(event) {
+  logShape(event);
   return app.onJiraEvent(event);
 }
 
 export async function onConfluenceEvent(event) {
+  logShape(event);
   return app.onConfluenceEvent(event);
 }
 

@@ -47,6 +47,7 @@ src/lib/privacy.mjs     pseudonyms, retention, the 5-person rule
 src/lib/score.mjs       indicators → dimensions → grade, ISO 45003 mapping
 src/lib/events.mjs      product event → {who, when, which team}
 src/lib/openwork.mjs    the daily open-work snapshot (Jira)
+src/lib/shape.mjs       development-only log of event structure, never values
 src/lib/sprints.mjs     carry-over and unplanned work per closed sprint (Jira)
 src/frontend/index.jsx  the page, UI Kit
 test/                   node:test, runs without Forge
@@ -91,20 +92,38 @@ for Confluence (https://go.atlassian.com/cloud-dev), and the Forge CLI.
 4. `forge deploy -e development`, then `forge install` once for Jira and once
    for Confluence on the developer site. Open a project → "Team health", and a
    space → "Team health".
-5. `forge tunnel`, then in the developer site: edit an issue, comment on it
-   and @mention someone, edit a Confluence page and comment on it, open
-   "Team health" in a project and in a space, and save settings once as an
-   admin and once as a plain member. Paste the tunnel log. It confirms the
-   three things `src/lib/events.mjs` and `src/clients.mjs` assume but could
-   not verify without a site: which field of a Confluence event carries the
-   space, which field of the mention event names the mentioned account, and
-   that `include-operations=true` returns the viewer's space permissions.
-   Then run the daily job once (`forge webtrigger` is not needed: wait for it,
-   or temporarily set the scheduled trigger's interval to `fiveMinute`) and
-   check `forge logs` for a line starting `[happycompany] rollup` with an
-   empty `errors` list. An error on the `sprints` step means the site's
-   Jira Software API wants a scope the manifest lacks; the step fails on its
-   own and nothing else is affected.
+5. Confirm the event shapes. Turn on the development-only shape log,
+   redeploy, then use the site from any browser, a phone included:
+
+   ```
+   forge variables set --environment development HAPPYCOMPANY_LOG_SHAPES 1
+   forge deploy -e development
+   ```
+
+   On the site: edit an issue, comment on it and @mention someone, edit a
+   Confluence page and comment on it, open "Team health" in a project and
+   in a space, and save settings once as an admin and once as a plain
+   member. Then:
+
+   ```
+   forge logs -e development --since 30m
+   ```
+
+   Each event logs its structure (every key path and its type, never a
+   value; see `src/lib/shape.mjs`). That confirms the three things
+   `src/lib/events.mjs` and `src/clients.mjs` assume but could not verify
+   without a site: which field of a Confluence event carries the space,
+   which field of the mention event names the mentioned account, and that
+   `include-operations=true` returns the viewer's space permissions. Turn it
+   off afterwards with `forge variables unset --environment development
+   HAPPYCOMPANY_LOG_SHAPES` and deploy again. Never set it in production.
+   (`forge tunnel` shows the same thing live, if you prefer a terminal.)
+
+   Then let the daily job run once (or temporarily set the scheduled
+   trigger's interval to `fiveMinute`) and look in `forge logs` for a line
+   starting `[happycompany] rollup` with an empty `errors` list. An error on
+   the `sprints` step means the site's Jira Software API wants a scope the
+   manifest lacks; that step fails on its own and nothing else is affected.
 6. Leave it a week on a real team of five or more, then read the page.
 
 Storage is per installation and Atlassian does not let the Jira copy read the
