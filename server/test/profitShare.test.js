@@ -125,8 +125,11 @@ test('booking revenue is weighted no higher than the cheapest real work', () => 
   // to read as a straight minimum and no longer can.
   const kinds = profitShare.CONTRIBUTION_KINDS;
   const { log_revenue: revenue, deploy_code: deploy } = kinds;
+  // Kinds that pay nothing (calculate, verify_claim: recorded for the
+  // history, paid 0 so nobody is paid to call a calculator) are not "real
+  // work" in this comparison either.
   const actionWeights = Object.entries(kinds)
-    .filter(([name]) => name !== 'revenue_earned')
+    .filter(([name, k]) => name !== 'revenue_earned' && k.weight > 0)
     .map(([, k]) => k.weight);
 
   assert.ok(revenue.weight < deploy.weight, 'booking revenue must not out-earn shipping code');
@@ -341,4 +344,32 @@ test('a pre-compaction file still loads and pays out', () => {
   assert.equal(share.totalWeight, 5);
   assert.equal(share.agents[0].agentId, 'ceo');
   assert.equal(share.agents[0].earnedUsd, 100);
+});
+
+// recordContribution returns null for a kind it does not know, silently. Ten
+// kinds the handlers recorded (a pull request, a finished task, a payment a
+// customer sent) were dropped that way for months, so the Forge Engineer,
+// which may only ship through pull requests, could never earn. This reads
+// every recordContribution call in the source and fails on an unknown kind.
+test('every kind a handler records is one the ledger knows', async () => {
+  const fsMod = await import('node:fs');
+  const { CONTRIBUTION_KINDS } = await import('../finance/profitShare.js');
+  const files = ['actionHandlers.js', 'index.js', 'agents/agentRunner.js'];
+  const recorded = new Set();
+  for (const f of files) {
+    const src = fsMod.readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
+    for (const m of src.matchAll(/recordContribution\(\{[\s\S]*?kind:\s*'([a-z_]+)'/g)) recorded.add(m[1]);
+  }
+  assert.ok(recorded.size >= 15, `found only ${recorded.size} kinds; the scan is not reading the calls`);
+  const unknown = [...recorded].filter((k) => !CONTRIBUTION_KINDS[k]);
+  assert.deepEqual(unknown, [], `recorded but silently dropped: ${unknown.join(', ')}`);
+});
+
+test('a pull request earns what shipped code earns; a revert cannot out-earn the commit; calculators earn nothing', async () => {
+  const { CONTRIBUTION_KINDS } = await import('../finance/profitShare.js');
+  assert.equal(CONTRIBUTION_KINDS.open_pull_request.weight, CONTRIBUTION_KINDS.deploy_code.weight);
+  assert.ok(CONTRIBUTION_KINDS.revert_commit.weight < CONTRIBUTION_KINDS.deploy_code.weight);
+  assert.equal(CONTRIBUTION_KINDS.calculate.weight, 0);
+  assert.equal(CONTRIBUTION_KINDS.verify_claim.weight, 0);
+  assert.ok(CONTRIBUTION_KINDS.consulted.weight <= CONTRIBUTION_KINDS.complete_task.weight, 'answering must not out-earn doing');
 });
