@@ -60,6 +60,7 @@ resolver.define('closeAction', ({ payload, context }) =>
   app.closeAction({ ...placeOf(context), week: payload?.week, key: payload?.key, done: payload?.done }),
 );
 resolver.define('freezeWeek', ({ context }) => app.freezeWeek(placeOf(context)));
+resolver.define('requestBackfill', ({ context }) => app.requestBackfill({ ...placeOf(context), by: context?.accountId || null }));
 
 // The organisation view. Only its own page may call these, and the viewer
 // is checked on every call: a site administrator, or a member of a group an
@@ -77,6 +78,13 @@ async function viewerOf(context) {
 resolver.define('organisationView', async ({ context }) => app.organisationView(await viewerOf(context)));
 resolver.define('saveOrgSettings', async ({ payload, context }) =>
   app.saveOrgSettings({ ...(await viewerOf(context)), settings: payload?.settings, by: context?.accountId || null }),
+);
+resolver.define('evidenceView', async ({ payload, context }) => app.evidenceView({ ...(await viewerOf(context)), quarter: payload?.quarter || null }));
+resolver.define('issueAttestation', async ({ payload, context }) =>
+  app.issueAttestation({ ...(await viewerOf(context)), quarter: payload?.quarter, by: context?.accountId || null }),
+);
+resolver.define('publishEvidence', async ({ payload, context }) =>
+  app.publishEvidence({ ...(await viewerOf(context)), quarter: payload?.quarter, by: context?.accountId || null }),
 );
 resolver.define('estimateCost', async ({ payload, context }) => app.estimateCost({ ...(await viewerOf(context)), inputs: payload?.inputs }));
 

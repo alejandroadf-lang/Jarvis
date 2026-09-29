@@ -109,5 +109,18 @@ export function validateOrgSettings(input) {
   const groups = [...new Set(list.map((g) => String(g).trim()).filter(Boolean))];
   if (groups.length > 20) throw new Error('List at most 20 groups');
   if (groups.some((g) => g.length > 255)) throw new Error('A group name is at most 255 characters');
-  return { groups };
+  // For the evidence pack: whether workers' representatives were consulted
+  // (ISO 45001 5.4, §87 BetrVG and its equivalents), when, the name printed
+  // on packs and attestations, and the Confluence space packs are published to.
+  const consultationRecorded = input?.consultationRecorded === true || input?.consultationRecorded === 'true';
+  const consultationDate = String(input?.consultationDate || '').trim();
+  if (consultationDate && (!/^\d{4}-\d{2}-\d{2}$/.test(consultationDate) || Number.isNaN(Date.parse(`${consultationDate}T00:00:00Z`)))) {
+    throw new Error('consultationDate must be a date written YYYY-MM-DD');
+  }
+  if (consultationRecorded && !consultationDate) throw new Error('Give the date workers’ representatives were consulted (YYYY-MM-DD)');
+  const organisationName = String(input?.organisationName || '').trim();
+  if (organisationName.length > 120) throw new Error('The organisation name is at most 120 characters');
+  const evidenceSpaceId = String(input?.evidenceSpaceId || '').trim();
+  if (evidenceSpaceId && !/^\d{1,20}$/.test(evidenceSpaceId)) throw new Error('evidenceSpaceId must be a Confluence space id (digits only), or empty');
+  return { groups, consultationRecorded, consultationDate, organisationName, evidenceSpaceId };
 }

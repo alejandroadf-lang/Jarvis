@@ -550,6 +550,42 @@ function Settings({ settings, indicatorKeys, onSaved }) {
   );
 }
 
+// Jira only: fill the last three weeks from issue history, once.
+function Backfill({ state, onDone }) {
+  const [message, setMessage] = useState(null);
+  if (!state || state.status === 'unavailable') return null;
+  const request = async () => {
+    try {
+      await invoke('requestBackfill');
+      setMessage({ appearance: 'success', text: 'Requested. History is read in the nightly run, a few hundred issues a night; the card fills in as it arrives.' });
+      await onDone();
+    } catch (err) {
+      setMessage({ appearance: 'error', text: err.message });
+    }
+  };
+  return (
+    <Stack space="space.100">
+      <Heading size="xsmall">Fill in the last three weeks</Heading>
+      {state.status === 'available' && (
+        <Stack space="space.100">
+          <Text>{`Read the last ${state.days} days of issue changes and comments from Jira history, so the card has something to show before the app has counted a full week. Only who acted and when is kept, as for live activity. Project administrators only.`}</Text>
+          <Inline space="space.100">
+            <Button onClick={request}>Fill in history</Button>
+          </Inline>
+        </Stack>
+      )}
+      {state.status === 'running' && <Text>{`Reading history: ${state.issues} issues and ${state.events} actions so far. Weekly roll-ups wait until it is done.`}</Text>}
+      {state.status === 'done' && <Text>{`History filled in: ${state.issues} issues, ${state.events} actions.`}</Text>}
+      {state.status === 'stopped' && <Text>{`History partly filled in: ${state.issues} issues, ${state.events} actions, before the three-night limit. Live counting was not affected.`}</Text>}
+      {message && (
+        <SectionMessage appearance={message.appearance}>
+          <Text>{message.text}</Text>
+        </SectionMessage>
+      )}
+    </Stack>
+  );
+}
+
 function App() {
   const [report, setReport] = useState(null);
   const [error, setError] = useState(null);
@@ -615,6 +651,7 @@ function App() {
             indicatorKeys={[...report.indicatorKeys, ...report.enablerKeys]}
             onSaved={async () => load()}
           />
+          <Backfill state={report.backfill} onDone={async () => load()} />
         </Box>
       </TabPanel>
     </Tabs>

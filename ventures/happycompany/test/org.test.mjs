@@ -54,7 +54,12 @@ test('access: administrators, or members of a named group, case-insensitive; nob
   assert.equal(canSeeOrganisation({ isAdmin: false, groups: ['People-Ops'] }, { groups: ['people-ops'] }), true);
   assert.equal(canSeeOrganisation({ isAdmin: false, groups: ['engineering'] }, { groups: ['people-ops'] }), false);
   assert.equal(canSeeOrganisation({}, {}), false);
-  assert.deepEqual(validateOrgSettings({ groups: 'hr\n hr \nsafety' }), { groups: ['hr', 'safety'] });
+  assert.deepEqual(validateOrgSettings({ groups: 'hr\n hr \nsafety' }).groups, ['hr', 'safety']);
+  const full = validateOrgSettings({ groups: [], consultationRecorded: true, consultationDate: '2026-09-01', organisationName: ' Acme ', evidenceSpaceId: '123' });
+  assert.deepEqual(full, { groups: [], consultationRecorded: true, consultationDate: '2026-09-01', organisationName: 'Acme', evidenceSpaceId: '123' });
+  assert.throws(() => validateOrgSettings({ consultationRecorded: true }), /date workers/);
+  assert.throws(() => validateOrgSettings({ consultationDate: '1 Sept' }), /YYYY-MM-DD/);
+  assert.throws(() => validateOrgSettings({ evidenceSpaceId: 'ENG' }), /digits only/);
   assert.throws(() => validateOrgSettings({ groups: Array.from({ length: 21 }, (_, i) => `g${i}`) }), /at most 20/);
 });
 

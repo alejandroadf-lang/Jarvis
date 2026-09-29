@@ -119,3 +119,51 @@ test('a comment resolves to its page, then to the space', async () => {
   assert.equal(await confluence.spaceIdFor({ contentId: null, type: 'page' }), null);
   await assert.rejects(confluence.spaceIdFor({ contentId: '404', type: 'page' }), /page lookup failed: 404/);
 });
+
+test('recent history: one page of issues reduced to who acted and when, key checked', async () => {
+  const calls = [];
+  const api = fakeApi(
+    [
+      {
+        path: '/rest/api/3/search/jql',
+        body: {
+          issues: [
+            {
+              id: 10,
+              key: 'OPS-1',
+              fields: {
+                created: '2026-09-20T09:00:00.000+0000',
+                creator: { accountId: 'c', displayName: 'never kept' },
+                labels: ['x'],
+                comment: { comments: [{ author: { accountId: 'd' }, created: '2026-09-21T09:00:00.000+0000', body: 'never kept' }] },
+              },
+              changelog: { histories: [{ author: { accountId: 'e' }, created: '2026-09-22T09:00:00.000+0000', items: [{ field: 'status', from: '1', to: '3' }] }] },
+            },
+          ],
+          nextPageToken: 'next',
+        },
+      },
+    ],
+    calls,
+  );
+  const page = await jiraClient(api, route).recentHistory('OPS', { nextPageToken: 'p1' });
+  assert.deepEqual(page, {
+    issues: [
+      {
+        id: '10',
+        key: 'OPS-1',
+        labels: ['x'],
+        created: '2026-09-20T09:00:00.000+0000',
+        creator: 'c',
+        histories: [{ author: 'e', created: '2026-09-22T09:00:00.000+0000', items: [{ field: 'status', from: '1', to: '3' }] }],
+        comments: [{ author: 'd', created: '2026-09-21T09:00:00.000+0000' }],
+      },
+    ],
+    nextPageToken: 'next',
+  });
+  const sent = JSON.parse(calls[0].init.body);
+  assert.equal(sent.jql, 'project = "OPS" AND updated >= "-21d" ORDER BY updated DESC');
+  assert.equal(sent.expand, 'changelog');
+  assert.equal(sent.nextPageToken, 'p1');
+  await assert.rejects(jiraClient(api, route).recentHistory('OPS" OR x'), /refusing/);
+});

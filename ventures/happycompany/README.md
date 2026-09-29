@@ -38,7 +38,18 @@ only as counts and shown only for closed periods. Validation mode adds the
 Copenhagen Burnout Inventory so the grade can be checked against a
 validated scale across teams. A separate enablers score shows what helps:
 blocked work, priority churn, work people pick up themselves, and work only
-one person touches. Admins set quiet hours, late night, weekend days, public holidays and
+one person touches. Every quarter the organisation view packs the evidence an ISO 45001
+auditor or a national psychosocial risk assessment asks for (`ISO.md`):
+hazards screened, what was found, what was done, whether workers took part,
+mapped to ISO 45003 and seven national frameworks, with what the app does
+not cover. It shows the organisation's level (Measuring, Acting,
+Sustaining, Happy Company's own and never a certification), drafts ESRS S1,
+Top Employers and B Corp text, and lets an administrator sign an
+attestation anyone can check offline. In Jira, a project administrator can
+fill in the last three weeks from issue history so the first card appears
+on day one.
+
+Admins set quiet hours, late night, weekend days, public holidays and
 the long-day threshold, and can switch any signal off. The scoring bands are
 starting points to be calibrated in pilots, and the page says so.
 
@@ -84,6 +95,12 @@ src/lib/enablers.mjs    what helps: blocked work, churn, self-assignment, solo w
 src/features/pulse.mjs  pulse storage: counts only, per-period voter codes
 src/frontend/org.jsx    the organisation page
 src/lib/sprints.mjs     carry-over and unplanned work per closed sprint (Jira)
+src/lib/frameworks.mjs  every signal mapped to ISO 45003 and seven national frameworks
+src/lib/evidence.mjs    the quarterly psychosocial-risk evidence pack
+src/lib/disclosures.mjs ESRS S1, Top Employers and B Corp drafts from a pack
+src/lib/levels.mjs      Measuring, Acting, Sustaining
+src/lib/attestation.mjs signed attestations of a level (Ed25519)
+scripts/verify-attestation.mjs  checks an attestation offline
 src/frontend/index.jsx  the page, UI Kit
 test/                   node:test, runs without Forge
 ```
