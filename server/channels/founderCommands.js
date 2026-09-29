@@ -28,6 +28,7 @@ import { getSpendSummary } from '../spend.js';
 import {
   listVentures,
   getVenture,
+  createVenture,
   linkRepo,
   linkOutreachScope,
   setOutreachEnabled,
@@ -185,6 +186,22 @@ const OUTREACH_GRANT = /^outreach\s+(v_\S+)\s+(.+)$/i;
 // in person is the thing it was always deferring to.
 const LINK_GRANT = /^link\s+(v_\S+)\s+([\w.-]+\/[\w.-]+)(?:\s+(.+))?$/i;
 
+// "start Happy Company | A Jira app that grades teams' working conditions" —
+// the founder starting a venture in person.
+//
+// propose_venture is refused while any venture is active and recurring revenue
+// is under STUDIO_MIN_MRR_USD (actionHandlers.js, studioGate). That brake is
+// right for the agents: nothing else stops a studio from starting twenty
+// ventures, and a second one before the first pays is how a company does two
+// things badly. But it also refused the founder, whose call it is, and the
+// only way round it was to switch the brake off for everyone. So the founder
+// path skips the gate, the same way LINK skips the pre-approval list, and the
+// gate keeps bounding the agents. The pipe is required: "start the Acme
+// rollout" is a sentence about work, not a new venture.
+const START_VENTURE = /^start\s+([^|]+?)\s*\|\s*([\s\S]+)$/i;
+const MAX_TITLE = 80;
+const MAX_ONE_LINER = 300;
+
 // "url v_123 https://circadian-api.up.railway.app" — where the venture is
 // actually deployed, so the team can check its own work with check_service.
 //
@@ -270,6 +287,13 @@ export function parseFounderCommand(text) {
       // workflow directory, without which run_checks has nothing to run.
       allowedPaths: paths.length ? paths : ['src/', '.github/workflows/'],
     };
+  }
+
+  const start = raw.match(START_VENTURE);
+  if (start) {
+    const title = start[1].trim();
+    const oneLiner = start[2].trim();
+    if (title && oneLiner) return { kind: 'start_venture', title, oneLiner };
   }
 
   const serviceGrant = raw.match(SERVICE_URL_GRANT);
@@ -404,6 +428,7 @@ EVAL [scenario] — grade the agents' judgment against the eval scenarios
 PLAN — today's plan (APPROVE / REJECT <reason> to decide it)
 PLAN CLEAR <reason> — withdraw clearance you already gave
 
+START <title> | <one-liner> — start a venture yourself (the team's revenue gate does not apply to you)
 LINK <ventureId> <owner/repo> [paths] — grant a repo and turn deploys on
 URL <ventureId> <https://...> — where it's deployed, so they can check it's up
 URL CLEAR <ventureId> — revoke that
@@ -830,6 +855,26 @@ export async function runFounderCommand(command, deps = {}) {
     case 'issue_del': {
       removeIssue(command.id);
       return `Removed #${command.id}. ${listIssues().length} procedure(s) remain.`;
+    }
+
+    case 'start_venture': {
+      if (command.title.length > MAX_TITLE) return `A venture title is at most ${MAX_TITLE} characters; that one is ${command.title.length}.`;
+      if (command.oneLiner.length > MAX_ONE_LINER) {
+        return `Keep the one-liner to ${MAX_ONE_LINER} characters (that one is ${command.oneLiner.length}); the team can fill in the rest.`;
+      }
+      // Sending the same message twice must not start the venture twice.
+      const existing = listVentures().find((v) => v.status === 'active' && v.title.trim().toLowerCase() === command.title.toLowerCase());
+      if (existing) return `"${existing.title}" is already active as ${existing.id}. Nothing new started.`;
+      const { studioGate } = await import('../actionHandlers.js');
+      const gate = studioGate();
+      const venture = createVenture({ title: command.title, oneLiner: command.oneLiner });
+      return (
+        `Started "${venture.title}" as ${venture.id}. It is active and the team will see it, with no repo and no outreach until you grant them.\n\n` +
+        `Next: LINK ${venture.id} <owner/repo> <paths>, then CAPS ${venture.id} <per day> <per week>.` +
+        (gate
+          ? `\n\nThe studio's revenue gate still applies to the team: with ${gate.mrr.toFixed(0)} a month against a bar of ${gate.minimum}, the agents cannot start ventures of their own. You started this one in person.`
+          : '')
+      );
     }
 
     case 'link_repo': {
