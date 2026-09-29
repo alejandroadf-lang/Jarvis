@@ -13,6 +13,6 @@
     "test:action-layer": "npm test --prefix packages/action-layer",
     "eval": "node server/eval/runner.mjs",
     "test:all": "npm test && npm run test:action-layer && npm run test:happycompany",
-    "test:happycompany": "npm test --prefix ventures/happycompany"
+    "test:happycompany": "npm ci --prefix ventures/happycompany && npm test --prefix ventures/happycompany"
   }
 }

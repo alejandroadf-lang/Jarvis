@@ -40,17 +40,26 @@ export function itemHash(itemId, salt) {
   return createHash('sha256').update(`${salt}:item:${itemId}`).digest('hex').slice(0, 10);
 }
 
-export function isPublishable(contributors) {
-  return Number.isFinite(contributors) && contributors >= MIN_GROUP;
+export const MAX_GROUP_SETTING = 10;
+
+/** A team's own threshold: never below MIN_GROUP, at most MAX_GROUP_SETTING. */
+export function groupFloor(setting) {
+  const n = Number(setting);
+  if (!Number.isInteger(n)) return MIN_GROUP;
+  return Math.min(MAX_GROUP_SETTING, Math.max(MIN_GROUP, n));
+}
+
+export function isPublishable(contributors, minGroup = MIN_GROUP) {
+  return Number.isFinite(contributors) && contributors >= groupFloor(minGroup);
 }
 
 /** What a period's metrics look like once they may leave the backend. */
-export function publicMetrics(metrics) {
+export function publicMetrics(metrics, minGroup = MIN_GROUP) {
   if (!metrics) return null;
-  if (!isPublishable(metrics.contributors)) {
+  if (!isPublishable(metrics.contributors, minGroup)) {
     return {
       suppressed: true,
-      reason: `Fewer than ${MIN_GROUP} people were active, so no figures are shown. This protects individuals.`,
+      reason: `Fewer than ${groupFloor(minGroup)} people were active, so no figures are shown. This protects individuals.`,
       total: metrics.total,
       contributors: metrics.contributors,
     };

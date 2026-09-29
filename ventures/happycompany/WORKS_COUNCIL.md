@@ -45,7 +45,10 @@ Every fact the app stores, and where in the code it is written:
 | A cached time zone per pseudonym (from the Jira profile) | one string per pseudonym | `src/app.mjs`, `zoneFor` |
 | Open work, once a day: how many issues, how many with a due date, unassigned, overdue, marked High; how unevenly they are spread; how many in progress per assignee | team totals and shares only | `src/lib/openwork.mjs` |
 | Per closed sprint: committed, carried over, created mid-sprint | four numbers per sprint | `src/lib/sprints.mjs` |
-| Team settings: time zone, quiet hours, late hours, weekend days, holidays, long-day threshold, which signals are on | per team | `src/app.mjs`, `validateSettings` |
+| Team settings: time zone, quiet hours, late hours, weekend days, holidays, long-day threshold, minimum group size (5 to 10), which signals are on | per team | `src/app.mjs`, `validateSettings` |
+| Actions the team committed to and whether they happened, with no record of who committed or closed them | per team per week | `src/features/actions.mjs` |
+| Launch or incident weeks the team marked | up to 2 a quarter | `src/features/actions.mjs` |
+| Audit trail: settings changes (with the administrator's pseudonym), committed and closed actions (with nobody's) | 3 years | `src/features/audit.mjs` |
 
 ### What is never collected
 
@@ -86,7 +89,10 @@ personal data, not anonymous data, and it is treated as such below.
 ## 6. The rules that protect individuals
 
 1. **Team level only.** Nothing is shown for a week in which fewer than five
-   people were active (`MIN_GROUP`). Below that, a share points at someone.
+   people were active (`MIN_GROUP`); a team may raise its own threshold to
+   ten. Below it, a share points at someone. Every share that reaches the
+   screen is rounded to the nearest 5%, so one person's action in a small
+   team rarely moves a displayed figure.
 2. **One path to the screen.** `publicMetrics()` in `src/lib/privacy.mjs` is
    the only function whose output reaches the browser, and it copies team
    fields one by one. A per-person field cannot leak by omission.
@@ -127,12 +133,18 @@ Numbered so they can be adopted as they are or struck one by one.
    missing recovery, workload, fragmentation, deadline pressure, rework),
    in order to improve them. Any other use is prohibited.
 2. **Prohibition of individual evaluation** (Auswertungsverbot). The data
-   shall not be used to assess, compare, rank, reward, discipline or
-   dismiss any employee, nor to draw conclusions about an individual's
-   performance or behaviour. The employer confirms that the software offers
-   no such function.
+   shall not be used to assess, compare, rank, pay, reward, promote,
+   discipline or dismiss any employee, nor as an input to bonus, variable
+   pay, performance review, calibration or redundancy selection, nor to draw
+   conclusions about an individual's performance or behaviour. A team's
+   grade shall not be used as a mark on its manager. The employer confirms
+   that the software offers no such function; the same ban is a condition
+   of the vendor's licence (`TERMS.md` §1) and is shown to every employee on
+   the "What we measure" tab.
 3. **Minimum group size.** No result is shown for any period in which fewer
-   than five employees were active. This threshold shall not be lowered.
+   than five employees were active. This threshold shall not be lowered. It
+   may be raised, per team, up to ten; the parties agree the value in
+   Annex A.
 4. **Signals.** The indicators in Annex A are active. Any change requires
    the council's consent and is made through the software's switches.
 5. **Access.** The Team health page is visible to the members of the

@@ -75,5 +75,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: ventures/happycompany/package-lock.json
+      # The frontend test compiles the UI Kit page and checks its imports
+      # against the installed @forge/react, so dependencies are needed.
+      - run: npm ci
+        working-directory: ventures/happycompany
       - run: npm test
         working-directory: ventures/happycompany

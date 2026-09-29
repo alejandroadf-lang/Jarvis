@@ -19,8 +19,13 @@
 
 import { DEFAULT_SETTINGS, emptyBucket, recordActivity, recordMention, periodMetrics, upgradeBucket } from './lib/signals.mjs';
 import { localParts, isoWeek, daysOfWeek, previousWeeks, addDays, isValidZone, parseInstant } from './lib/time.mjs';
-import { newSalt, pseudonym, itemHash, publicMetrics, MIN_GROUP, RETAIN_DAYS, RETAIN_WEEKS, TIMEZONE_CACHE_DAYS } from './lib/privacy.mjs';
-import { scorecard, trend, INDICATOR_KEYS } from './lib/score.mjs';
+import { newSalt, pseudonym, itemHash, publicMetrics, groupFloor, MIN_GROUP, MAX_GROUP_SETTING, RETAIN_DAYS, RETAIN_WEEKS, TIMEZONE_CACHE_DAYS } from './lib/privacy.mjs';
+import { scorecard, trend, publicValue, INDICATOR_KEYS } from './lib/score.mjs';
+import { pathToNextGrade } from './lib/progress.mjs';
+import { earnedBadges, actionStreak } from './lib/badges.mjs';
+import { transparency } from './lib/transparency.mjs';
+import { createActions } from './features/actions.mjs';
+import { createAudit, AUDIT_RETAIN_DAYS } from './features/audit.mjs';
 import { normaliseJiraEvent, normaliseJiraMention, normaliseConfluenceEvent, confluenceScope } from './lib/events.mjs';
 import { openWorkSnapshot } from './lib/openwork.mjs';
 import { activeDaysByPerson, streakShare, updatePeopleRecord, noRestShare } from './lib/recovery.mjs';
@@ -57,6 +62,10 @@ export function validateSettings(input) {
   if (holidays.length > MAX_HOLIDAYS) throw new Error(`holidays lists more than ${MAX_HOLIDAYS} dates`);
   const span = Number(s.longSpanHours);
   if (!Number.isInteger(span) || span < 8 || span > 16) throw new Error('longSpanHours must be a whole number of hours from 8 to 16');
+  const minGroup = Number(s.minGroup ?? MIN_GROUP);
+  if (!Number.isInteger(minGroup) || minGroup < MIN_GROUP || minGroup > MAX_GROUP_SETTING) {
+    throw new Error(`minGroup must be a whole number from ${MIN_GROUP} to ${MAX_GROUP_SETTING}; ${MIN_GROUP} is the floor and cannot be lowered`);
+  }
   const signals = {};
   for (const [key, on] of Object.entries(s.signals || {})) {
     if (!INDICATOR_KEYS.includes(key)) throw new Error(`unknown signal ${JSON.stringify(key)}`);
@@ -71,8 +80,14 @@ export function validateSettings(input) {
     weekendDays: weekend,
     holidays,
     longSpanHours: span,
+    minGroup,
     signals,
   };
+}
+
+function changedFields(before, after) {
+  if (!before) return Object.keys(after);
+  return Object.keys(after).filter((k) => JSON.stringify(before[k]) !== JSON.stringify(after[k]));
 }
 
 export function createApp({ store, jira = null, confluence = null, now = () => new Date(), log = console }) {
@@ -91,6 +106,8 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
   }
 
   const todayUtc = () => now().toISOString().slice(0, 10);
+  const audit = createAudit({ store, now });
+  const actions = createActions({ store, now, audit: (scope, event, detail) => audit.log(scope, event, detail) });
 
   async function settingsFor(scope) {
     const saved = await store.get(`settings:${scope}`);
@@ -287,6 +304,23 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
       const dated = snapshotByWeek[week]?.dated ?? null;
       m.dueMoveRate = dated ? Math.round(((m.dueMoves || 0) / dated) * 100) / 100 : null;
 
+      // "Check this improvement": off-hours activity collapsed while output
+      // held. Either the team fixed its hours, or the work moved somewhere the
+      // app cannot see. The note says both; it never accuses.
+      const recent4 = earlier.slice(-4);
+      const offHours = (x) => (x.afterHoursShare ?? 0) + (x.weekendShare ?? 0);
+      if (recent4.length >= 3) {
+        const baseOff = recent4.reduce((a, x) => a + offHours(x), 0) / recent4.length;
+        const baseResolved = recent4.reduce((a, x) => a + (x.kinds?.resolved || 0), 0) / recent4.length;
+        const nowResolved = m.kinds?.resolved || 0;
+        if (baseOff >= 0.15 && offHours(m) <= baseOff * 0.5 && baseResolved >= 5 && nowResolved >= baseResolved * 0.9) {
+          m.check = {
+            key: 'offHoursDrop',
+            text: 'Late and weekend activity dropped by half or more while the amount of work finished held steady. If the team changed how it works, well done. If the work simply moved to places this page cannot see, the grade is flattering you. The team pulse question on finishing within normal hours is the way to tell.',
+          };
+        }
+      }
+
       const weekDays = daysOfWeek(week);
       const earlierDays = previousWeeks(week, SPRINT_FALLBACK_WEEKS).flatMap(daysOfWeek);
       const sm = sprintMetricsForWeek(sprints, weekDays, earlierDays);
@@ -295,11 +329,14 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
     });
   }
 
-  /** What the page shows. Never contains a pseudonym or a per-person count. */
-  async function teamHealth({ scope, product }) {
-    if (!scope) throw new Error('This page only works inside a Jira project or a Confluence space.');
-    await rememberScope(scope, product);
+  /**
+   * Every week's metrics, snapshot and scorecard for one team. The team page,
+   * the weekly digest, the organisation view and the evidence pack all read
+   * this, so a grade is computed one way everywhere.
+   */
+  async function computeTeam({ scope, product }) {
     const settings = await settingsFor(scope);
+    const minGroup = groupFloor(settings.minGroup);
     const today = localParts(now(), settings.timeZone).day;
     const thisWeek = isoWeek(today);
     const weekKeys = [thisWeek, ...previousWeeks(thisWeek, WEEKS_SHOWN + SURGE_BASELINE_WEEKS)].reverse();
@@ -317,7 +354,7 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
     const weeks = [];
     for (const week of shownKeys) {
       const metrics = metricsByWeek[week];
-      const shown = publicMetrics(metrics);
+      const shown = publicMetrics(metrics, minGroup);
       const snapshot = snapshotByWeek[week] || null;
       const card = shown && !shown.suppressed ? scorecard(metrics, snapshot, settings.signals) : null;
       weeks.push({
@@ -329,27 +366,65 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
         score: card?.score ?? null,
         grade: card?.grade ?? null,
         status: card?.status ?? 'unknown',
-        dimensions: card?.dimensions ?? null,
-        actions: card?.actions ?? [],
+        card,
+        check: metrics?.check || null,
+        sprintClosed: sprints.some((sp) => daysOfWeek(week).includes(sp.completeDate)),
+        carryOverShare: metrics?.carryOverShare ?? null,
         openWork: snapshot
           ? { day: snapshot.day, openTotal: snapshot.openTotal, unassigned: snapshot.unassigned, unassignedOverdue: snapshot.unassignedOverdue ?? 0, people: snapshot.people }
           : null,
       });
     }
-
     // The week on the card: this one if it can be shown, else last week. A
     // Monday morning has too little of this week to say anything.
     const current = [...weeks].reverse().find((w, i) => i < 2 && w.score !== null) || weeks[weeks.length - 1];
+    return { scope, product, settings, minGroup, today, thisWeek, weeks, current, sprints, isJira };
+  }
+
+  // A card as the browser may see it: every figure rounded (see publicValue).
+  function publicCard(card) {
+    if (!card) return null;
+    const dimensions = {};
+    for (const [k, d] of Object.entries(card.dimensions)) {
+      dimensions[k] = { ...d, indicators: d.indicators.map((i) => ({ ...i, value: publicValue(i.key, i.value) })) };
+    }
+    return { ...card, dimensions, actions: card.actions.map((a) => ({ ...a, value: publicValue(a.key, a.value) })) };
+  }
+
+  /** What the page shows. Never contains a pseudonym or a per-person count. */
+  async function teamHealth({ scope, product }) {
+    if (!scope) throw new Error('This page only works inside a Jira project or a Confluence space.');
+    await rememberScope(scope, product);
+    const team = await computeTeam({ scope, product });
+    const { settings, minGroup, weeks, current, thisWeek, isJira, sprints } = team;
     const earlier = weeks
       .filter((w) => w.week < current.week && w.score !== null)
       .slice(-4)
       .map((w) => w.score);
 
+    const actionWeeks = await actions.history(scope, weeks.map((w) => w.week));
+    const freezes = await actions.freezes(scope);
+    const badges = earnedBadges(
+      weeks.map((w) => ({
+        week: w.week,
+        grade: w.grade,
+        fragmentationStatus: w.card?.dimensions.fragmentation.status,
+        hoursStatus: w.card?.dimensions.hours.status,
+        carryOverShare: w.carryOverShare,
+        sprintClosed: w.sprintClosed,
+      })),
+      actionWeeks,
+      freezes,
+    );
+    const toClose = Object.entries(actionWeeks)
+      .filter(([week, h]) => week < thisWeek && h.open > 0)
+      .map(([week, h]) => ({ week, items: h.items.filter((i) => i.done === null) }));
+
     const notes = [
-      'Grades describe the team, never a person, and are indicators, not diagnoses.',
-      `Nothing is shown for weeks with fewer than ${MIN_GROUP} active people.`,
+      'Grades describe working conditions for the team, never a person. They are indicators, not diagnoses.',
+      `Nothing is shown for weeks with fewer than ${minGroup} active people.`,
       product === 'confluence'
-        ? 'Confluence has no per-person time zone, so quiet hours use the team time zone in the settings below.'
+        ? 'Confluence has no per-person time zone, so quiet hours use the team time zone in the settings.'
         : 'Quiet hours use each person’s own Jira time zone when Jira shares it, and the team time zone otherwise.',
       'This page sees the part of the day that lands in Jira and Confluence. Calls, chats and email are not counted.',
     ];
@@ -358,21 +433,73 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
     }
     if (isJira && !sprints.length) notes.push('No closed sprints seen yet, so the sprint signals are blank. They fill in after the first sprint closes.');
 
+    const card = publicCard(current.card);
     return {
       scope,
       product,
       generatedAt: now().toISOString(),
       settings,
-      minGroup: MIN_GROUP,
+      minGroup,
       indicatorKeys: INDICATOR_KEYS,
-      weeks: weeks.map(({ dimensions, actions, ...w }) => ({ ...w, ...(w.week === current.week ? { dimensions, actions } : {}) })),
-      current,
+      weeks: weeks.map((w) => ({
+        week: w.week,
+        hasData: w.hasData,
+        suppressed: w.suppressed,
+        contributors: w.contributors,
+        total: w.total,
+        score: w.score,
+        grade: w.grade,
+        status: w.status,
+        openWork: w.openWork,
+      })),
+      current: {
+        week: current.week,
+        hasData: current.hasData,
+        suppressed: current.suppressed,
+        contributors: current.contributors,
+        total: current.total,
+        score: current.score,
+        grade: current.grade,
+        status: current.status,
+        dimensions: card?.dimensions ?? null,
+        actions: card?.actions ?? [],
+        openWork: current.openWork,
+      },
       trend: trend(current.score, earlier),
+      path: pathToNextGrade(current.card),
+      loop: {
+        thisWeek,
+        committed: actionWeeks[thisWeek]?.items || [],
+        toClose,
+        completion: actions.completion(actionWeeks),
+        streak: actionStreak(weeks.map((w) => w.week), actionWeeks, freezes),
+        freezes: freezes.filter((f) => weeks.some((w) => w.week === f)),
+      },
+      badges,
+      checks: current.check ? [current.check] : [],
+      transparency: transparency({ minGroup, disabled: settings.signals }),
       notes,
     };
   }
 
-  async function saveSettings({ scope, product, projectKey, spaceId, settings }) {
+  /** Commit to some of this week's suggestions. */
+  async function commitActions({ scope, product, keys }) {
+    const team = await computeTeam({ scope, product });
+    if (!team.current.card) throw new Error('There is no grade this week, so there is nothing to commit to yet.');
+    return actions.commit({ scope, week: team.thisWeek, keys, suggested: team.current.card.actions });
+  }
+
+  async function closeAction({ scope, product, week, key, done }) {
+    const team = await computeTeam({ scope, product });
+    return actions.close({ scope, week, key, done, thisWeek: team.thisWeek });
+  }
+
+  async function freezeWeek({ scope, product }) {
+    const team = await computeTeam({ scope, product });
+    return actions.freeze({ scope, week: team.thisWeek });
+  }
+
+  async function saveSettings({ scope, product, projectKey, spaceId, settings, by = null }) {
     if (!scope) throw new Error('This page only works inside a Jira project or a Confluence space.');
     if (product === 'jira' && jira?.canAdminister && !(await jira.canAdminister(projectKey))) {
       throw new Error('Only project administrators can change these settings.');
@@ -381,7 +508,9 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
       throw new Error('Only space administrators can change these settings.');
     }
     const clean = validateSettings(settings);
+    const before = await store.get(`settings:${scope}`);
     await store.set(`settings:${scope}`, { ...clean, updatedAt: now().toISOString() });
+    await audit.log(scope, 'settings.save', { changed: changedFields(before, clean) }, by ? pseudonym(by, await salt()) : null);
     return settingsFor(scope);
   }
 
@@ -480,11 +609,25 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
         summary.deleted += await expire(`wip:${scope}:`, (k) => k.slice(-10) < oldestSnapshotKept);
         summary.deleted += await expire(`wk:${scope}:`, (k) => k.slice(-8) < oldestWeekKept);
         summary.deleted += await expire(`sprint:${scope}:`, (_k, v) => (v?.completeDate || '') < addDays(today, -SPRINT_RETAIN_DAYS));
+        summary.deleted += await expire(`audit:${scope}:`, (_k, v) => (v?.at || '').slice(0, 10) < addDays(today, -AUDIT_RETAIN_DAYS));
+        summary.deleted += await expire(`actions:${scope}:`, (k) => k.slice(-8) < oldestWeekKept);
       });
     }
     summary.deleted += await expire('tz:', (_k, v) => !v?.until || v.until <= today);
     return summary;
   }
 
-  return { onJiraEvent, onConfluenceEvent, dailyRollup, teamHealth, saveSettings, settingsFor };
+  return {
+    onJiraEvent,
+    onConfluenceEvent,
+    dailyRollup,
+    teamHealth,
+    saveSettings,
+    settingsFor,
+    commitActions,
+    closeAction,
+    freezeWeek,
+    computeTeam,
+    auditEntries: audit.entries,
+  };
 }
