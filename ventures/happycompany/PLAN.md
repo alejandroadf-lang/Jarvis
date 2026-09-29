@@ -89,7 +89,9 @@ and site; runs README steps 1–5; the agents fix whatever the Confluence
 payloads turn out to need. Install on the founder's own Jira for the Jarvis
 project. Take a daily screenshot for the listing.
 
-**Days 11–30: three pilot teams.** Recruit through the founder's travel-tech
+**Days 11–30: three pilot teams.** The invitation, the one-paragraph pilot
+terms, the kickoff checklist and the five monthly questions are in
+`PILOT.md`. Recruit through the founder's travel-tech
 network and the Atlassian Community: teams of 8–40, one in Europe for the
 works-council conversation. Free for six months in exchange for a monthly
 30-minute call and permission to use anonymised results. Calibrate the bands

@@ -427,14 +427,32 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
     const oldestSnapshotKept = addDays(today, -SNAPSHOT_RETAIN_DAYS);
     const summary = { scopes: scopes.length, weeksRolled: 0, snapshots: 0, sprints: 0, deleted: 0, errors: [] };
 
-    for (const { scope, product } of scopes) {
+    // Each step runs on its own. A failure in one (a missing scope, a Jira
+    // outage, a board the app cannot see) is recorded and the next step still
+    // runs. Retention runs last and always: the promise in WORKS_COUNCIL.md
+    // that per-person counts are gone after 21 days cannot depend on the
+    // sprint API answering.
+    const step = async (scope, name, fn) => {
       try {
-        const settings = await settingsFor(scope);
-        // The people record first, so the week rolled below sees today's rests.
-        const window = await windowRows(scope, addDays(today, -1));
-        const record = updatePeopleRecord((await store.get(`people:${scope}`)) || {}, window, settings, today);
-        await store.set(`people:${scope}`, record);
+        await fn();
+      } catch (err) {
+        summary.errors.push({ scope, step: name, message: err.message });
+        log.error(`[happycompany] ${name} failed for ${scope}: ${err.message}`);
+      }
+    };
 
+    for (const { scope, product } of scopes) {
+      const projectKey = product === 'jira' ? scope.slice('jira:'.length) : null;
+      let settings = DEFAULT_SETTINGS;
+      await step(scope, 'settings', async () => {
+        settings = await settingsFor(scope);
+      });
+      // The people record first, so the week rolled below sees today's rests.
+      await step(scope, 'people', async () => {
+        const window = await windowRows(scope, addDays(today, -1));
+        await store.set(`people:${scope}`, updatePeopleRecord((await store.get(`people:${scope}`)) || {}, window, settings, today));
+      });
+      await step(scope, 'weeks', async () => {
         for (const week of previousWeeks(thisWeek, 3)) {
           if (await store.get(`wk:${scope}:${week}`)) continue;
           const sunday = daysOfWeek(week)[6];
@@ -443,22 +461,26 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
           await store.set(`wk:${scope}:${week}`, { week, metrics, rolledAt: today });
           summary.weeksRolled += 1;
         }
-        if (product === 'jira' && jira?.openIssues) {
-          const projectKey = scope.slice('jira:'.length);
+      });
+      if (projectKey && jira?.openIssues) {
+        await step(scope, 'open work', async () => {
           const issues = await jira.openIssues(projectKey, { today });
           const key = await salt();
           await store.set(`wip:${scope}:${today}`, openWorkSnapshot(issues, (id) => pseudonym(id, key), today));
           summary.snapshots += 1;
-        }
-        if (product === 'jira' && jira?.boards) summary.sprints += await pollSprints(scope, scope.slice('jira:'.length), today);
+        });
+      }
+      if (projectKey && jira?.boards) {
+        await step(scope, 'sprints', async () => {
+          summary.sprints += await pollSprints(scope, projectKey, today);
+        });
+      }
+      await step(scope, 'retention', async () => {
         summary.deleted += await expire(`day:${scope}:`, (k) => k.slice(-10) < oldestDayKept);
         summary.deleted += await expire(`wip:${scope}:`, (k) => k.slice(-10) < oldestSnapshotKept);
         summary.deleted += await expire(`wk:${scope}:`, (k) => k.slice(-8) < oldestWeekKept);
         summary.deleted += await expire(`sprint:${scope}:`, (_k, v) => (v?.completeDate || '') < addDays(today, -SPRINT_RETAIN_DAYS));
-      } catch (err) {
-        summary.errors.push({ scope, message: err.message });
-        log.error(`[happycompany] rollup failed for ${scope}: ${err.message}`);
-      }
+      });
     }
     summary.deleted += await expire('tz:', (_k, v) => !v?.until || v.until <= today);
     return summary;
