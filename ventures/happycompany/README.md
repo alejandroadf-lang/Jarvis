@@ -27,6 +27,11 @@ starting points to be calibrated in pilots, and the page says so.
 Confluence records it, and whether it is built, proposed or refused. Read it
 before adding a signal; the privacy classes there decide what may be stored.
 
+`WORKS_COUNCIL.md` is the pack for a customer's works council and data
+protection officer: what is collected, retention, the protective rules, the
+legal basis, draft clauses for a works agreement, the employee notice and
+the Marketplace Privacy & Security answers.
+
 ## Layout
 
 ```

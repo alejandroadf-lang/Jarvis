@@ -271,7 +271,7 @@ agree the exact set. That pack is also the Marketplace Privacy & Security tab.
 |---|---|---|---|
 | 1 ✅ | A3, A4, A5, A6, B4, C1, C3, D1, D4, E1, G2 | day-bucket schema (hours, item hashes, mentions per pseudonym), the people record for rests, snapshot fields (in progress, priority, due-date density, ownerless overdue), `mentioned` event, status-category cache, five-dimension scorecard, "three things to change this week", holidays and per-signal switches in settings | done: 56 tests |
 | 2 ✅ | B6, B7, B8, D2, D3 | daily poll of closed sprints per board with one JQL per new sprint (carry-over, work created mid-sprint), created against resolved over four weeks, due-date moves against dated open work, this week's activity per person against the eight-week median (the quarter-end surge, without a quarter setting) | done: 61 tests |
-| 3 | works-council pack, Privacy & Security tab text, listing copy | documents | 1 agent-day |
+| 3 ✅ | works-council pack, Privacy & Security tab text, listing copy | `WORKS_COUNCIL.md` | done |
 | v2 | A6, B5, C2, C4, D5, E2, E3, F2, F3, G1 | each its own PR after pilots ask | as needed |
 | watch | D6, Teamwork Graph | when it leaves Early Access | – |
 

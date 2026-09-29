@@ -127,6 +127,9 @@ Partners who run HR-adjacent implementations. Target by day 90: listing live,
 
 ## Known gaps to close before the paid listing
 
+- `WORKS_COUNCIL.md` says settings may be changed only by project
+  administrators; that is true in Jira and not yet in Confluence. Close
+  the gap before a Confluence-only customer signs.
 - Confluence settings form has no space-admin check (Jira gates to project
   admins). Add a check through the space permissions API or hide the form
   for non-admins.
