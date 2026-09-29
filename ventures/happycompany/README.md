@@ -21,7 +21,15 @@ appear on a "Team health" page in the project or space. The team commits to
 the changes it will try, says a week later whether they happened, and earns
 badges for improvement (never for a grade level). A "What we measure" tab
 tells every employee what is and is not counted, and states the use ban in
-`TERMS.md`. Admins set quiet hours, late night, weekend days, public holidays and
+`TERMS.md`.
+
+Teams can turn on a weekly digest, posted every Monday as a Jira issue or a
+Confluence blog post. HR, health and safety and leadership get an
+organisation view (Jira: "Working conditions across teams"; Confluence:
+global settings) with coverage, the share of teams in sustainable
+conditions, recovery time, action completion, the teams that could use
+support (alphabetical, never ranked) and a cost-of-strain calculator that
+uses only the customer's own assumptions. Admins set quiet hours, late night, weekend days, public holidays and
 the long-day threshold, and can switch any signal off. The scoring bands are
 starting points to be calibrated in pilots, and the page says so.
 
@@ -57,6 +65,11 @@ src/lib/badges.mjs      improvement badges and action streaks with freeze weeks
 src/lib/transparency.mjs  what is measured, never measured, and the use ban
 src/features/actions.mjs  the commit-and-close action loop
 src/features/audit.mjs  the audit trail (ISO 45001 7.5), 3 years
+src/features/digest.mjs the weekly digest, posted once per completed week
+src/features/org.mjs    the organisation view: coverage, recovery, action, no ranking
+src/lib/digest.mjs      the digest text
+src/lib/cost.mjs        the cost-of-strain scenario calculator
+src/frontend/org.jsx    the organisation page
 src/lib/sprints.mjs     carry-over and unplanned work per closed sprint (Jira)
 src/frontend/index.jsx  the page, UI Kit
 test/                   node:test, runs without Forge

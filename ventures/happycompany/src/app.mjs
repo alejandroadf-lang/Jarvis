@@ -26,6 +26,9 @@ import { earnedBadges, actionStreak } from './lib/badges.mjs';
 import { transparency } from './lib/transparency.mjs';
 import { createActions } from './features/actions.mjs';
 import { createAudit, AUDIT_RETAIN_DAYS } from './features/audit.mjs';
+import { createDigest } from './features/digest.mjs';
+import { organisationSummary, canSeeOrganisation, validateOrgSettings } from './features/org.mjs';
+import { strainCost } from './lib/cost.mjs';
 import { normaliseJiraEvent, normaliseJiraMention, normaliseConfluenceEvent, confluenceScope } from './lib/events.mjs';
 import { openWorkSnapshot } from './lib/openwork.mjs';
 import { activeDaysByPerson, streakShare, updatePeopleRecord, noRestShare } from './lib/recovery.mjs';
@@ -40,6 +43,8 @@ const INFLOW_WEEKS = 4;
 const STATUS_CACHE_DAYS = 7;
 const MAX_HOLIDAYS = 60;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
+const NAME_CACHE_DAYS = 7;
+const MAX_ORG_TEAMS = 300;
 
 /** Settings as a caller may set them: validated, or an Error naming the field. */
 export function validateSettings(input) {
@@ -62,6 +67,7 @@ export function validateSettings(input) {
   if (holidays.length > MAX_HOLIDAYS) throw new Error(`holidays lists more than ${MAX_HOLIDAYS} dates`);
   const span = Number(s.longSpanHours);
   if (!Number.isInteger(span) || span < 8 || span > 16) throw new Error('longSpanHours must be a whole number of hours from 8 to 16');
+  const digest = s.digest === 'on' || s.digest === true ? 'on' : 'off';
   const minGroup = Number(s.minGroup ?? MIN_GROUP);
   if (!Number.isInteger(minGroup) || minGroup < MIN_GROUP || minGroup > MAX_GROUP_SETTING) {
     throw new Error(`minGroup must be a whole number from ${MIN_GROUP} to ${MAX_GROUP_SETTING}; ${MIN_GROUP} is the floor and cannot be lowered`);
@@ -81,6 +87,7 @@ export function validateSettings(input) {
     holidays,
     longSpanHours: span,
     minGroup,
+    digest,
     signals,
   };
 }
@@ -108,6 +115,41 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
   const todayUtc = () => now().toISOString().slice(0, 10);
   const audit = createAudit({ store, now });
   const actions = createActions({ store, now, audit: (scope, event, detail) => audit.log(scope, event, detail) });
+
+  // The app's own account, per product, so its digest posts and evidence
+  // pages are never counted as the team's work. Looked up once and kept.
+  async function selfId(product) {
+    const key = `self:${product}`;
+    const cached = await store.get(key);
+    if (cached !== undefined && cached !== null) return cached || null;
+    const client = product === 'jira' ? jira : confluence;
+    if (!client?.selfAccountId) return null;
+    try {
+      const id = (await client.selfAccountId()) || '';
+      await store.set(key, id);
+      return id || null;
+    } catch (err) {
+      log.warn(`[happycompany] could not look up the app's own account: ${err.message}`);
+      return null;
+    }
+  }
+
+  async function teamName(scope, product) {
+    const key = `name:${scope}`;
+    const cached = await store.get(key);
+    const today = todayUtc();
+    if (cached?.name && cached.until > today) return cached.name;
+    const raw = scope.slice(scope.indexOf(':') + 1);
+    let name = raw;
+    try {
+      if (product === 'jira' && jira?.projectName) name = await jira.projectName(raw);
+      else if (product === 'confluence' && confluence?.spaceName) name = await confluence.spaceName(raw);
+    } catch (err) {
+      log.warn(`[happycompany] name lookup failed for ${scope}: ${err.message}`);
+    }
+    await store.set(key, { name, until: addDays(today, NAME_CACHE_DAYS) });
+    return name;
+  }
 
   async function settingsFor(scope) {
     const saved = await store.get(`settings:${scope}`);
@@ -176,6 +218,9 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
   }
 
   async function ingest(activity) {
+    if (activity.actor && activity.actor === (await selfId(activity.product))) {
+      return { scope: activity.scope, ignored: 'the app itself' };
+    }
     const settings = await settingsFor(activity.scope);
     const key = await salt();
     const who = pseudonym(activity.actor, key);
@@ -212,7 +257,8 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
     if (mention) return { counted: true, ...(await ingestMention(mention)) };
     const activity = normaliseJiraEvent(event, now().toISOString());
     if (!activity) return { counted: false };
-    return { counted: true, ...(await ingest(activity)) };
+    const result = await ingest(activity);
+    return result.ignored ? { counted: false, ...result } : { counted: true, ...result };
   }
 
   async function onConfluenceEvent(event) {
@@ -230,7 +276,8 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
       log.warn(`[happycompany] ${event.eventType} carried no space; not counted`);
       return { counted: false };
     }
-    return { counted: true, ...(await ingest(activity)) };
+    const result = await ingest(activity);
+    return result.ignored ? { counted: false, ...result } : { counted: true, ...result };
   }
 
   /** [{day, bucket}] for the given days, buckets upgraded, missing days omitted. */
@@ -499,6 +546,88 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
     return actions.freeze({ scope, week: team.thisWeek });
   }
 
+  const digest = createDigest({
+    store,
+    jira,
+    confluence,
+    now,
+    computeTeam: (place) => computeTeam(place),
+    actions,
+    teamName,
+    audit: (scope, event, detail) => audit.log(scope, event, detail),
+  });
+
+  async function orgSettings(product) {
+    return (await store.get(`org:${product}`)) || { groups: [] };
+  }
+
+  async function saveOrgSettings({ product, viewer, settings, by = null }) {
+    if (!viewer?.isAdmin) throw new Error('Only site administrators can change who sees the organisation view.');
+    const clean = validateOrgSettings(settings);
+    await store.set(`org:${product}`, clean);
+    await audit.log(`org:${product}`, 'org.settings', { groups: clean.groups.length }, by ? pseudonym(by, await salt()) : null);
+    return clean;
+  }
+
+  /** Every team of one product, computed once, for the organisation view and the evidence pack. */
+  async function allTeams(product) {
+    const scopes = ((await store.get('scopes')) || []).filter((s) => s.product === product).slice(0, MAX_ORG_TEAMS);
+    const teams = [];
+    for (const { scope } of scopes) {
+      const team = await computeTeam({ scope, product });
+      const hist = await actions.history(scope, team.weeks.map((w) => w.week));
+      teams.push({
+        scope,
+        name: await teamName(scope, product),
+        weeks: team.weeks.map((w) => ({ week: w.week, grade: w.grade, score: w.score })),
+        current: {
+          week: team.current.week,
+          grade: team.current.grade,
+          score: team.current.score,
+          suppressed: team.current.suppressed,
+          hasData: team.current.hasData,
+          contributors: team.current.suppressed ? 0 : team.current.contributors,
+          dimensions: team.current.card
+            ? Object.fromEntries(Object.entries(team.current.card.dimensions).map(([k, d]) => [k, { score: d.score, status: d.status }]))
+            : null,
+          worst: team.current.card ? team.current.card.actions.map((a) => a.key) : [],
+        },
+        completion: actions.completion(hist),
+        settings: team.settings,
+      });
+    }
+    return teams;
+  }
+
+  /** The organisation view. Access: site administrators and the configured groups. */
+  async function organisationView({ product, viewer }) {
+    const settings = await orgSettings(product);
+    if (!canSeeOrganisation(viewer || {}, settings)) {
+      throw new Error('The organisation view is for site administrators and the groups they choose. Ask a site administrator for access.');
+    }
+    const teams = await allTeams(product);
+    const summary = organisationSummary(teams);
+    return {
+      product,
+      generatedAt: now().toISOString(),
+      summary,
+      canConfigure: Boolean(viewer?.isAdmin),
+      orgSettings: viewer?.isAdmin ? settings : undefined,
+      notes: [
+        'Teams are never ranked. Teams that could use support are listed alphabetically with how long they have needed it.',
+        `Teams with too few active people are counted but never named or shown. There ${summary.suppressed === 1 ? 'is' : 'are'} ${summary.suppressed} such team${summary.suppressed === 1 ? '' : 's'} this week.`,
+        'A team’s grade describes its working conditions. It is not a mark on its manager and may not be used in any decision about a person.',
+      ],
+    };
+  }
+
+  async function estimateCost({ product, viewer, inputs }) {
+    const settings = await orgSettings(product);
+    if (!canSeeOrganisation(viewer || {}, settings)) throw new Error('The cost estimator is part of the organisation view.');
+    const summary = organisationSummary(await allTeams(product));
+    return strainCost({ ...inputs, people: summary.strainedPeople });
+  }
+
   async function saveSettings({ scope, product, projectKey, spaceId, settings, by = null }) {
     if (!scope) throw new Error('This page only works inside a Jira project or a Confluence space.');
     if (product === 'jira' && jira?.canAdminister && !(await jira.canAdminister(projectKey))) {
@@ -604,6 +733,10 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
           summary.sprints += await pollSprints(scope, projectKey, today);
         });
       }
+      await step(scope, 'digest', async () => {
+        const r = await digest.maybePost({ scope, product });
+        if (r.posted) summary.digests = (summary.digests || 0) + 1;
+      });
       await step(scope, 'retention', async () => {
         summary.deleted += await expire(`day:${scope}:`, (k) => k.slice(-10) < oldestDayKept);
         summary.deleted += await expire(`wip:${scope}:`, (k) => k.slice(-10) < oldestSnapshotKept);
@@ -611,6 +744,7 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
         summary.deleted += await expire(`sprint:${scope}:`, (_k, v) => (v?.completeDate || '') < addDays(today, -SPRINT_RETAIN_DAYS));
         summary.deleted += await expire(`audit:${scope}:`, (_k, v) => (v?.at || '').slice(0, 10) < addDays(today, -AUDIT_RETAIN_DAYS));
         summary.deleted += await expire(`actions:${scope}:`, (k) => k.slice(-8) < oldestWeekKept);
+        summary.deleted += await expire(`digest:${scope}:`, (k) => k.slice(-8) < oldestWeekKept);
       });
     }
     summary.deleted += await expire('tz:', (_k, v) => !v?.until || v.until <= today);
@@ -629,5 +763,10 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
     freezeWeek,
     computeTeam,
     auditEntries: audit.entries,
+    organisationView,
+    saveOrgSettings,
+    estimateCost,
+    allTeams,
+    teamName,
   };
 }

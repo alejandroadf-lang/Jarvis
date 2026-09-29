@@ -343,6 +343,7 @@ function Settings({ settings, indicatorKeys, onSaved }) {
     holidays: (settings.holidays || []).join('\n'),
     longSpanHours: String(settings.longSpanHours),
     minGroup: String(settings.minGroup ?? 5),
+    digest: settings.digest === 'on' ? 'on' : 'off',
     signals: { ...(settings.signals || {}) },
   });
   const [message, setMessage] = useState(null);
@@ -393,6 +394,12 @@ function Settings({ settings, indicatorKeys, onSaved }) {
           <Textfield id="hc-min" type="number" value={form.minGroup} onChange={field('minGroup')} />
         </Stack>
       </Inline>
+      <Toggle
+        id="hc-digest"
+        label="Post a weekly digest here every Monday (a Jira issue labelled happy-company, or a Confluence blog post)"
+        isChecked={form.digest === 'on'}
+        onChange={(e) => setForm({ ...form, digest: e.target.checked ? 'on' : 'off' })}
+      />
       <Label labelFor="hc-we">Weekend days, 0 = Sunday … 6 = Saturday</Label>
       <Textfield id="hc-we" value={form.weekendDays} onChange={field('weekendDays')} />
       <Label labelFor="hc-hol">Public holidays, one date per line (YYYY-MM-DD). Activity on them counts like weekend work.</Label>
