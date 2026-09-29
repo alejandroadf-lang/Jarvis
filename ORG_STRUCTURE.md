@@ -674,6 +674,32 @@ need different fixes; the reply points at `READY` for the first. The log
 holds who, what, when and whether it worked, never inputs or text, for 30
 days.
 
+### How much of the capacity is used: `CAPACITY`
+
+`CAPACITY` (or `KPI`, `CAPACITY 30`) is the KPI block on its own; `AGENTS`
+ends with it. Four ceilings the founder grants, each measured against its
+own limit rather than blended into one flattering number (`server/capacity.js`):
+
+- agents in use: active and doing real work, out of the whole roster;
+- each linked venture's commit allowance this week, read with the deploy
+  gate's own arithmetic (`rateLimitState`), so it always agrees with `READY`;
+- the daily model budget: average spend against `DAILY_SPEND_CAP_USD`;
+- the daily meeting: on how many days of the window it ran.
+
+Plus two that say whether used capacity became work: the share of actions
+that got past their gates, and queued tasks done, failed and open.
+
+Then up to six recommendations, each a rule over those numbers that names
+the command acting on it: a missed daily meeting, the gates refusing most
+(the runner keeps a refused action's gate as a category, plan, cap, spend,
+scope and so on, never its message, which can name a recipient), a venture
+at its cap or barely using it, a budget nearly spent or mostly idle while
+little real work happens, one agent doing most of the work, failed tasks,
+and more than half the roster never asked. When nothing applies it says
+so rather than inventing advice. The recommendations are for the founder
+only; no agent reads them, since a team told to "use more budget" has been
+given a reason to spend it.
+
 ## Four roles for Happy Company
 
 Happy Company (`ventures/happycompany`) is a Jira and Confluence app that

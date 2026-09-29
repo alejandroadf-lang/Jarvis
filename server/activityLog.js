@@ -25,10 +25,34 @@ export const KEEP_DAYS = 30;
 const MAX_ENTRIES = 20000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** @param {{agentId: string, kind: 'consulted'|'action'|'led', tool?: string, ok?: boolean, ventureId?: string|null, ms?: number|null}} entry */
-export function recordActivity({ agentId, kind, tool = null, ok = true, ventureId = null, ms = null }, now = new Date()) {
+// Which gate refused an action, as a category and never as the message:
+// refusal texts can name a recipient, and the capacity recommendations only
+// need to know which door was shut. Order matters: "spend cap" is spend, not
+// a commit cap.
+const GATES = [
+  ['spend', /spend|budget/i],
+  ['halt', /\bhalt|kill switch|real actions are (off|disabled|stopped)/i],
+  ['plan', /\bplan\b/i],
+  ['cooldown', /too soon|cooldown/i],
+  ['cap', /\bcap\b|caps\b|limit reached/i],
+  ['scope', /outside the allowed|allowed scope|allowedpaths/i],
+  // A missing server key before "repo": "Could not link a repo: this server
+  // has no GITHUB_TOKEN" is a key the founder sets, not a repo to link.
+  ['config', /has no [A-Z_]{4,}|no [A-Z_]{4,} configured/],
+  ['repo', /no repo|link a repo|not enabled|repo writes/i],
+  ['outreach', /outreach|recipient|allowlist|consent|blocked contact/i],
+];
+
+export function classifyRefusal(text) {
+  const t = String(text || '');
+  return (GATES.find(([, re]) => re.test(t)) || ['other'])[0];
+}
+
+/** @param {{agentId: string, kind: 'consulted'|'action'|'led', tool?: string, ok?: boolean, ventureId?: string|null, ms?: number|null, refusal?: string|null}} entry */
+export function recordActivity({ agentId, kind, tool = null, ok = true, ventureId = null, ms = null, refusal = null }, now = new Date()) {
   if (!agentId || !kind) return null;
   const entry = { agentId, kind, tool, ok: Boolean(ok), ventureId: ventureId ? String(ventureId) : null, ms: Number.isFinite(ms) ? ms : null, at: now.toISOString() };
+  if (!entry.ok && kind === 'action') entry.gate = classifyRefusal(refusal);
   const oldest = new Date(now.getTime() - KEEP_DAYS * DAY_MS).toISOString();
   updateJson(FILE, { entries: [] }, (data) => {
     data.entries = [...data.entries.filter((e) => e.at >= oldest), entry].slice(-MAX_ENTRIES);
@@ -89,6 +113,7 @@ export function describePerformance({ days = 7, now = new Date(), extra = [] } =
   const lines = [`Agents, last ${days} day${days === 1 ? '' : 's'}: ${agents.length} of ${total} did anything.`];
   if (!agents.length) {
     lines.push('', 'Nothing recorded. The team has not run in this window: no daily cycle and no message has reached it. Send REPORT to see when it last ran.');
+    lines.push(...extra);
     return lines.join('\n');
   }
   lines.push('', `Did real work (${working.length}):`);

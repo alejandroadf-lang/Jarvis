@@ -118,7 +118,8 @@ test('AGENTS and AGENT from WhatsApp: parsed strictly, window capped at what is 
   log.recordActivity({ agentId: 'forge_engineer', kind: 'action', tool: 'open_pull_request', ok: true });
   const reply = await commands.runFounderCommand({ kind: 'agents', days: 90 });
   assert.match(reply, /forge_engineer/);
-  assert.match(reply, /Queued work: \d+ done, \d+ failed, \d+ open\. Model spend today: \$/);
+  assert.match(reply, /KPIs, last 30 days:/);
+  assert.match(reply, /• Queued work: \d+ done, \d+ failed, \d+ open/);
   assert.match(reply, /kept 30 days, so this covers 30/);
   assert.match(await commands.runFounderCommand({ kind: 'agent', agentId: 'forge_engineer', days: 7 }), /Actions: 1 done/);
   assert.match(commands.__helpForTests, /AGENTS \[days\]/);
