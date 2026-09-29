@@ -77,7 +77,7 @@ import {
 } from './deploy/github.js';
 import { probeEndpoint } from './execute/probe.js';
 import { fetchReplies, isInboxConfigured } from './inbox.js';
-import { deployReadiness, outreachReadiness, formatReadiness } from './readiness.js';
+import { deployReadiness, pullRequestReadiness, outreachReadiness, formatReadiness } from './readiness.js';
 import { withComplianceFooter, isUnsubscribe, outreachRefusal } from './outreachCompliance.js';
 import { priceFloorRefusal, reviewOutbound } from './review.js';
 import { evaluate as evaluateArithmetic, formatNumber as formatCalcNumber } from './arithmetic.js';
@@ -1151,25 +1151,21 @@ export function handleCheckReady(input) {
       return formatReadiness(outreachReadiness(ventureId, { to: target }));
     }
     if (action === 'deploy_code' || action === 'deploy_changes' || action === 'open_pull_request' || action === 'revert_commit') {
-      const report = deployReadiness(ventureId, { path: target });
-      // open_pull_request and revert_commit skip the plan gate by design (see
+      // open_pull_request skips the plan gate by design (see
       // authorizePullRequest). Saying so here is the point: the report is what
       // an agent reads before deciding whether to propose or to land, and a
       // report that hid the difference would send it back to asking permission
       // for the one thing that does not need it.
-      if (action === 'open_pull_request' || action === 'revert_commit') {
-        const withoutPlan = {
-          ...report,
-          gates: report.gates.filter((g) => g.name !== 'Approved daily plan'),
-        };
-        const shut = withoutPlan.gates.filter((g) => !g.open);
-        return formatReadiness({
-          ...withoutPlan,
-          action,
-          shut,
-          ready: shut.length === 0,
-          blockedBy: shut[0] || null,
-        });
+      if (action === 'open_pull_request') {
+        return formatReadiness({ ...pullRequestReadiness(ventureId, { path: target }), action });
+      }
+      const report = deployReadiness(ventureId, { path: target });
+      // revert_commit skips the plan too, but is still a direct commit, so
+      // pull-requests-only still applies to it (see authorizeRevert).
+      if (action === 'revert_commit') {
+        const gates = report.gates.filter((g) => g.name !== 'Approved daily plan');
+        const shut = gates.filter((g) => !g.open);
+        return formatReadiness({ ...report, gates, action, shut, ready: shut.length === 0, blockedBy: shut[0] || null });
       }
       return formatReadiness({ ...report, action });
     }

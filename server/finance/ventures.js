@@ -369,6 +369,9 @@ export function linkRepo(id, { owner, name, branch, allowedPaths, maxPerWeek, ma
     maxPerWeek: weekly,
     // A daily cap above the weekly one would never bind, so clamp it.
     maxPerDay: Math.min(weekly, Math.max(1, Number(maxPerDay) || DEFAULT_MAX_PER_DAY)),
+    // Kept across a re-link: LINK is also how paths get widened, and a
+    // widened scope must not quietly drop the founder's review of every change.
+    reviewOnly: Boolean(venture.repo?.reviewOnly),
   };
   venture.deployments = venture.deployments || [];
   save(data);
@@ -402,6 +405,32 @@ export function setDeploymentEnabled(id, enabled) {
   venture.repo.enabled = Boolean(enabled);
   save(data);
   return venture;
+}
+
+// Pull requests only: the team proposes every change and the founder merges.
+//
+// The deploy gates bound how much lands and where; they do not put a person
+// between an agent and the deploy branch. For a venture whose code runs in
+// other companies' Jira (Happy Company), the founder wants to read every
+// change first. With this on, deploy_code, deploy_changes and revert_commit
+// refuse and point at open_pull_request, which needs no daily plan, so the
+// setting routes work rather than stopping it.
+export function setReviewOnly(id, on) {
+  const data = load();
+  const venture = findOrThrow(data, id);
+  if (!venture.repo) throw new Error(`Link a repo before setting pull-requests-only: the founder sends "LINK ${id} <owner/repo>".`);
+  venture.repo.reviewOnly = Boolean(on);
+  save(data);
+  return venture;
+}
+
+function assertDirectCommitsAllowed(venture) {
+  if (venture.repo.reviewOnly) {
+    throw new Error(
+      `"${venture.title}" takes pull requests only: propose this with open_pull_request and the founder merges it. ` +
+        `Only the founder lifts this, with REVIEW OFF ${venture.id}.`
+    );
+  }
 }
 
 function isPathAllowed(repo, targetPath) {
@@ -496,6 +525,7 @@ export function authorizeDeployment(id, { path }) {
   if (!venture.repo.enabled) {
     throw new Error('Deployments are not enabled for this venture yet — the founder needs to turn them on.');
   }
+  assertDirectCommitsAllowed(venture);
   if (!isPathAllowed(venture.repo, path)) {
     throw new Error(
       `"${path}" is outside the allowed scope (${venture.repo.allowedPaths.join(', ') || 'no paths allowed'}). ` +
@@ -538,6 +568,7 @@ export function authorizeDeploymentOfPaths(id, paths) {
   if (!venture.repo.enabled) {
     throw new Error('Deployments are not enabled for this venture yet — the founder needs to turn them on.');
   }
+  assertDirectCommitsAllowed(venture);
   for (const path of list) {
     if (!isPathAllowed(venture.repo, path)) {
       throw new Error(
@@ -649,6 +680,9 @@ export function authorizeRevert(id, { paths }) {
   if (!venture.repo.enabled) {
     throw new Error('Repo writes are not enabled for this venture yet — the founder needs to turn them on.');
   }
+  // A revert is a commit to the deploy branch like any other; under review
+  // it goes as a pull request that puts the files back.
+  assertDirectCommitsAllowed(venture);
   for (const path of list) {
     if (!isPathAllowed(venture.repo, path)) {
       throw new Error(

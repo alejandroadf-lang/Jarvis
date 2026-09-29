@@ -284,6 +284,8 @@ test('every founderCommand is one the command parser actually accepts', async ()
   // worse than one that stays quiet: they send it, nothing happens, and they
   // stop trusting the report.
   const { parseFounderCommand } = await import('../channels/founderCommands.js');
+  // PLAN is answered by the plan parser, which sees a message before this one.
+  const { parsePlanCommand } = await import('../dailyPlan.js');
   const venture = freshVenture();
   linkRepo(venture.id, { owner: 'acme', name: 'app', branch: 'main', allowedPaths: ['src/'], maxPerWeek: 5 });
   linkOutreachScope(venture.id, { allowedRecipients: ['ada@acme.com'], maxPerWeek: 5 });
@@ -298,6 +300,6 @@ test('every founderCommand is one the command parser actually accepts', async ()
   for (const command of commands) {
     // Placeholders are for the founder to fill in, not for the parser.
     if (command.includes('<')) continue;
-    assert.ok(parseFounderCommand(command), `the report suggests "${command}", which the parser does not accept`);
+    assert.ok(parseFounderCommand(command) || parsePlanCommand(command), `the report suggests "${command}", which the parser does not accept`);
   }
 });
