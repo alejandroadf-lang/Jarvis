@@ -18,7 +18,7 @@
 // bucket key, which @forge/kvs supports.
 
 import { DEFAULT_SETTINGS, emptyBucket, recordActivity, recordMention, periodMetrics, upgradeBucket } from './lib/signals.mjs';
-import { localParts, isoWeek, daysOfWeek, previousWeeks, addDays, isValidZone, parseInstant } from './lib/time.mjs';
+import { localParts, isoWeek, daysOfWeek, previousWeeks, addDays, isValidZone, parseInstant, quarterOf, previousQuarter, nextQuarter, quarterRange, weeksOfQuarter } from './lib/time.mjs';
 import { newSalt, pseudonym, itemHash, publicMetrics, groupFloor, MIN_GROUP, MAX_GROUP_SETTING, RETAIN_DAYS, RETAIN_WEEKS, TIMEZONE_CACHE_DAYS } from './lib/privacy.mjs';
 import { scorecard, trend, publicValue, INDICATOR_KEYS } from './lib/score.mjs';
 import { pathToNextGrade } from './lib/progress.mjs';
@@ -33,10 +33,14 @@ import { createPulse } from './features/pulse.mjs';
 import { cbiScore, itemMean } from './lib/pulse.mjs';
 import { enablerCard, ENABLER_KEYS } from './lib/enablers.mjs';
 import { validationSummary } from './lib/validation.mjs';
-import { normaliseJiraEvent, normaliseJiraMention, normaliseConfluenceEvent, confluenceScope } from './lib/events.mjs';
+import { normaliseJiraEvent, normaliseJiraMention, normaliseConfluenceEvent, confluenceScope, DIGEST_LABEL } from './lib/events.mjs';
 import { openWorkSnapshot } from './lib/openwork.mjs';
 import { activeDaysByPerson, streakShare, updatePeopleRecord, noRestShare } from './lib/recovery.mjs';
 import { sprintSummary, sprintMetricsForWeek, SPRINT_LOOKBACK_DAYS, SPRINT_FALLBACK_WEEKS } from './lib/sprints.mjs';
+import { buildEvidence, evidenceMarkdown, evidenceHtml } from './lib/evidence.mjs';
+import { disclosures } from './lib/disclosures.mjs';
+import { organisationLevel } from './lib/levels.mjs';
+import { newKeyPair, keyId, signAttestation, attestationPayload } from './lib/attestation.mjs';
 
 export const WEEKS_SHOWN = 12;
 const SNAPSHOT_RETAIN_DAYS = 91;
@@ -49,6 +53,19 @@ const MAX_HOLIDAYS = 60;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const NAME_CACHE_DAYS = 7;
 const MAX_ORG_TEAMS = 300;
+// A quarter has up to 14 ISO weeks. Weekly aggregates are kept RETAIN_WEEKS
+// (26), and the surge signal needs SURGE_BASELINE_WEEKS before the first week
+// shown, so 17 weeks is the furthest back a pack can see: a closed quarter is
+// complete when it is packed within the first three weeks of the next one.
+const EVIDENCE_WEEKS = 17;
+const EVIDENCE_WINDOW_DAYS = 21;
+const BACKFILL_DAYS = RETAIN_DAYS;
+const BACKFILL_PAGES_PER_RUN = 6;
+// Weeks are held back from rolling up while history comes in, but never for
+// longer than this: the rollup re-checks the last three weeks, so three days
+// of delay lose nothing, and a backfill that keeps failing must not stop a
+// project's weeks from being kept.
+const BACKFILL_HOLD_DAYS = 3;
 
 /** Settings as a caller may set them: validated, or an Error naming the field. */
 export function validateSettings(input) {
@@ -169,7 +186,9 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
   async function rememberScope(scope, product) {
     const scopes = (await store.get('scopes')) || [];
     if (scopes.some((s) => s.scope === scope)) return;
-    scopes.push({ scope, product });
+    // firstSeen: when the app began counting here. The backfill takes only
+    // history from before it, so nothing is counted twice.
+    scopes.push({ scope, product, firstSeen: now().toISOString() });
     await store.set('scopes', scopes);
   }
 
@@ -391,13 +410,13 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
    * the weekly digest, the organisation view and the evidence pack all read
    * this, so a grade is computed one way everywhere.
    */
-  async function computeTeam({ scope, product }) {
+  async function computeTeam({ scope, product, shown = WEEKS_SHOWN + 1 }) {
     const settings = await settingsFor(scope);
     const minGroup = groupFloor(settings.minGroup);
     const today = localParts(now(), settings.timeZone).day;
     const thisWeek = isoWeek(today);
-    const weekKeys = [thisWeek, ...previousWeeks(thisWeek, WEEKS_SHOWN + SURGE_BASELINE_WEEKS)].reverse();
-    const shownKeys = weekKeys.slice(-(WEEKS_SHOWN + 1));
+    const weekKeys = [thisWeek, ...previousWeeks(thisWeek, shown - 1 + SURGE_BASELINE_WEEKS)].reverse();
+    const shownKeys = weekKeys.slice(-shown);
     const isJira = product === 'jira';
     const snaps = isJira ? await snapshots(scope) : { byWeek: {}, latest: null };
     const sprints = isJira ? await sprintSummaries(scope) : [];
@@ -490,6 +509,9 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
       notes.push(`${current.openWork.unassignedOverdue} overdue items have no owner. Work nobody owns is work everybody worries about.`);
     }
     if (isJira && !sprints.length) notes.push('No closed sprints seen yet, so the sprint signals are blank. They fill in after the first sprint closes.');
+    // Everyone on the page is told when earlier weeks came from history.
+    const filled = isJira ? await store.get(`backfill:${scope}`) : null;
+    if (filled) notes.push(`Weeks before ${filled.cutoff.slice(0, 10)} include activity read from Jira issue history (who acted and when, as for live activity), requested by a project administrator on ${filled.requestedAt.slice(0, 10)}.`);
 
     const card = publicCard(current.card);
     const pulseState = await pulse.state({ scope, settings, today: team.today, minGroup, accountId: viewerAccountId });
@@ -549,7 +571,16 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
       pulse: pulseState,
       transparency: transparency({ minGroup, disabled: settings.signals }),
       notes,
+      backfill: isJira && jira?.recentHistory ? await backfillState(scope) : null,
     };
+  }
+
+  async function backfillState(scope) {
+    const state = await store.get(`backfill:${scope}`);
+    if (state) return { status: state.stopped ? 'stopped' : state.done ? 'done' : 'running', issues: state.issues, events: state.events };
+    const entry = ((await store.get('scopes')) || []).find((s) => s.scope === scope);
+    const available = Boolean(entry?.firstSeen) && entry.firstSeen >= addDays(todayUtc(), -BACKFILL_DAYS);
+    return { status: available ? 'available' : 'unavailable', days: BACKFILL_DAYS };
   }
 
   async function answerPulse({ scope, product, accountId, answers }) {
@@ -591,9 +622,16 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
 
   async function saveOrgSettings({ product, viewer, settings, by = null }) {
     if (!viewer?.isAdmin) throw new Error('Only site administrators can change who sees the organisation view.');
-    const clean = validateOrgSettings(settings);
+    // Merged over what is saved: the access editor and the evidence settings
+    // each send only their own fields.
+    const clean = validateOrgSettings({ ...(await orgSettings(product)), ...(settings || {}) });
     await store.set(`org:${product}`, clean);
-    await audit.log(`org:${product}`, 'org.settings', { groups: clean.groups.length }, by ? pseudonym(by, await salt()) : null);
+    await audit.log(
+      `org:${product}`,
+      'org.settings',
+      { groups: clean.groups.length, consultationRecorded: clean.consultationRecorded, evidenceSpace: Boolean(clean.evidenceSpaceId) },
+      by ? pseudonym(by, await salt()) : null,
+    );
     return clean;
   }
 
@@ -680,6 +718,261 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
     return strainCost({ ...inputs, people: summary.strainedPeople });
   }
 
+  // ## The quarterly evidence pack
+  //
+  // Built from the same team computation as the organisation view, limited
+  // to the weeks of one quarter. A closed quarter is packed once by the
+  // rollup and kept three years (an ISO certification cycle); the current
+  // quarter is built live, marked as a draft, and never attested.
+
+  const evidenceKey = (product, quarter) => `evidence:${product}:${quarter}`;
+  const attestKey = (product, quarter) => `attest:${product}:${quarter}`;
+  const QUARTER = /^\d{4}-Q[1-4]$/;
+
+  const statusesOf = (indicators) => Object.fromEntries((indicators || []).map((i) => [i.key, i.status]));
+
+  // Pulse tallies of the quarter, closed periods only: an open period's
+  // count moves when one person answers, and an organisation-wide figure
+  // that moves on one answer is one answer shown. A team's tally counts only
+  // when it reached that team's own group floor.
+  async function quarterTallies(scope, quarter, minGroup) {
+    const today = todayUtc();
+    const prefix = `pulse:${scope}:`;
+    return (await store.list(prefix))
+      .filter(({ key, value }) => {
+        const period = key.slice(prefix.length);
+        const quarterly = period.includes('Q');
+        const inQuarter = (quarterly ? period : quarterOf(`${period}-01`)) === quarter;
+        const closed = period < (quarterly ? quarterOf(today) : today.slice(0, 7));
+        return inQuarter && closed && value?.n >= minGroup;
+      })
+      .map((r) => r.value);
+  }
+
+  async function evidenceInput(product, quarter) {
+    const weeks = weeksOfQuarter(quarter);
+    const inQuarter = new Set(weeks);
+    const { first, last } = quarterRange(quarter);
+    const org = await orgSettings(product);
+    const scopes = ((await store.get('scopes')) || []).filter((s) => s.product === product).slice(0, MAX_ORG_TEAMS);
+    const teams = [];
+    const summaryTeams = [];
+    const auditRows = [];
+    const disabled = {};
+    const inRange = (e) => e.at.slice(0, 10) >= first && e.at.slice(0, 10) <= last;
+    for (const { scope } of scopes) {
+      const team = await computeTeam({ scope, product, shown: EVIDENCE_WEEKS });
+      const qWeeks = team.weeks.filter((w) => inQuarter.has(w.week));
+      if (!qWeeks.some((w) => w.hasData)) continue;
+      const name = await teamName(scope, product);
+      const completion = actions.completion(await actions.history(scope, qWeeks.map((w) => w.week)));
+      const tallies = await quarterTallies(scope, quarter, team.minGroup);
+      for (const [key, on] of Object.entries(team.settings.signals || {})) if (on === false) disabled[key] = false;
+      const end = [...qWeeks].reverse().find((w) => w.hasData);
+      teams.push({
+        name,
+        weeks: qWeeks.map((w) => ({
+          week: w.week,
+          grade: w.grade,
+          suppressed: w.suppressed,
+          hasData: w.hasData,
+          statuses: w.card ? statusesOf(Object.values(w.card.dimensions).flatMap((d) => d.indicators)) : {},
+          enablerStatuses: statusesOf(w.enablers?.indicators),
+        })),
+        actions: completion,
+        pulse: { on: tallies.length > 0, tallies },
+      });
+      summaryTeams.push({
+        name,
+        weeks: qWeeks.map((w) => ({ week: w.week, grade: w.grade, score: w.score })),
+        current: { week: end.week, grade: end.grade, score: end.score, suppressed: end.suppressed, hasData: true, contributors: 0 },
+        completion,
+      });
+      auditRows.push(...(await audit.entries(scope, { since: first })).filter(inRange));
+    }
+    auditRows.push(...(await audit.entries(`org:${product}`, { since: first })).filter(inRange));
+    return { product, quarter, weeks, generatedAt: now().toISOString(), teams, summary: organisationSummary(summaryTeams), audit: auditRows, disabled, orgSettings: org };
+  }
+
+  /** Packs a closed quarter once. Returns whether a new pack was stored. */
+  async function snapshotEvidence(product, quarter) {
+    if (await store.get(evidenceKey(product, quarter))) return false;
+    const pack = buildEvidence(await evidenceInput(product, quarter));
+    // An empty quarter is stored too, so the rollup does not rebuild it daily.
+    await store.set(evidenceKey(product, quarter), pack.scope.teams ? pack : { quarter, empty: true });
+    await audit.log(`org:${product}`, 'evidence.snapshot', { quarter, teams: pack.scope.teams });
+    return Boolean(pack.scope.teams);
+  }
+
+  async function storedPacks(product) {
+    return (await store.list(`evidence:${product}:`)).map((r) => r.value).filter((p) => p && !p.empty);
+  }
+
+  async function publicKeyInfo() {
+    const pem = await store.get('attestation:publicKey');
+    return pem ? { publicKey: pem, keyId: keyId(pem) } : null;
+  }
+
+  /** The evidence page: a closed quarter's pack, or this quarter's draft, with its level. */
+  async function evidenceView({ product, viewer, quarter = null }) {
+    const org = await orgSettings(product);
+    if (!canSeeOrganisation(viewer || {}, org)) throw new Error('The evidence pack is part of the organisation view. Ask a site administrator for access.');
+    if (quarter !== null && !QUARTER.test(String(quarter))) throw new Error('quarter must be written like 2026-Q3');
+    const current = quarterOf(todayUtc());
+    const stored = await storedPacks(product);
+    const quarters = [...new Set([current, ...stored.map((p) => p.quarter)])].sort().reverse();
+    const chosen = quarter || stored.map((p) => p.quarter).sort().at(-1) || current;
+    let pack = stored.find((p) => p.quarter === chosen) || null;
+    const live = !pack;
+    if (live) {
+      if (chosen !== current) throw new Error(`There is no evidence pack for ${chosen}. Packs exist for quarters the app was installed for, from the first full quarter.`);
+      pack = buildEvidence(await evidenceInput(product, current));
+    }
+    const previous = stored.find((p) => p.quarter === previousQuarter(pack.quarter)) || null;
+    return {
+      product,
+      quarter: pack.quarter,
+      live,
+      quarters,
+      pack,
+      markdown: evidenceMarkdown(pack),
+      disclosures: disclosures(pack),
+      level: organisationLevel(pack, previous),
+      attestation: live ? null : (await store.get(attestKey(product, pack.quarter))) || null,
+      key: await publicKeyInfo(),
+      canAttest: Boolean(viewer?.isAdmin) && !live,
+      canPublish: Boolean(viewer?.isAdmin) && !live && Boolean(org.evidenceSpaceId),
+    };
+  }
+
+  async function closedPack(product, quarter) {
+    if (!QUARTER.test(String(quarter))) throw new Error('quarter must be written like 2026-Q3');
+    const pack = await store.get(evidenceKey(product, quarter));
+    if (!pack || pack.empty) throw new Error(`${quarter} has no closed evidence pack. Only a closed quarter, packed by the nightly run, can be attested or published.`);
+    return pack;
+  }
+
+  /** Signs the level a closed quarter reached. Site administrators only. */
+  async function issueAttestation({ product, viewer, quarter, by = null }) {
+    if (!viewer?.isAdmin) throw new Error('Only site administrators can issue an attestation.');
+    const pack = await closedPack(product, quarter);
+    const previous = await store.get(evidenceKey(product, previousQuarter(quarter)));
+    const level = organisationLevel(pack, previous?.empty ? null : previous);
+    if (level.level === 'none') throw new Error(`${quarter} did not reach Measuring, so there is nothing to attest. Still needed: ${level.next.missing.join('; ')}.`);
+    let privateKey = await store.getSecret('attestationKey');
+    let publicKey = await store.get('attestation:publicKey');
+    if (!privateKey || !publicKey) {
+      ({ privateKey, publicKey } = newKeyPair());
+      await store.setSecret('attestationKey', privateKey);
+      await store.set('attestation:publicKey', publicKey);
+    }
+    const payload = attestationPayload({ pack, level, product, issuedAt: now().toISOString(), validUntil: quarterRange(nextQuarter(quarter)).last });
+    const att = signAttestation(payload, privateKey, publicKey);
+    await store.set(attestKey(product, quarter), att);
+    await audit.log(`org:${product}`, 'attestation.issue', { quarter, level: level.level, keyId: att.keyId }, by ? pseudonym(by, await salt()) : null);
+    return att;
+  }
+
+  /** Publishes a closed quarter's pack as a Confluence page. Site administrators only. */
+  async function publishEvidence({ product, viewer, quarter, by = null }) {
+    if (!viewer?.isAdmin) throw new Error('Only site administrators can publish the evidence pack.');
+    const org = await orgSettings(product);
+    if (!org.evidenceSpaceId) throw new Error('Set the Confluence space id for evidence pages first (organisation settings, "Evidence").');
+    if (!confluence?.createPage) throw new Error('Publishing needs Happy Company installed in Confluence on this site.');
+    const pack = await closedPack(product, quarter);
+    if (pack.publishedPageId) throw new Error(`${quarter} is already published as Confluence page ${pack.publishedPageId}.`);
+    const title = `${pack.title} (${product === 'jira' ? 'Jira' : 'Confluence'})${pack.organisation ? `, ${pack.organisation}` : ''}`;
+    let created;
+    try {
+      created = await confluence.createPage(org.evidenceSpaceId, { title, html: evidenceHtml(pack) });
+    } catch (err) {
+      throw new Error(`Confluence did not accept the page. Check that Happy Company is installed in Confluence and the space id ${org.evidenceSpaceId} exists: ${err.message}`);
+    }
+    await store.set(evidenceKey(product, quarter), { ...pack, publishedPageId: created.id });
+    await audit.log(`org:${product}`, 'evidence.publish', { quarter, pageId: created.id }, by ? pseudonym(by, await salt()) : null);
+    return { pageId: created.id, title };
+  }
+
+  // ## Backfill: the last three weeks from Jira history, on request
+  //
+  // A new installation otherwise shows nothing for a week and no trend for a
+  // month; every competitor that reads history shows a picture on day one.
+  // A project administrator can ask for the last BACKFILL_DAYS days to be
+  // read from issue changelogs and comments. Only activity from before the
+  // app began counting this project (`firstSeen`) is taken, so nothing is
+  // counted twice, and each run reads BACKFILL_PAGES_PER_RUN pages so one
+  // project cannot use up the nightly run. While it is running, weeks are
+  // not rolled up, so no week is frozen half-filled; after BACKFILL_HOLD_DAYS
+  // it stops where it is, keeps what it read, and says so.
+  //
+  // Not recoverable from history: mentions (they are in comment bodies,
+  // which the app never reads) and deleted issues. A run cut off mid-page
+  // (the function timeout) can count that page twice on the next run; the
+  // page size keeps that small and the audit trail records each run.
+
+  async function requestBackfill({ scope, product, projectKey, by = null }) {
+    if (product !== 'jira' || !jira?.recentHistory) throw new Error('Backfill reads Jira issue history; it is only available in Jira projects.');
+    if (jira.canAdminister && !(await jira.canAdminister(projectKey))) throw new Error('Only project administrators can fill in history.');
+    const existing = await store.get(`backfill:${scope}`);
+    if (existing) return existing;
+    const entry = ((await store.get('scopes')) || []).find((s) => s.scope === scope);
+    const since = entry?.firstSeen || now().toISOString();
+    if (since < addDays(todayUtc(), -BACKFILL_DAYS)) throw new Error(`This project has been counted for more than ${BACKFILL_DAYS} days, so there is no history left to fill in.`);
+    const state = { requestedAt: now().toISOString(), cutoff: since, nextPageToken: null, issues: 0, events: 0, done: false };
+    await store.set(`backfill:${scope}`, state);
+    await rememberScope(scope, product);
+    await audit.log(scope, 'backfill.request', { days: BACKFILL_DAYS }, by ? pseudonym(by, await salt()) : null);
+    return state;
+  }
+
+  const backfillExpired = (state) => state.requestedAt < `${addDays(todayUtc(), -BACKFILL_HOLD_DAYS)}T`;
+  const holdsWeeks = (state) => Boolean(state) && !state.done && !backfillExpired(state);
+
+  async function runBackfill(scope, projectKey) {
+    const key = `backfill:${scope}`;
+    const state = await store.get(key);
+    if (!state || state.done) return 0;
+    if (backfillExpired(state)) {
+      await store.set(key, { ...state, done: true, stopped: true });
+      await audit.log(scope, 'backfill.stopped', { issues: state.issues, events: state.events });
+      return 0;
+    }
+    const from = `${addDays(todayUtc(), -BACKFILL_DAYS)}T00:00:00Z`;
+    const within = (at) => {
+      const t = parseInstant(at);
+      return Boolean(t) && t.toISOString() >= from && t.toISOString() < state.cutoff;
+    };
+    let counted = 0;
+    for (let page = 0; page < BACKFILL_PAGES_PER_RUN && !state.done; page++) {
+      const { issues, nextPageToken } = await jira.recentHistory(projectKey, { days: BACKFILL_DAYS, nextPageToken: state.nextPageToken });
+      let pageEvents = 0;
+      for (const issue of issues) {
+        if (issue.labels.includes(DIGEST_LABEL)) continue;
+        const base = { id: issue.id, key: issue.key, fields: { labels: issue.labels, project: { key: projectKey } } };
+        const replay = [];
+        if (issue.creator && within(issue.created)) replay.push({ eventType: 'avi:jira:created:issue', atlassianId: issue.creator, issue: { ...base, fields: { ...base.fields, updated: issue.created } } });
+        for (const h of issue.histories) {
+          if (h.author && within(h.created)) replay.push({ eventType: 'avi:jira:updated:issue', atlassianId: h.author, issue: { ...base, fields: { ...base.fields, updated: h.created } }, changelog: { items: h.items } });
+        }
+        for (const c of issue.comments) {
+          if (c.author && within(c.created)) replay.push({ eventType: 'avi:jira:commented:issue', atlassianId: c.author, issue: base, comment: { created: c.created } });
+        }
+        for (const event of replay) {
+          const activity = normaliseJiraEvent(event, event.issue.fields.updated || event.comment?.created);
+          if (activity && !(await ingest(activity)).ignored) pageEvents += 1;
+        }
+        state.issues += 1;
+      }
+      state.nextPageToken = nextPageToken;
+      state.done = !nextPageToken;
+      state.events += pageEvents;
+      counted += pageEvents;
+      await store.set(key, state);
+    }
+    if (state.done) await audit.log(scope, 'backfill.done', { issues: state.issues, events: state.events });
+    return counted;
+  }
+
   async function saveSettings({ scope, product, projectKey, spaceId, settings, by = null }) {
     if (!scope) throw new Error('This page only works inside a Jira project or a Confluence space.');
     if (product === 'jira' && jira?.canAdminister && !(await jira.canAdminister(projectKey))) {
@@ -762,7 +1055,13 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
         const window = await windowRows(scope, addDays(today, -1));
         await store.set(`people:${scope}`, updatePeopleRecord((await store.get(`people:${scope}`)) || {}, window, settings, today));
       });
+      if (projectKey && jira?.recentHistory) {
+        await step(scope, 'backfill', async () => {
+          summary.backfilled = (summary.backfilled || 0) + (await runBackfill(scope, projectKey));
+        });
+      }
       await step(scope, 'weeks', async () => {
+        if (holdsWeeks(await store.get(`backfill:${scope}`))) return;
         for (const week of previousWeeks(thisWeek, 3)) {
           if (await store.get(`wk:${scope}:${week}`)) continue;
           const sunday = daysOfWeek(week)[6];
@@ -810,7 +1109,22 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
         summary.deleted += await expire(`digest:${scope}:`, (k) => k.slice(-8) < oldestWeekKept);
       });
     }
+    // The closed quarter's evidence pack, in the first weeks of the next one
+    // (see EVIDENCE_WEEKS). Once packed it is never rebuilt.
+    const thisQuarter = quarterOf(today);
+    if (today <= addDays(quarterRange(thisQuarter).first, EVIDENCE_WINDOW_DAYS - 1)) {
+      for (const product of [...new Set(scopes.map((s) => s.product))]) {
+        await step(`org:${product}`, 'evidence', async () => {
+          if (await snapshotEvidence(product, previousQuarter(thisQuarter))) summary.evidencePacks = (summary.evidencePacks || 0) + 1;
+        });
+      }
+    }
     summary.deleted += await expire('tz:', (_k, v) => !v?.until || v.until <= today);
+    // Packs and attestations are kept as long as the audit trail.
+    const oldestQuarterKept = quarterOf(addDays(today, -AUDIT_RETAIN_DAYS));
+    summary.deleted += await expire('evidence:', (k) => k.slice(-7) < oldestQuarterKept);
+    summary.deleted += await expire('attest:', (k) => k.slice(-7) < oldestQuarterKept);
+    summary.deleted += await expire('audit:org:', (_k, v) => (v?.at || '').slice(0, 10) < addDays(today, -AUDIT_RETAIN_DAYS));
     return summary;
   }
 
@@ -832,5 +1146,10 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
     estimateCost,
     allTeams,
     teamName,
+    evidenceView,
+    requestBackfill,
+    issueAttestation,
+    publishEvidence,
+    snapshotEvidence,
   };
 }

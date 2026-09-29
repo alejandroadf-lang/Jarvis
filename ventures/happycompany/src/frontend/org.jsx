@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import ForgeReconciler, {
   Box,
   Button,
+  CodeBlock,
   Heading,
   Inline,
   Label,
@@ -11,10 +12,12 @@ import ForgeReconciler, {
   ListItem,
   Lozenge,
   SectionMessage,
+  Select,
   Stack,
   Text,
   TextArea,
   Textfield,
+  Toggle,
 } from '@forge/react';
 import { invoke } from '@forge/bridge';
 
@@ -165,6 +168,178 @@ function Access({ settings, onSaved }) {
   );
 }
 
+const ATTENTION = { high: 'removed', medium: 'moved', low: 'success', 'no data': 'default' };
+
+function Level({ level }) {
+  return (
+    <Stack space="space.100">
+      <Inline space="space.100" alignBlock="center">
+        <Heading size="small">{`Level for ${level.quarter}: ${level.label}`}</Heading>
+      </Inline>
+      <List type="unordered">
+        {level.criteria.map((c) => (
+          <ListItem key={c.key}>
+            <Inline space="space.100" shouldWrap>
+              <Lozenge appearance={c.met ? 'success' : 'default'}>{c.met ? 'met' : 'not yet'}</Lozenge>
+              <Text>{`${c.text}: ${c.value}`}</Text>
+            </Inline>
+          </ListItem>
+        ))}
+      </List>
+      {level.next && <Text>{`For ${level.next.label}: ${level.next.missing.join('; ')}.`}</Text>}
+      <Text>Measuring, Acting and Sustaining are Happy Company’s own levels, with provisional thresholds. They are not an ISO certification; ISO 45003 is guidance and only an accredited body certifies an ISO 45001 management system.</Text>
+    </Stack>
+  );
+}
+
+function EvidenceSettings({ settings, onSaved }) {
+  const [form, setForm] = useState({
+    consultationRecorded: Boolean(settings?.consultationRecorded),
+    consultationDate: settings?.consultationDate || '',
+    organisationName: settings?.organisationName || '',
+    evidenceSpaceId: settings?.evidenceSpaceId || '',
+  });
+  const [message, setMessage] = useState(null);
+  const field = (name) => (e) => setForm({ ...form, [name]: e.target.value });
+  const save = async () => {
+    try {
+      await invoke('saveOrgSettings', { settings: form });
+      setMessage({ appearance: 'success', text: 'Saved. The next evidence pack uses these.' });
+      await onSaved();
+    } catch (err) {
+      setMessage({ appearance: 'error', text: err.message });
+    }
+  };
+  return (
+    <Stack space="space.150">
+      <Heading size="xsmall">Evidence settings</Heading>
+      <Toggle
+        id="hc-consulted"
+        label="Workers’ representatives (works council, health and safety committee or employee representatives) were consulted on this app"
+        isChecked={form.consultationRecorded}
+        onChange={(e) => setForm({ ...form, consultationRecorded: Boolean(e.target.checked) })}
+      />
+      <Label labelFor="hc-consulted-on">Date of that consultation (YYYY-MM-DD)</Label>
+      <Textfield id="hc-consulted-on" value={form.consultationDate} onChange={field('consultationDate')} />
+      <Label labelFor="hc-orgname">Organisation name printed on packs and attestations</Label>
+      <Textfield id="hc-orgname" value={form.organisationName} onChange={field('organisationName')} />
+      <Label labelFor="hc-space">Confluence space id to publish evidence pages to (digits; leave empty to not publish)</Label>
+      <Textfield id="hc-space" value={form.evidenceSpaceId} onChange={field('evidenceSpaceId')} />
+      <Inline space="space.100">
+        <Button onClick={save}>Save evidence settings</Button>
+      </Inline>
+      {message && (
+        <SectionMessage appearance={message.appearance}>
+          <Text>{message.text}</Text>
+        </SectionMessage>
+      )}
+    </Stack>
+  );
+}
+
+// The quarterly psychosocial-risk evidence pack, its level, drafts for
+// disclosures, and (for administrators) the signed attestation.
+function Evidence({ canConfigure, orgSettings, onSaved }) {
+  const [view, setView] = useState(null);
+  const [error, setError] = useState(null);
+  const [message, setMessage] = useState(null);
+  const load = (quarter) =>
+    invoke('evidenceView', quarter ? { quarter } : {})
+      .then((v) => {
+        setError(null);
+        setView(v);
+      })
+      .catch((err) => setError(err.message));
+  useEffect(() => {
+    load();
+  }, []);
+  const act = (name, success) => async () => {
+    try {
+      const r = await invoke(name, { quarter: view.quarter });
+      setMessage({ appearance: 'success', text: success(r) });
+      await load(view.quarter);
+    } catch (err) {
+      setMessage({ appearance: 'error', text: err.message });
+    }
+  };
+  if (error) {
+    return (
+      <SectionMessage title="The evidence pack could not load" appearance="warning">
+        <Text>{error}</Text>
+      </SectionMessage>
+    );
+  }
+  if (!view) return <Text>Building the evidence pack…</Text>;
+  const p = view.pack;
+  return (
+    <Stack space="space.300">
+      <Heading size="medium">Psychosocial risk evidence (ISO 45003-aligned)</Heading>
+      <Label labelFor="hc-quarter">Quarter</Label>
+      <Select
+        inputId="hc-quarter"
+        options={view.quarters.map((q) => ({ label: q, value: q }))}
+        value={{ label: view.quarter, value: view.quarter }}
+        onChange={(option) => option && load(option.value)}
+      />
+      {view.live && (
+        <SectionMessage appearance="information">
+          <Text>This quarter is still running: this is a draft. The closed quarter is packed in its first weeks and kept for three years.</Text>
+        </SectionMessage>
+      )}
+      <Level level={view.level} />
+      <Stack space="space.100">
+        <Heading size="small">Hazards screened</Heading>
+        <Text>{`${p.scope.teams} teams, ${p.scope.teamWeeks} team-weeks. Share of team-weeks at "act now", and the trend within the quarter.`}</Text>
+        <List type="unordered">
+          {p.hazards.slice(0, 10).map((h) => (
+            <ListItem key={h.key}>
+              <Inline space="space.100" shouldWrap>
+                <Lozenge appearance={ATTENTION[h.attention]}>{h.attention}</Lozenge>
+                <Text>{`${h.label}: ${pct(h.actShare)} of team-weeks, ${h.direction}`}</Text>
+              </Inline>
+            </ListItem>
+          ))}
+        </List>
+        <Text>{`Actions: ${p.actions.teams} teams committed to ${p.actions.committed} changes; ${pct(p.actions.completion)} of closed actions done. Pulse: ${p.participation.pulseTeams} teams, ${p.participation.responses} responses.`}</Text>
+      </Stack>
+      <Stack space="space.100">
+        <Heading size="small">The full pack</Heading>
+        <Text>Copy it into your management system, or publish it to Confluence. It maps every signal to ISO 45003, the HSE Management Standards, GDA, Safe Work Australia, the French DUERP, the Dutch RI&E, Belgian law and Japan’s stress check, and says what the app does not cover.</Text>
+        <CodeBlock text={view.markdown} language="markdown" shouldWrapLongLines />
+      </Stack>
+      <Stack space="space.100">
+        <Heading size="small">Disclosure drafts</Heading>
+        {Object.entries(view.disclosures).map(([key, d]) => (
+          <Stack key={key} space="space.050">
+            <Heading size="xsmall">{d.title}</Heading>
+            <Text>{d.text}</Text>
+            <Text>{d.caveat}</Text>
+          </Stack>
+        ))}
+      </Stack>
+      {(view.canAttest || view.attestation) && (
+        <Stack space="space.100">
+          <Heading size="small">Signed attestation</Heading>
+          <Text>A statement of this quarter’s level, signed with this installation’s key. Anyone can check it offline with scripts/verify-attestation.mjs. It is self-attested, not a certification.</Text>
+          {view.key && <Text>{`This installation’s key id: ${view.key.keyId}`}</Text>}
+          {view.attestation && <CodeBlock text={JSON.stringify(view.attestation, null, 2)} language="json" shouldWrapLongLines />}
+          <Inline space="space.100" shouldWrap>
+            {view.canAttest && <Button onClick={act('issueAttestation', (a) => `Signed: ${a.payload.levelLabel}, valid until ${a.payload.validUntil}.`)}>{view.attestation ? 'Sign again' : 'Sign attestation'}</Button>}
+            {view.canPublish && !p.publishedPageId && <Button onClick={act('publishEvidence', (r) => `Published as "${r.title}".`)}>Publish to Confluence</Button>}
+          </Inline>
+          {p.publishedPageId && <Text>{`Published to Confluence, page ${p.publishedPageId}.`}</Text>}
+        </Stack>
+      )}
+      {message && (
+        <SectionMessage appearance={message.appearance}>
+          <Text>{message.text}</Text>
+        </SectionMessage>
+      )}
+      {canConfigure && <EvidenceSettings settings={orgSettings} onSaved={onSaved} />}
+    </Stack>
+  );
+}
+
 function App() {
   const [view, setView] = useState(null);
   const [error, setError] = useState(null);
@@ -190,6 +365,7 @@ function App() {
         ))}
       </Stack>
       <CostEstimator strainedPeople={view.summary.strainedPeople} />
+      <Evidence canConfigure={view.canConfigure} orgSettings={view.orgSettings} onSaved={load} />
       {view.canConfigure && <Access settings={view.orgSettings} onSaved={load} />}
     </Stack>
   );

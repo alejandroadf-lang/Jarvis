@@ -34,7 +34,7 @@ test('an event lands in the actor’s local day bucket under a pseudonym, with i
   const stored = JSON.stringify([...store.data.entries()]);
   assert.ok(!stored.includes('557058'));
   assert.ok(!stored.includes('OPS1')); // the issue id is hashed too
-  assert.deepEqual(await store.get('scopes'), [{ scope: 'jira:OPS', product: 'jira' }]);
+  assert.deepEqual(await store.get('scopes'), [{ scope: 'jira:OPS', product: 'jira', firstSeen: NOW.replace('Z', '.000Z') }]);
   assert.equal((await app.onJiraEvent({ eventType: 'avi:jira:viewed:issue' })).counted, false);
 });
 

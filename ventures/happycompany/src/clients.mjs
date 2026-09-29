@@ -162,6 +162,48 @@ export function jiraClient(api, route) {
       return me?.accountId || null;
     },
 
+    /**
+     * One page of a project's recently updated issues with their changelog
+     * and comments, for the opt-in backfill of the last three weeks. Returns
+     * only who acted and when: {issues: [{id, key, labels, created, creator,
+     * histories: [{author, created, items}], comments: [{author, created}]}], nextPageToken}.
+     *
+     * Assumed, to confirm on the first real run: that /search/jql with
+     * expand "changelog" returns each issue's recent histories (Jira caps
+     * the embedded changelog; three weeks of one issue fits well inside it),
+     * and that the comment field lists comments with author and created.
+     */
+    async recentHistory(projectKey, { days = 21, nextPageToken = null, pageSize = 50 } = {}) {
+      if (!PROJECT_KEY.test(projectKey)) throw new Error(`refusing to search for project key ${JSON.stringify(projectKey)}`);
+      const body = {
+        jql: `project = "${projectKey}" AND updated >= "-${Number(days)}d" ORDER BY updated DESC`,
+        fields: ['created', 'creator', 'labels', 'comment'],
+        expand: 'changelog',
+        maxResults: pageSize,
+        ...(nextPageToken ? { nextPageToken } : {}),
+      };
+      const page = await json(
+        await api.asApp().requestJira(route`/rest/api/3/search/jql`, {
+          method: 'POST',
+          headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        }),
+        'history search',
+      );
+      return {
+        issues: (page.issues || []).map((issue) => ({
+          id: String(issue.id),
+          key: issue.key,
+          labels: issue.fields?.labels || [],
+          created: issue.fields?.created || null,
+          creator: issue.fields?.creator?.accountId || null,
+          histories: (issue.changelog?.histories || []).map((h) => ({ author: h.author?.accountId || null, created: h.created, items: h.items || [] })),
+          comments: (issue.fields?.comment?.comments || []).map((c) => ({ author: c.author?.accountId || null, created: c.created })),
+        })),
+        nextPageToken: page.nextPageToken || null,
+      };
+    },
+
     /** A project's display name. */
     async projectName(projectKey) {
       if (!PROJECT_KEY.test(projectKey)) return projectKey;

@@ -55,6 +55,11 @@ Every fact the app stores, and where in the code it is written:
 | Assignment changes (made by the assignee or someone else) and priority changes, as team counts | inside day buckets, 21 days | `src/lib/events.mjs`, `changelogTags` |
 | In-progress items flagged as impediments, as a team count | 91 days | `src/lib/openwork.mjs` |
 | Project and space display names, cached for the organisation view | 7 days | `src/app.mjs`, `teamName` |
+| When the app began counting a project or space (`firstSeen`) | one timestamp per team | `src/app.mjs`, `rememberScope` |
+| Quarterly evidence packs: the organisation's team-level figures, framework mapping and alphabetical list of teams that needed support | 3 years | `src/lib/evidence.mjs`, `snapshotEvidence` |
+| Organisation evidence settings: whether and when workers' representatives were consulted, the organisation name, the Confluence space for evidence pages | per product | `src/features/org.mjs`, `validateOrgSettings` |
+| Signed attestations of the organisation's level, and the installation's public key (the private key is in the secret store) | 3 years | `src/lib/attestation.mjs` |
+| Progress of a history backfill: issues read, actions counted | per team | `src/app.mjs`, `runBackfill` |
 
 ### What is never collected
 
@@ -88,7 +93,7 @@ switched on.
 
 ### What the app writes
 
-Two things, both off until an administrator turns them on:
+Two things, neither without an administrator's action:
 
 - **The weekly digest**: on the team's Monday, one Jira issue labelled
   `happy-company` in the project, or one blog post in the Confluence space,
@@ -96,9 +101,26 @@ Two things, both off until an administrator turns them on:
   trend, the three things, the use ban). It is visible to whoever can see
   the project or space, which is the same audience as the team page. Weeks
   with too few people are never posted.
-- **The quarterly evidence page** (Confluence), described in `ISO.md`.
+- **The quarterly evidence page** (Confluence), described in `ISO.md`:
+  published only when a site administrator presses "Publish", once per
+  closed quarter, into the space the administrator named. It holds
+  organisation-level figures and the alphabetical list of teams that needed
+  support; no person, pseudonym or per-person figure.
 
 The app's own posts are never counted as the team's work.
+
+### Filling in history (Jira, optional)
+
+A new installation otherwise shows nothing for a week. A project
+administrator can ask the app to read the last 21 days of the project's
+issue history: creations, changes and comments, of which the app keeps
+only who acted (as a pseudonym) and when, exactly as for live activity.
+Comment text and mentions are not read. Only activity from before the app
+began counting the project is taken, so nothing is counted twice, and it
+lands in the same 21-day day buckets and is deleted on the same schedule.
+Because it reaches back before the app was switched on, the agreement
+should say whether it is allowed (clause 10 below). The request is recorded
+in the audit trail with the administrator's pseudonym.
 
 ### The organisation view
 
@@ -134,6 +156,8 @@ personal data, not anonymous data, and it is treated as such below.
 | Sprint summaries (four numbers) | 182 days | deleted |
 | Time zone cache | 30 days | deleted |
 | People record (three dates per pseudonym) | while the person is active; a pseudonym unseen for 120 days is removed | removed (`FORGET_AFTER_DAYS`) |
+| Quarterly evidence packs and attestations (team-level figures only) | 3 years | deleted by the daily job |
+| Audit trail | 3 years | deleted by the daily job (`AUDIT_RETAIN_DAYS`) |
 | Everything | on uninstall | Atlassian removes the app's storage with the installation |
 
 ## 6. The rules that protect individuals
@@ -214,6 +238,15 @@ Numbered so they can be adopted as they are or struck one by one.
    to individuals has arisen. The council may terminate the use of the
    software with one month's notice.
 9. **Annex A: active signals.** (List from the settings screen.)
+10. **History.** Filling in the last 21 days from Jira history when a
+    project is first set up is [permitted / not permitted]. If permitted, it
+    is done only after this agreement takes effect, and employees are told
+    in the notice (§9) that the first card includes those three weeks.
+11. **Evidence and attestations.** The quarterly evidence pack and any
+    signed attestation of the organisation's level contain team-level
+    figures only and are used for the occupational health and safety
+    management system, management review and sustainability reporting. The
+    council receives each pack.
 
 ## 9. Notice to employees (one page)
 

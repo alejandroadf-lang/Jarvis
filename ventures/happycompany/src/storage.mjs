@@ -12,7 +12,12 @@
 //   settings:{scope}          quiet hours, weekend days, time zone
 //   tz:{pseudonym}            a cached time zone
 //   scopes                    the list of scopes with any data, for the rollup
+//   evidence:{product}:{YYYY-Qn}  a closed quarter's evidence pack
+//   attest:{product}:{YYYY-Qn}    a signed attestation of that quarter's level
+//   attestation:publicKey     the installation's attestation public key
+//   backfill:{scope}          progress of the Jira history backfill
 //   secret "salt"             the installation's pseudonym key
+//   secret "attestationKey"   the attestation private key
 
 export function forgeStore(kvs, WhereConditions) {
   return {

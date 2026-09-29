@@ -125,3 +125,42 @@ export function parseInstant(value) {
   const date = new Date(fixed);
   return Number.isNaN(date.getTime()) ? null : date;
 }
+
+/** "2026-Q3" for a day. */
+export function quarterOf(day) {
+  const [y, m] = day.split('-').map(Number);
+  return `${y}-Q${Math.ceil(m / 3)}`;
+}
+
+export function previousQuarter(q) {
+  const [, y, n] = /^(\d{4})-Q([1-4])$/.exec(q);
+  return Number(n) === 1 ? `${Number(y) - 1}-Q4` : `${y}-Q${Number(n) - 1}`;
+}
+
+/** First and last day of a quarter. */
+export function quarterRange(q) {
+  const [, y, n] = /^(\d{4})-Q([1-4])$/.exec(q);
+  const startMonth = (Number(n) - 1) * 3;
+  const first = new Date(Date.UTC(Number(y), startMonth, 1)).toISOString().slice(0, 10);
+  const last = new Date(Date.UTC(Number(y), startMonth + 3, 0)).toISOString().slice(0, 10);
+  return { first, last };
+}
+
+/** ISO weeks whose Thursday falls in the quarter (so each week belongs to exactly one quarter). */
+export function weeksOfQuarter(q) {
+  const { first, last } = quarterRange(q);
+  const out = [];
+  let week = isoWeek(first);
+  for (let guard = 0; guard < 16; guard++) {
+    const thursday = addDays(mondayOf(week), 3);
+    if (thursday > last) break;
+    if (thursday >= first) out.push(week);
+    week = isoWeek(addDays(mondayOf(week), 7));
+  }
+  return out;
+}
+
+export function nextQuarter(q) {
+  const [, y, n] = /^(\d{4})-Q([1-4])$/.exec(q);
+  return Number(n) === 4 ? `${Number(y) + 1}-Q1` : `${y}-Q${Number(n) + 1}`;
+}
