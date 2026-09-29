@@ -55,6 +55,7 @@ import { withdrawPlan, getApprovedPlan } from '../dailyPlan.js';
 import { listAffordableModels } from '../agents/openrouter.js';
 import { describeModelMode, setModelMode, getModelMode } from '../agents/models.js';
 import { listTasks } from '../tasks.js';
+import { describePerformance, describeAgent, KEEP_DAYS } from '../activityLog.js';
 import { describeDegradation } from '../degradation.js';
 import { isEvalRunning } from '../eval/run.js';
 import { deployReadiness, outreachReadiness, formatReadinessBrief } from '../readiness.js';
@@ -198,6 +199,11 @@ const LINK_GRANT = /^link\s+(v_\S+)\s+([\w.-]+\/[\w.-]+)(?:\s+(.+))?$/i;
 // path skips the gate, the same way LINK skips the pre-approval list, and the
 // gate keeps bounding the agents. The pipe is required: "start the Acme
 // rollout" is a sentence about work, not a new venture.
+// "agents", "agents 30", "performance": who actually worked, from the log the
+// runner writes (activityLog.js). "agent forge_engineer": one agent in detail.
+const AGENTS_REPORT = /^(?:agents|performance)(?:\s+(\d{1,3}))?$/i;
+const AGENT_DETAIL = /^agent\s+([a-z_]+)(?:\s+(\d{1,3}))?$/i;
+
 const START_VENTURE = /^start\s+([^|]+?)\s*\|\s*([\s\S]+)$/i;
 const MAX_TITLE = 80;
 const MAX_ONE_LINER = 300;
@@ -288,6 +294,11 @@ export function parseFounderCommand(text) {
       allowedPaths: paths.length ? paths : ['src/', '.github/workflows/'],
     };
   }
+
+  const report = raw.match(AGENTS_REPORT);
+  if (report) return { kind: 'agents', days: report[1] ? Number(report[1]) : 7 };
+  const detail = raw.match(AGENT_DETAIL);
+  if (detail) return { kind: 'agent', agentId: detail[1].toLowerCase(), days: detail[2] ? Number(detail[2]) : 7 };
 
   const start = raw.match(START_VENTURE);
   if (start) {
@@ -427,6 +438,9 @@ GRAPH — the company as a live picture, as a link
 EVAL [scenario] — grade the agents' judgment against the eval scenarios
 PLAN — today's plan (APPROVE / REJECT <reason> to decide it)
 PLAN CLEAR <reason> — withdraw clearance you already gave
+
+AGENTS [days] — which agents actually did work, which only advised, which sat idle
+AGENT <id> [days] — one agent: what it did, what was refused, and when
 
 START <title> | <one-liner> — start a venture yourself (the team's revenue gate does not apply to you)
 LINK <ventureId> <owner/repo> [paths] — grant a repo and turn deploys on
@@ -855,6 +869,25 @@ export async function runFounderCommand(command, deps = {}) {
     case 'issue_del': {
       removeIssue(command.id);
       return `Removed #${command.id}. ${listIssues().length} procedure(s) remain.`;
+    }
+
+    case 'agents':
+    case 'agent': {
+      const days = Math.min(Math.max(command.days || 7, 1), KEEP_DAYS);
+      const capped = command.days > KEEP_DAYS ? `\n\n(Activity is kept ${KEEP_DAYS} days, so this covers ${KEEP_DAYS}.)` : '';
+      if (command.kind === 'agent') {
+        return describeAgent(command.agentId, { days, ventureTitle: (id) => getVenture(id)?.title || id }) + capped;
+      }
+      // Two facts the per-agent lines cannot show: whether queued work is
+      // getting done, and what the day has cost.
+      const tasks = listTasks({ limit: 100000 });
+      const count = (status) => tasks.filter((t) => t.status === status).length;
+      const { spentUsd, capUsd } = getSpendSummary();
+      const extra = [
+        '',
+        `Queued work: ${count('done')} done, ${count('failed')} failed, ${count('queued') + count('running')} open. Model spend today: $${spentUsd.toFixed(2)} of $${capUsd.toFixed(2)}.`,
+      ];
+      return describePerformance({ days, extra }) + capped;
     }
 
     case 'start_venture': {

@@ -24,6 +24,7 @@
 
 import { agentSpan, toolSpan, newTraceId } from '../telemetry.js';
 import { recordSearchesFrom, recordSearch } from '../searchLog.js';
+import { recordActivity } from '../activityLog.js';
 import { getAgent } from './registry.js';
 import { assertUnderDailyCap, recordSpend } from '../spend.js';
 import { forAnthropic } from './toolTranslation.js';
@@ -641,6 +642,9 @@ export async function runAgent({
   // Resolved per agent rather than per run: a delegated specialist gets its
   // own line here, not the CEO's.
   const startedAt = Date.now();
+  // The turn's lead (the CEO answering the founder, the daily cycle's root):
+  // not consulted by anyone, so recorded here or it would look idle.
+  if (depth === 0) recordActivity({ agentId, kind: 'led' });
   // Leaves are the ones with no reports and no tools to call — the same
   // condition models.js already uses to decide what may run on a cheap tier.
   const isLeaf = (agent.reports || []).length === 0 && (agent.actions || []).length === 0;
@@ -781,8 +785,10 @@ export async function runAgent({
         if (resultText && resultText.trim()) {
           recordContribution({ agentId: report.id, kind: 'consulted', detail: `consulted by ${agent.id}` });
         }
+        recordActivity({ agentId: report.id, kind: 'consulted', ok: Boolean(resultText && resultText.trim()), ms: sub.durationMs ?? null });
         return { tool_use_id: toolUse.id, resultText };
       } catch (err) {
+        recordActivity({ agentId: reportId, kind: 'consulted', ok: false });
         return { tool_use_id: toolUse.id, resultText: `(Could not reach ${toolUse.name}: ${err.message})` };
       }
     });
@@ -853,6 +859,8 @@ export async function runAgent({
         // answer after the fact. `title` because the report views render trace
         // entries by title; no `id` so the graph's activity map, which counts
         // agents consulted, ignores it.
+        // Every action, done or refused, for the founder's AGENTS command.
+        recordActivity({ agentId: agent.id, kind: 'action', tool: toolUse.name, ok, ventureId: toolUse.input?.ventureId || null, ms: Date.now() - actionStarted });
         trace.push({
           kind: 'action',
           title: `${ok ? '⚙' : '⚠'} ${toolUse.name}`,
