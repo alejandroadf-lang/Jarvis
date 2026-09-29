@@ -47,17 +47,23 @@ test('the pilot manager drafts and never sends', () => {
   for (const forbidden of [...REACHES_OUT, ...WRITES_CODE]) assert.ok(!held.includes(forbidden), `pilot_manager holds ${forbidden}`);
 });
 
-test('the engineer ships through pull requests and verifies with checks, and reaches no one', () => {
+// deploy_code, deploy_changes and revert_commit all write to the venture's
+// deploy branch directly (actionHandlers.js); only open_pull_request works
+// on a branch of its own. So the engineer holds that one and none of the
+// others, which is what makes "the founder merges" true.
+test('the engineer ships only through pull requests, verifies with checks, and reaches no one', () => {
   const held = names('forge_engineer');
-  for (const needed of ['deploy_changes', 'open_pull_request', 'run_checks', 'list_checks', 'read_repo_file', 'queue_work', 'check_ready']) {
+  for (const needed of ['open_pull_request', 'run_checks', 'list_checks', 'read_repo_file', 'queue_work', 'check_ready']) {
     assert.ok(held.includes(needed), `forge_engineer lacks ${needed}`);
   }
-  for (const forbidden of [...REACHES_OUT, 'link_venture_repo', 'deploy_code']) assert.ok(!held.includes(forbidden), `forge_engineer holds ${forbidden}`);
+  for (const forbidden of [...REACHES_OUT, 'link_venture_repo', 'deploy_code', 'deploy_changes', 'revert_commit']) {
+    assert.ok(!held.includes(forbidden), `forge_engineer holds ${forbidden}, which commits straight to the deploy branch`);
+  }
 });
 
 test('shared tools are the originals, not copies that can drift', () => {
   const source = (agentId, name) => AGENTS[agentId].actions.find((a) => a.name === name);
-  assert.equal(AGENTS.forge_engineer.actions.find((a) => a.name === 'deploy_changes'), source('engineering_lead', 'deploy_changes'));
+  assert.equal(AGENTS.forge_engineer.actions.find((a) => a.name === 'open_pull_request'), source('engineering_lead', 'open_pull_request'));
   assert.equal(AGENTS.privacy_officer.actions.find((a) => a.name === 'read_repo_file'), source('engineering_lead', 'read_repo_file'));
   assert.equal(AGENTS.pilot_manager.actions.find((a) => a.name === 'draft_customer_email'), source('sales_commercial_manager', 'draft_customer_email'));
 });
@@ -76,7 +82,7 @@ test('the prompts keep the promises and the gates', () => {
     assert.match(p, /deleted after 21 days/);
     assert.match(p, /nothing leaves Atlassian/);
   }
-  assert.match(AGENTS.forge_engineer.systemPrompt, /The founder merges/);
+  assert.match(AGENTS.forge_engineer.systemPrompt, /the founder merges/);
   assert.match(AGENTS.forge_engineer.systemPrompt, /goes to the Privacy & Works-Council Officer/);
   assert.match(AGENTS.privacy_officer.systemPrompt, /STOP/);
   assert.match(AGENTS.privacy_officer.systemPrompt, /never\s+soften a real STOP/);

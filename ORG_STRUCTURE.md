@@ -658,7 +658,7 @@ thresholds current, and nobody ran pilots. So four roles joined
 
 | Role | Can | Cannot |
 |---|---|---|
-| Atlassian Forge Engineer (CTO) | read the repo, queue work, commit to a branch, open pull requests, run and read checks, revert, search Forge docs | send anything to anyone, link repos, merge |
+| Atlassian Forge Engineer (CTO) | read the repo, queue work, open pull requests, run and read checks, search Forge docs | commit to the deploy branch (it holds no `deploy_code`, `deploy_changes` or `revert_commit`), merge, link repos, send anything to anyone |
 | Privacy & Works-Council Officer (CTO) | read the repo, search regulators' guidance, record verdicts as venture notes | change code, write to anyone |
 | Occupational Health Researcher (CTO) | read the repo, search research and standards, record findings, queue concrete work for the engineer | change code, write to anyone |
 | Pilot & Partnerships Manager (COO) | find prospects and partners, keep the pipeline, read replies, draft outreach | send outreach (the founder releases every draft), change code |

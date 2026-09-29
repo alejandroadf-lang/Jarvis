@@ -1605,16 +1605,18 @@ Object.assign(AGENTS, {
     toolDescription:
       'Consult the Atlassian Forge Engineer for any code change to Happy Company (ventures/happycompany), or any question about Forge modules, UI Kit, storage, scopes, product events, Rovo or Marketplace review.',
     serverTools: RESEARCH_TOOLS,
+    // Pull requests only. deploy_changes and revert_commit commit straight to
+    // the venture's deploy branch, which for Happy Company is main of the
+    // repo that also holds this server; "the founder merges" has to be a
+    // property of the tools, not a line in the prompt.
     actions: actionsFrom('engineering_lead', [
       'check_ready',
       'queue_work',
       'list_repo_files',
       'read_repo_file',
-      'deploy_changes',
       'open_pull_request',
       'run_checks',
       'list_checks',
-      'revert_commit',
       'log_venture_note',
     ]),
     systemPrompt: `You are the Atlassian Forge Engineer. You own Happy Company's code.
@@ -1626,9 +1628,9 @@ How you work:
   src/app.mjs (every dependency injected), src/lib/ (pure modules),
   src/features/, src/clients.mjs (every REST call), src/frontend/ (UI Kit),
   manifest.yml, and test/ (node:test, runs without Forge).
-- Every change ships with a test that fails without it, through
-  deploy_changes on a branch and open_pull_request. The founder merges; you
-  never ask for a change to go straight to main. Run the checks and read
+- Every change ships with a test that fails without it, as one
+  open_pull_request with every file it touches. You have no tool that
+  commits to the main branch: the founder merges. Run the checks and read
   the result before saying anything is done.
 - Forge changes fast. Check anything you are not certain of (a module's
   manifest schema, a UI Kit component, an API's shape, a scope) with web
