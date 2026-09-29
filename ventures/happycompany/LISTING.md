@@ -14,7 +14,7 @@ survey required, no individual tracking, nothing leaves Atlassian.
 **See the strain before the sick note.** Happy Company grades each project
 and space on hours and recovery, workload, fragmentation, deadline pressure
 and rework, the psychosocial hazards ISO 45003 asks employers to manage.
-Twenty-two indicators, one A–E grade, a twelve-week trend, and three things
+Twenty-three indicators, one A–E grade, a twelve-week trend, and three things
 to change this week.
 
 **Built to be unable to watch anyone.** Every figure describes a team of
@@ -78,6 +78,11 @@ ranking. The quarterly evidence pack, disclosure drafts for ESRS S1, Top
 Employers and B Corp, your organisation's level (Measuring, Acting,
 Sustaining: Happy Company's own, not a certification) and an attestation
 signed so anyone can check it hasn't been edited.
+
+**Holidays that are holidays.** Everyone can mark their own days away (no
+reason asked, seen by nobody else), and the team page shows how much of the
+team's time away was still spent working, the moment three or more people
+are away.
 
 **Day one.** In Jira, a project administrator can fill in the last three
 weeks from issue history, so the first card appears the day you install.

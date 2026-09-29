@@ -6,6 +6,7 @@ import ForgeReconciler, {
   Box,
   Button,
   Checkbox,
+  DatePicker,
   Heading,
   Inline,
   Label,
@@ -40,6 +41,7 @@ const SIGNAL_LABELS = {
   longSpanShare: 'Long days',
   streakShare: 'People without a day off',
   noRestShare: 'People without a week away in three months',
+  awayWorkShare: 'Work on days marked away',
   concentration: 'Work concentrated on one person',
   overloadedShare: 'People carrying far more open work than the team',
   overdueShare: 'Overdue open work',
@@ -550,6 +552,88 @@ function Settings({ settings, indicatorKeys, onSaved }) {
   );
 }
 
+// Consecutive days as "2026-08-03 to 2026-08-14" ranges, for reading.
+function rangesOf(days) {
+  const out = [];
+  for (const d of days) {
+    const last = out[out.length - 1];
+    const next = last && new Date(Date.parse(`${last.to}T00:00:00Z`) + 86400000).toISOString().slice(0, 10);
+    if (last && next === d) last.to = d;
+    else out.push({ from: d, to: d });
+  }
+  return out;
+}
+
+// The person's own days away. Nobody else can see them; the team sees only
+// how much time away was still worked, with three or more people away.
+function MyAway() {
+  const [state, setState] = useState(null);
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [message, setMessage] = useState(null);
+  const load = () => invoke('myAway').then(setState).catch((err) => setMessage({ appearance: 'error', text: err.message }));
+  useEffect(() => {
+    load();
+  }, []);
+  const change = async (away, range) => {
+    try {
+      setState(await invoke('markAway', { ...range, away }));
+      setMessage({ appearance: 'success', text: away ? 'Marked. Enjoy the time off: nobody expects you here.' : 'Removed.' });
+      if (away) {
+        setFrom('');
+        setTo('');
+      }
+    } catch (err) {
+      setMessage({ appearance: 'error', text: err.message });
+    }
+  };
+  return (
+    <Stack space="space.200">
+      <Text>Mark the days you are away: holiday, leave, a training week. No reason is asked. Only you can see these days; not your manager, not administrators. The team page shows only how much of the team’s time away was still spent working here, and only when at least three people were away that week.</Text>
+      <Inline space="space.200" shouldWrap>
+        <Stack space="space.050">
+          <Label labelFor="hc-away-from">First day away</Label>
+          <DatePicker id="hc-away-from" value={from} onChange={(v) => setFrom(v || '')} />
+        </Stack>
+        <Stack space="space.050">
+          <Label labelFor="hc-away-to">Last day away</Label>
+          <DatePicker id="hc-away-to" value={to} onChange={(v) => setTo(v || '')} />
+        </Stack>
+      </Inline>
+      <Inline space="space.100">
+        <Button appearance="primary" isDisabled={!from} onClick={() => change(true, { from, to: to || from })}>
+          Mark as away
+        </Button>
+      </Inline>
+      {message && (
+        <SectionMessage appearance={message.appearance}>
+          <Text>{message.text}</Text>
+        </SectionMessage>
+      )}
+      <Heading size="xsmall">Your days away</Heading>
+      {!state ? (
+        <Text>Loading…</Text>
+      ) : state.days.length ? (
+        <List type="unordered">
+          {rangesOf(state.days).map((r) => (
+            <ListItem key={r.from}>
+              <Inline space="space.100" alignBlock="center" shouldWrap>
+                <Text>{r.from === r.to ? r.from : `${r.from} to ${r.to}`}</Text>
+                <Button appearance="subtle" onClick={() => change(false, r)}>
+                  Remove
+                </Button>
+              </Inline>
+            </ListItem>
+          ))}
+        </List>
+      ) : (
+        <Text>None marked.</Text>
+      )}
+      <Text>Past days are deleted after 21 days.</Text>
+    </Stack>
+  );
+}
+
 // Jira only: fill the last three weeks from issue history, once.
 function Backfill({ state, onDone }) {
   const [message, setMessage] = useState(null);
@@ -612,6 +696,7 @@ function App() {
         <Tab>{toClose ? `Actions (${toClose} to close)` : 'Actions'}</Tab>
         <Tab>Team pulse</Tab>
         <Tab>What we measure</Tab>
+        <Tab>My days away</Tab>
         <Tab>Settings</Tab>
       </TabList>
       <TabPanel>
@@ -641,6 +726,11 @@ function App() {
       <TabPanel>
         <Box padding="space.200">
           <WhatWeMeasure t={report.transparency} />
+        </Box>
+      </TabPanel>
+      <TabPanel>
+        <Box padding="space.200">
+          <MyAway />
         </Box>
       </TabPanel>
       <TabPanel>

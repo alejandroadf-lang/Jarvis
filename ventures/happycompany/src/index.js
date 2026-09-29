@@ -61,6 +61,11 @@ resolver.define('closeAction', ({ payload, context }) =>
   app.closeAction({ ...placeOf(context), week: payload?.week, key: payload?.key, done: payload?.done }),
 );
 resolver.define('freezeWeek', ({ context }) => app.freezeWeek(placeOf(context)));
+// Days away: always the signed-in person's own, never anyone else's.
+resolver.define('myAway', ({ context }) => app.myAway({ accountId: context?.accountId || null }));
+resolver.define('markAway', ({ payload, context }) =>
+  app.markAway({ accountId: context?.accountId || null, from: payload?.from, to: payload?.to, away: payload?.away !== false }),
+);
 resolver.define('requestBackfill', ({ context }) => app.requestBackfill({ ...placeOf(context), by: context?.accountId || null }));
 
 // The organisation view. Only its own page may call these, and the viewer

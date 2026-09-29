@@ -61,6 +61,7 @@ Every fact the app stores, and where in the code it is written:
 | Signed attestations of the organisation's level, and the installation's public key (the private key is in the secret store) | 3 years | `src/lib/attestation.mjs` |
 | Progress of a history backfill: issues read, actions counted | per team | `src/app.mjs`, `runBackfill` |
 | Per team per closed quarter: mean grade score, graded weeks, weeks at D or E | 3 years | `src/app.mjs`, `snapshotEvidence` |
+| Days a person marked themselves as away, under their pseudonym, with no reason or type; visible only to that person | until 21 days after the day | `src/lib/away.mjs`, `markAway` |
 | **Only if the employer imports them:** per team per closed quarter, headcount, sickness absence rate (one decimal) and number of leavers, as pasted from the HR system; teams under 10 people refused and never stored | 3 years | `src/lib/outcomes.mjs`, `parseOutcomes` |
 
 ### What is never collected
@@ -71,6 +72,8 @@ Every fact the app stores, and where in the code it is written:
 - Anything from Slack, Teams, e-mail, calendars or any system outside Jira
   and Confluence. The app has no network access outside Atlassian.
 - Anything about people who merely view the page.
+- Why anyone is away. The "My days away" tab has one kind of day, away,
+  and no field for a reason; sickness is never asked.
 
 ### The optional team pulse
 
@@ -195,6 +198,7 @@ personal data, not anonymous data, and it is treated as such below.
 | People record (three dates per pseudonym) | while the person is active; a pseudonym unseen for 120 days is removed | removed (`FORGET_AFTER_DAYS`) |
 | Quarterly evidence packs and attestations (team-level figures only) | 3 years | deleted by the daily job |
 | Per-team quarter scores and imported absence and leaver figures | 3 years | deleted by the daily job |
+| Days marked away | 21 days after the day | trimmed by the daily job; future days kept until they pass |
 | Audit trail | 3 years | deleted by the daily job (`AUDIT_RETAIN_DAYS`) |
 | Everything | on uninstall | Atlassian removes the app's storage with the installation |
 
@@ -216,7 +220,7 @@ personal data, not anonymous data, and it is treated as such below.
    health page in the project or space it describes. Nothing is sent
    anywhere: the app declares no remote endpoints and no egress permission,
    which is what Atlassian's "Runs on Atlassian" badge certifies.
-6. **Per-signal switches.** Each of the twenty-two indicators can be switched
+6. **Per-signal switches.** Each of the twenty-three indicators can be switched
    off by a project administrator; a switched-off indicator leaves the score
    and its data is still counted only as part of the team totals.
 

@@ -38,6 +38,7 @@ export function transparency({ minGroup = 5, disabled = {} } = {}) {
       'Per-person counts are deleted after 21 days. Team figures are kept for 26 weeks; quarterly evidence summaries, which contain team and organisation figures only, for 3 years.',
       'Nothing leaves Atlassian. The app makes no outside connections.',
       'Administrators can switch any signal off. Switched-off signals are listed nowhere and scored nowhere.',
+      'Days you mark as away are seen by you alone. The team page shows only how much of the team’s time away was still worked, and only when at least three people were away that week.',
     ],
     useBan: USE_BAN,
     limits: 'This page sees the part of work that lands in Jira and Confluence. Workload from meetings, chat and email, and how people treat each other, are invisible to it. The optional team pulse asks about those directly.',

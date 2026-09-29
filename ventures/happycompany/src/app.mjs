@@ -41,6 +41,7 @@ import { sprintSummary, sprintMetricsForWeek, SPRINT_LOOKBACK_DAYS, SPRINT_FALLB
 import { buildEvidence, evidenceMarkdown, evidenceHtml } from './lib/evidence.mjs';
 import { disclosures } from './lib/disclosures.mjs';
 import { organisationLevel } from './lib/levels.mjs';
+import { daysInRange, updateAway, awayWorkStats } from './lib/away.mjs';
 import { parseOutcomes, outcomeSummary, predictiveCheck, strainGap } from './lib/outcomes.mjs';
 import { newKeyPair, keyId, signAttestation, attestationPayload } from './lib/attestation.mjs';
 
@@ -334,6 +335,16 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
     const record = (await store.get(`people:${scope}`)) || {};
     const activeThisWeek = Object.keys(activeDaysByPerson(rows));
     metrics.noRestShare = noRestShare(record, activeThisWeek, lastDay);
+    // Work on days people marked away (src/lib/away.mjs). Only the share
+    // leaves this function, and only with three or more people away.
+    const awayByPerson = {};
+    // The team's people: the long-term record, plus anyone active in the
+    // 21-day window, since someone away all week is not active in it.
+    for (const who of new Set([...Object.keys(record), ...Object.keys(byPerson), ...activeThisWeek])) {
+      const marked = await store.get(`away:${who}`);
+      if (marked?.length) awayByPerson[who] = marked;
+    }
+    metrics.awayWorkShare = awayWorkStats(rows, awayByPerson, weekDays.filter((d) => d <= lastDay), settings).awayWorkShare;
     return metrics;
   }
 
@@ -596,6 +607,31 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
     const name = await teamName(scope, product);
     if (!known) return { team: name, status: 'not counted', says: 'Happy Company has not counted any activity here yet. Open the Team health page in the project or space to start.' };
     return briefOf(await teamHealth({ scope, product }), name);
+  }
+
+  // ## Days away, marked by each person for themselves
+  //
+  // Keyed by the person's pseudonym, never read for anyone but the person
+  // asking (the account id comes from Forge's context, not the request), and
+  // not audited: an audit line per person would itself be a record of who
+  // was away.
+
+  async function myAway({ accountId }) {
+    if (!accountId) throw new Error('Sign in to mark days away.');
+    const today = todayUtc();
+    const days = (await store.get(`away:${pseudonym(accountId, await salt())}`)) || [];
+    return { days: days.filter((d) => d >= addDays(today, -RETAIN_DAYS)), today };
+  }
+
+  async function markAway({ accountId, from, to, away = true }) {
+    if (!accountId) throw new Error('Sign in to mark days away.');
+    const today = todayUtc();
+    const key = `away:${pseudonym(accountId, await salt())}`;
+    const range = daysInRange(from, to, today);
+    const days = updateAway(await store.get(key), away ? { add: range } : { remove: range }, today);
+    if (days.length) await store.set(key, days);
+    else await store.delete(key);
+    return { days, today };
   }
 
   async function answerPulse({ scope, product, accountId, answers }) {
@@ -1187,6 +1223,16 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
       }
     }
     summary.deleted += await expire('tz:', (_k, v) => !v?.until || v.until <= today);
+    // Marked days older than the day buckets they are compared with go too.
+    await step('away', 'retention', async () => {
+      for (const { key, value } of await store.list('away:')) {
+        const kept = updateAway(value, {}, today);
+        if (!kept.length) {
+          await store.delete(key);
+          summary.deleted += 1;
+        } else if (kept.length !== value.length) await store.set(key, kept);
+      }
+    });
     // Packs and attestations are kept as long as the audit trail.
     const oldestQuarterKept = quarterOf(addDays(today, -AUDIT_RETAIN_DAYS));
     summary.deleted += await expire('evidence:', (k) => k.slice(-7) < oldestQuarterKept);
@@ -1217,6 +1263,8 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
     teamName,
     evidenceView,
     importOutcomes,
+    myAway,
+    markAway,
     teamBrief,
     requestBackfill,
     issueAttestation,

@@ -71,12 +71,12 @@ export function publicMetrics(metrics, minGroup = MIN_GROUP) {
     total, contributors, personDays, afterHoursShare, lateShare, weekendShare, topShare, hhi,
     longSpanShare, burstyShare, itemsMedian, mentionsPerPersonDay, mentionTopShare, reopenRate, dueMoves,
     streakShare, noRestShare, carryOverShare, unplannedShare, inflowRatio, loadSurge, dueMoveRate, kinds,
-    reprioritisationRate, selfAssignedShare, soloShare,
+    reprioritisationRate, selfAssignedShare, soloShare, awayWorkShare,
   } = metrics;
   return {
     suppressed: false, total, contributors, personDays, afterHoursShare, lateShare, weekendShare, topShare, hhi,
     longSpanShare, burstyShare, itemsMedian, mentionsPerPersonDay, mentionTopShare, reopenRate, dueMoves: dueMoves || 0,
-    streakShare: streakShare ?? null, noRestShare: noRestShare ?? null,
+    streakShare: streakShare ?? null, noRestShare: noRestShare ?? null, awayWorkShare: awayWorkShare ?? null,
     carryOverShare: carryOverShare ?? null, unplannedShare: unplannedShare ?? null,
     inflowRatio: inflowRatio ?? null, loadSurge: loadSurge ?? null, dueMoveRate: dueMoveRate ?? null,
     reprioritisationRate: reprioritisationRate ?? null, selfAssignedShare: selfAssignedShare ?? null, soloShare: soloShare ?? null,
