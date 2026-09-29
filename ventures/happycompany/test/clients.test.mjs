@@ -167,3 +167,17 @@ test('recent history: one page of issues reduced to who acted and when, key chec
   assert.equal(sent.nextPageToken, 'p1');
   await assert.rejects(jiraClient(api, route).recentHistory('OPS" OR x'), /refusing/);
 });
+
+test('can the asker see it: asks as the user, and anything but a 200 is no', async () => {
+  const calls = [];
+  const api = fakeApi([{ path: '/rest/api/3/project/OPS', body: {} }, { path: '/wiki/api/v2/spaces/42', body: {} }], calls);
+  assert.equal(await jiraClient(api, route).userCanSeeProject('OPS'), true);
+  assert.equal(await jiraClient(api, route).userCanSeeProject('WEB'), false);
+  assert.equal(await jiraClient(api, route).userCanSeeProject('bad key'), false);
+  assert.equal(await confluenceClient(api, route).userCanSeeSpace('42'), true);
+  assert.equal(await confluenceClient(api, route).userCanSeeSpace('43'), false);
+  assert.equal(await confluenceClient(api, route).userCanSeeSpace('../1'), false);
+  const throwing = { asUser: () => ({ requestJira: async () => { throw new Error('no user'); }, requestConfluence: async () => { throw new Error('no user'); } }) };
+  assert.equal(await jiraClient(throwing, route).userCanSeeProject('OPS'), false);
+  assert.equal(await confluenceClient(throwing, route).userCanSeeSpace('42'), false);
+});

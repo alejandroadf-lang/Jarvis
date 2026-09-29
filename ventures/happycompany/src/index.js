@@ -10,6 +10,7 @@ import { forgeStore } from './storage.mjs';
 import { jiraClient, confluenceClient } from './clients.mjs';
 import { scopeFromExtension } from './lib/events.mjs';
 import { eventShape, shapeLoggingOn } from './lib/shape.mjs';
+import { createRovoActions } from './rovo.mjs';
 
 // Development only: see src/lib/shape.mjs. Structure, never values.
 function logShape(event) {
@@ -89,3 +90,8 @@ resolver.define('publishEvidence', async ({ payload, context }) =>
 resolver.define('estimateCost', async ({ payload, context }) => app.estimateCost({ ...(await viewerOf(context)), inputs: payload?.inputs }));
 
 export const handler = resolver.getDefinitions();
+
+// Rovo: the Happy Company agent's two read-only actions (see src/rovo.mjs).
+const rovo = createRovoActions({ app, jira: jiraApi, confluence: confluenceApi });
+export const rovoTeamHealth = (payload) => rovo.teamHealth(payload);
+export const rovoWhatWeMeasure = () => rovo.whatWeMeasure();

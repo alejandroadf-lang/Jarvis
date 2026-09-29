@@ -24,6 +24,7 @@ import { scorecard, trend, publicValue, INDICATOR_KEYS } from './lib/score.mjs';
 import { pathToNextGrade } from './lib/progress.mjs';
 import { earnedBadges, actionStreak } from './lib/badges.mjs';
 import { transparency } from './lib/transparency.mjs';
+import { briefOf } from './lib/brief.mjs';
 import { createActions } from './features/actions.mjs';
 import { createAudit, AUDIT_RETAIN_DAYS } from './features/audit.mjs';
 import { createDigest } from './features/digest.mjs';
@@ -581,6 +582,19 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
     const entry = ((await store.get('scopes')) || []).find((s) => s.scope === scope);
     const available = Boolean(entry?.firstSeen) && entry.firstSeen >= addDays(todayUtc(), -BACKFILL_DAYS);
     return { status: available ? 'available' : 'unavailable', days: BACKFILL_DAYS };
+  }
+
+  /**
+   * The Rovo agent's view of one team: what the team page shows, condensed.
+   * The caller has already checked that the person asking can see the
+   * project or space. A team the app has never counted is not added to the
+   * rollup by being asked about.
+   */
+  async function teamBrief({ scope, product }) {
+    const known = ((await store.get('scopes')) || []).some((s) => s.scope === scope);
+    const name = await teamName(scope, product);
+    if (!known) return { team: name, status: 'not counted', says: 'Happy Company has not counted any activity here yet. Open the Team health page in the project or space to start.' };
+    return briefOf(await teamHealth({ scope, product }), name);
   }
 
   async function answerPulse({ scope, product, accountId, answers }) {
@@ -1147,6 +1161,7 @@ export function createApp({ store, jira = null, confluence = null, now = () => n
     allTeams,
     teamName,
     evidenceView,
+    teamBrief,
     requestBackfill,
     issueAttestation,
     publishEvidence,
