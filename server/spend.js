@@ -12,6 +12,7 @@
 // resets with the UTC day, matching how every other date-keyed store in this
 // app (daily reports, weekly reflections) already thinks about "a day".
 
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { readJson, writeJson } from './store.js';
 import { formatUsd } from './usage.js';
 
@@ -24,6 +25,20 @@ function load() {
   // is defaulted rather than assumed — an older ledger keeps its dollar
   // history and simply reports no cache figures for those days.
   return readJson(FILE, { days: {}, cache: {} });
+}
+
+// Where spend came from, without threading two arguments through every call.
+//
+// The ledger knew what a day cost and nothing about why: a $8 day could be the
+// morning meeting, the Studio, the pitch, or forty WhatsApp messages, and every
+// cut made was a guess. So the entry points name their source
+// (withSpendContext({source: 'meeting'}, ...)) and the runner names the agent,
+// and recordSpend, which every paid call already passes through, reads them.
+// Anything unnamed is 'chat': the founder talking to the company.
+const spendContext = new AsyncLocalStorage();
+
+export function withSpendContext(patch, fn) {
+  return spendContext.run({ ...(spendContext.getStore() || {}), ...patch }, fn);
 }
 
 function dayKey(date = new Date()) {
@@ -39,6 +54,26 @@ export function dailyCapUsd() {
 export function spendByDay(days = 7, now = new Date()) {
   const since = dayKey(new Date(now.getTime() - (days - 1) * 24 * 60 * 60 * 1000));
   return Object.fromEntries(Object.entries(load().days).filter(([day]) => day >= since));
+}
+
+/**
+ * Where the last `days` days of spend went: [[name, usd]] by source (meeting,
+ * studio, pitch, session, weekly, chat) and by agent, largest first. Only
+ * spend recorded since attribution began is here, so the total can be less
+ * than spendByDay's.
+ */
+export function spendBreakdown(days = 7, now = new Date()) {
+  const since = dayKey(new Date(now.getTime() - (days - 1) * 24 * 60 * 60 * 1000));
+  const bySource = {};
+  const byAgent = {};
+  for (const [day, entry] of Object.entries(load().by || {})) {
+    if (day < since) continue;
+    for (const [name, usd] of Object.entries(entry.source)) bySource[name] = (bySource[name] || 0) + usd;
+    for (const [name, usd] of Object.entries(entry.agent)) byAgent[name] = (byAgent[name] || 0) + usd;
+  }
+  const sorted = (o) => Object.entries(o).sort((a, b) => b[1] - a[1]);
+  const total = Object.values(bySource).reduce((a, b) => a + b, 0);
+  return { total, bySource: sorted(bySource), byAgent: sorted(byAgent) };
 }
 
 export function getSpendToday() {
@@ -78,6 +113,13 @@ export function recordSpend(usd, tokens = {}) {
   const key = dayKey();
   data.days[key] = (data.days[key] || 0) + usd;
 
+  const { source = 'chat', agentId = 'unknown' } = spendContext.getStore() || {};
+  data.by = data.by || {};
+  const today = data.by[key] || { source: {}, agent: {} };
+  today.source[source] = (today.source[source] || 0) + usd;
+  today.agent[agentId] = (today.agent[agentId] || 0) + usd;
+  data.by[key] = today;
+
   const write = Number(tokens.cacheWriteTokens) || 0;
   const read = Number(tokens.cacheReadTokens) || 0;
   if (write || read) {
@@ -94,6 +136,9 @@ export function recordSpend(usd, tokens = {}) {
   }
   for (const day of Object.keys(data.cache || {})) {
     if (day < cutoff) delete data.cache[day];
+  }
+  for (const day of Object.keys(data.by || {})) {
+    if (day < cutoff) delete data.by[day];
   }
 
   writeJson(FILE, data);

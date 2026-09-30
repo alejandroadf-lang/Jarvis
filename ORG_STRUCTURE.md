@@ -744,7 +744,7 @@ Two changes (`server/workSession.js`, `server/dailyMeeting.js`):
   the Founder Can Make" (at most three, each with the default the team goes
   ahead with inside its granted scope), not a list of recommendations. A quiet
   morning sets an objective instead of waiting to be told.
-- **Work sessions run between meetings.** `WORK_SESSIONS_PER_DAY` (default 2,
+- **Work sessions run between meetings.** `WORK_SESSIONS_PER_DAY` (default 1,
   at most 5, 0 turns them off) unattended sessions run 4 hours apart after the
   08:00 meeting. Each picks the venture the founder's split is furthest behind
   on (equal shares when no split is set, so an untouched venture comes first),
@@ -758,7 +758,9 @@ the approved plan still gates direct commits, the caps and the outreach
 allowlist still apply, and `log_revenue`, `kill_venture` and `link_venture_repo`
 stay barred. Pull requests need no plan, so a venture set to `REVIEW ON` moves
 every day with no approval and lands nothing until the founder merges. Cost is
-bounded three ways: the per-day count, the daily spend cap checked before each
+bounded four ways: the per-day count, a dollar budget for the session itself
+(`WORK_SESSION_BUDGET_USD`, default $1: once spent, nobody else is consulted
+and the CTO answers with what it has), the daily spend cap checked before each
 session, and a backoff: two sessions in a row that produced no work stop the
 loop until the next daily meeting, so a stuck team does not retry the same
 wall on the budget. A session counts as work only if a tool that changes
@@ -767,6 +769,39 @@ something succeeded (`WORK_TOOLS`); reading a file does not.
 Each skip says what to change ("WORK_SESSIONS_PER_DAY is 0", "RESUME lifts
 it", "LINK a repo, then DEPLOY ON <ventureId>") in the server log. What the
 sessions did is in `AGENTS` and `CAPACITY`, and in the pull requests.
+
+### What it costs, and where it goes
+
+Model spend was a number with no cause: `SPEND` said what a day cost, and a
+$8 day could be the meeting, the Studio, the pitch, or forty messages. Every
+paid call now records which part of the company made it (`meeting`, `studio`,
+`pitch`, `session`, `weekly`, or `chat` for the founder talking to it) and
+which agent, and `SPEND` prints the last seven days by part and the five most
+expensive agents (`server/spend.js`, `spendBreakdown`). Only spend since this
+began is attributed.
+
+Three things were spending money for nothing, and are fixed:
+
+- **The Studio paid for ideas it then refused.** While an active venture has
+  recurring revenue under `STUDIO_MIN_MRR_USD` (default 1000) the studio gate
+  refuses every proposal, but the Studio (six agents, web search) still ran on
+  every wide morning. It is now skipped while the gate is closed.
+- **Every morning was a wide sync.** The full fan-out (26 agents) ran whenever
+  anything "moved", and moved included the team queueing and finishing its own
+  tasks and writing venture notes, and an approved plan being live, which lasts
+  until replaced. With work sessions doing exactly that all day, it would have
+  been wide daily. Now only things outside the team's routine make it wide:
+  commits and emails that reached the world, failed tasks or CI runs, a service
+  down, money, a venture started or killed, a plan waiting on the founder, or
+  seven days since the last one (`FULL_SYNC_MAX_GAP_DAYS`).
+- **Work sessions defaulted to two.** One now, each with its own dollar budget.
+
+What is left is a choice, not a leak: models. Managers and every agent with a
+tool run on Claude Sonnet ($2 in, $10 out per million tokens) unless
+`AGENT_MODEL_TIERS` or `MODE ECO` moves them, and `MODE ECO` only saves money
+when a cheaper provider has a key (`DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`).
+`DAILY_PITCH=false` turns the morning pitch off; `DAILY_SPEND_CAP_USD` is the
+hard stop for the day.
 
 ## Four roles for Happy Company
 

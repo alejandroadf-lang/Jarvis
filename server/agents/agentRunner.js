@@ -26,7 +26,7 @@ import { agentSpan, toolSpan, newTraceId } from '../telemetry.js';
 import { recordSearchesFrom, recordSearch } from '../searchLog.js';
 import { recordActivity } from '../activityLog.js';
 import { getAgent } from './registry.js';
-import { assertUnderDailyCap, recordSpend } from '../spend.js';
+import { assertUnderDailyCap, recordSpend, withSpendContext } from '../spend.js';
 import { forAnthropic } from './toolTranslation.js';
 import { priceUsage, emptyUsage } from '../usage.js';
 import {
@@ -630,6 +630,13 @@ export async function runAgent({
   // nothing useful, while stopping it from consulting three more people
   // produces a shorter answer to the same question.
   deadlineAt = null,
+  // A dollar ceiling for this whole run, shared by the tree like the deadline.
+  // Checked between rounds, so a round already paid for finishes and the agent
+  // is then asked to answer with what it has; a specialist reached after the
+  // budget is spent is not consulted at all. It exists for unattended runs
+  // (work sessions), where the daily cap is a backstop for the day and nothing
+  // bounds one session's share of it.
+  budgetUsd = null,
   // One id per turn, shared by every span it produces, so a fan-out reads as
   // one trace rather than twenty unrelated ones.
   otelTraceId = newTraceId(),
@@ -701,15 +708,22 @@ export async function runAgent({
       ranOutOfTime = true;
       break;
     }
+    if (budgetUsd && (usage.costUsd || 0) >= budgetUsd) {
+      ranOutOfTime = true;
+      if (round === 0 && depth > 0) finalText = "(Not consulted: this run's budget is spent.)";
+      break;
+    }
 
-    const response = await createMessage(anthropic, modelSpec, {
-      max_tokens: tokenBudget,
-      system,
-      messages: working,
-      effort: isLeaf ? LEAF_EFFORT : ORCHESTRATOR_EFFORT,
-      ...mcpFields,
-      ...(tools.length ? { tools } : {}),
-    });
+    const response = await withSpendContext({ agentId: agent.id }, () =>
+      createMessage(anthropic, modelSpec, {
+        max_tokens: tokenBudget,
+        system,
+        messages: working,
+        effort: isLeaf ? LEAF_EFFORT : ORCHESTRATOR_EFFORT,
+        ...mcpFields,
+        ...(tools.length ? { tools } : {}),
+      }),
+    );
 
     addUsage(usage, response);
 
@@ -768,6 +782,7 @@ export async function runAgent({
           // fan-out of its own with two seconds left is how a turn that was
           // supposed to take two minutes takes six.
           deadlineAt,
+          budgetUsd,
         });
         const resultText = sub.text;
         trace.push({
@@ -895,19 +910,21 @@ export async function runAgent({
   // the tools removed turns "I can't" into the answer it already had.
   if (!finalText) {
     try {
-      const closing = await createMessage(anthropic, modelSpec, {
-        max_tokens: tokenBudget,
-        system,
-        messages: [
-          ...working,
-          {
-            role: 'user',
-            content:
-              'Answer now, in full, using what you already have. Do not consult anyone else — ' +
-              'summarise what you have gathered and give your recommendation.',
-          },
-        ],
-      });
+      const closing = await withSpendContext({ agentId: agent.id }, () =>
+        createMessage(anthropic, modelSpec, {
+          max_tokens: tokenBudget,
+          system,
+          messages: [
+            ...working,
+            {
+              role: 'user',
+              content:
+                'Answer now, in full, using what you already have. Do not consult anyone else — ' +
+                'summarise what you have gathered and give your recommendation.',
+            },
+          ],
+        }),
+      );
       addUsage(usage, closing);
       finalText = (closing.content || [])
         .filter((block) => block.type === 'text')

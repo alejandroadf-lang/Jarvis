@@ -202,3 +202,13 @@ test('a session runs with the same handlers as the meeting, so no gate is loosen
     assert.ok(!handlers.includes(barred), `${barred} stays barred unattended`);
   }
 });
+
+test('a session is limited to one a day by default, with a dollar budget of its own', () => {
+  assert.equal(ws.workSessionsPerDay(), 1, 'the default was 2, chosen without a budget conversation');
+  assert.equal(ws.workSessionBudgetUsd(), 1);
+  process.env.WORK_SESSION_BUDGET_USD = '2.5';
+  assert.equal(ws.workSessionBudgetUsd(), 2.5);
+  process.env.WORK_SESSION_BUDGET_USD = '-3';
+  assert.equal(ws.workSessionBudgetUsd(), 1, 'nonsense falls back rather than removing the ceiling');
+  delete process.env.WORK_SESSION_BUDGET_USD;
+});

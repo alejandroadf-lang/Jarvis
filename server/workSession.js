@@ -34,7 +34,7 @@ import { listVentures, getFocus } from './finance/ventures.js';
 import { dailyCycleActionHandlers } from './dailyMeeting.js';
 import { isDailyMeetingRunning, TARGET_UTC_HOUR } from './scheduler.js';
 import { getKillSwitch } from './killSwitch.js';
-import { dailyCapUsd, getSpendToday } from './spend.js';
+import { dailyCapUsd, getSpendToday, withSpendContext } from './spend.js';
 import { listActivity } from './activityLog.js';
 import { getLatestDailyReport } from './dailyReports.js';
 import { readJson, updateJson } from './store.js';
@@ -42,7 +42,13 @@ import { readFounderSteering } from './workspace/vault.js';
 
 const FILE = 'workSessions.json';
 const DAY_MS = 24 * 60 * 60 * 1000;
-const DEFAULT_PER_DAY = 2;
+// One a day by default. Two was chosen without a budget conversation and, with
+// the meeting, doubled what the unattended team could spend; raise it once the
+// SPEND breakdown shows what one session costs.
+const DEFAULT_PER_DAY = 1;
+// A session's own ceiling, so one build that keeps reading files cannot eat
+// the day's cap. WORK_SESSION_BUDGET_USD overrides it.
+const DEFAULT_SESSION_BUDGET_USD = 1;
 const MAX_PER_DAY = 5;
 // Sessions start this many hours apart, after the daily meeting.
 const SLOT_GAP_HOURS = 4;
@@ -64,13 +70,19 @@ export const WORK_TOOLS = new Set([
   'log_venture_note',
 ]);
 
+/** Dollars one session may spend: WORK_SESSION_BUDGET_USD, default $1. */
+export function workSessionBudgetUsd() {
+  const n = Number(process.env.WORK_SESSION_BUDGET_USD);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_SESSION_BUDGET_USD;
+}
+
 let running = false;
 
 export function isWorkSessionRunning() {
   return running;
 }
 
-/** Sessions per day: WORK_SESSIONS_PER_DAY, default 2, 0 turns them off, at most 5. */
+/** Sessions per day: WORK_SESSIONS_PER_DAY, default 1, 0 turns them off, at most 5. */
 export function workSessionsPerDay() {
   const raw = process.env.WORK_SESSIONS_PER_DAY;
   if (raw === undefined || raw.trim() === '') return DEFAULT_PER_DAY;
@@ -183,15 +195,18 @@ export async function runWorkSession({ anthropic, now = new Date() }) {
   try {
     const repoManifests = await buildRepoManifests().catch(() => '');
     const steering = await readFounderSteering().catch(() => '');
-    const reply = await runAgent({
-      anthropic,
-      agents: COMPANY_AGENTS,
-      agentId: 'cto',
-      messages: [{ role: 'user', content: workSessionKickoff(venture, { now }) }],
-      actionHandlers: dailyCycleActionHandlers(),
-      extraContext: [buildCompanyContext(), steering].filter(Boolean).join('\n\n'),
-      perAgentContext: (agentId) => buildPerAgentContext(agentId, { repoManifests }),
-    });
+    const reply = await withSpendContext({ source: 'session' }, () =>
+      runAgent({
+        anthropic,
+        agents: COMPANY_AGENTS,
+        agentId: 'cto',
+        messages: [{ role: 'user', content: workSessionKickoff(venture, { now }) }],
+        actionHandlers: dailyCycleActionHandlers(),
+        extraContext: [buildCompanyContext(), steering].filter(Boolean).join('\n\n'),
+        perAgentContext: (agentId) => buildPerAgentContext(agentId, { repoManifests }),
+        budgetUsd: workSessionBudgetUsd(),
+      }),
+    );
     entry.summary = String(reply?.text ?? reply ?? '').slice(0, 600);
   } catch (err) {
     entry.error = String(err?.message || err).slice(0, 300);

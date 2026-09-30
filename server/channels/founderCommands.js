@@ -24,7 +24,7 @@
 import { pendingDrafts, releasableDrafts, getDraft, approveDraft, rejectDraft } from '../outreachDrafts.js';
 import { listSearches, searchBalance } from '../searchLog.js';
 import { haltRealActions, resumeRealActions } from '../killSwitch.js';
-import { getSpendSummary } from '../spend.js';
+import { getSpendSummary, spendBreakdown } from '../spend.js';
 import {
   listVentures,
   getVenture,
@@ -356,6 +356,19 @@ export function parseFounderCommand(text) {
   return null;
 }
 
+// Top of the spend breakdown as a phone message: the sources first (meeting,
+// studio, pitch, session, weekly, chat), then the five most expensive agents.
+function describeSpendBreakdown({ total, bySource, byAgent }) {
+  if (!total) return 'Where it goes: nothing attributed yet. From the next turn, SPEND shows which part of the company spends what.';
+  const usd = (n) => `$${n.toFixed(2)}`;
+  const share = (n) => `${Math.round((n / total) * 100)}%`;
+  const line = ([name, n]) => `${name} ${usd(n)} (${share(n)})`;
+  return (
+    `Last 7 days by part: ${bySource.map(line).join(', ')}.\n` +
+    `By agent: ${byAgent.slice(0, 5).map(line).join(', ')}.`
+  );
+}
+
 function describeVenture(venture) {
   const repo = venture.repo
     ? `${venture.repo.owner}/${venture.repo.name} (${venture.repo.enabled ? 'deploy ON' : 'deploy off'}${venture.repo.reviewOnly ? ', pull requests only' : ''})`
@@ -548,7 +561,10 @@ export async function runFounderCommand(command, deps = {}) {
       const degraded = describeDegradation();
       // Next to the number it changes, so a high one points at the lever.
       const mode = `Model mode: ${getModelMode().toUpperCase()}. MODE ECO runs every agent it can on the cheapest provider.`;
-      return [headline + cacheLine, mode, degraded].filter(Boolean).join('\n\n');
+      // Where it went, so the next cut is chosen from numbers. Last seven days,
+      // and only since spend began being attributed.
+      const where = describeSpendBreakdown(spendBreakdown(7));
+      return [headline + cacheLine, where, mode, degraded].filter(Boolean).join('\n\n');
     }
 
     case 'ventures': {
