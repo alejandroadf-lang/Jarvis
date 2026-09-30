@@ -1203,6 +1203,18 @@ and offered like the library's own (it can never take a library skill's name).
 Notes you drop in `Library/` are summarised weekly, as data, into
 `Company/Library Notes/`; a note with `origin: web` goes to quarantine.
 
+Once a day the server also fetches the source pages listed on each rule page
+(the "Sources" section) and compares them with the last look. When one changes,
+the rule's status becomes `source-changed`, it shows on `Today.md`, and you get
+one WhatsApp message; the detail (what the page now says differently) is in
+`Inbox/untrusted/`, screened line by line, because text from a web page is
+never something the team should rest a conclusion on. There is no model call and
+no vendor: it is a page fetched and compared. Because the URLs live on pages
+agents can edit, the fetch is limited to public https addresses (no IP
+addresses, localhost, ports or credentials; every resolved address and every
+redirect is checked). The first look at a page is a baseline, not an alert, and
+a page that fails three times in a row is reported once.
+
 A Forge manifest change that adds a remote, web trigger or egress permission
 (which can cost the app its Runs on Atlassian badge) files a decision request
 when the pull request opens.
