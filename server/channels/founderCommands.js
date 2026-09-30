@@ -81,6 +81,9 @@ const COMMANDS = [
   { kind: 'spend', re: /^(spend|cost|budget)$/i },
   { kind: 'vault', re: /^(vault|notebook)$/i },
   { kind: 'digest', re: /^(digest|briefing|consultant|coach)$/i },
+  // A note on the briefing itself. Distinct from DIGEST by the words after it, and
+  // long enough to be a note (a bare "briefing feedback" is a mistake, answered below).
+  { kind: 'briefing_feedback', re: /^briefing\s+feedback(?:[:\s]+([\s\S]+))?$/i, arg: 'text' },
   { kind: 'autofix', re: /^autofix(?:\s+(on|off|status))?$/i, arg: 'mode' },
   { kind: 'integrations', re: /^(integrations|connections|health)$/i },
   { kind: 'pitch', re: /^(pitch|pitch now|pitch of the day)$/i },
@@ -475,6 +478,7 @@ BUILD [ventureId] — what the team is building right now
 SPEND — today's model spend against the cap
 VAULT — is the team's notebook being used: lessons, reads, decisions
 DIGEST — build the consultant's briefing now and email it (also sent each morning)
+BRIEFING FEEDBACK <text> — tell the briefing what to change about itself (style, order, what to add)
 AUTOFIX [ON|OFF|STATUS] — the consultant's automatic corrections: pull requests, tasks, drafts (never merges, deploys, sends or spends)
 INTEGRATIONS — what's actually connected
 MODELS [search] — live OpenRouter models and their prices
@@ -564,6 +568,12 @@ export async function runFounderCommand(command, deps = {}) {
       if (mode === 'off') setAutofix(false);
       const head = mode === 'on' ? 'Automatic corrections switched ON.\n\n' : mode === 'off' ? 'Automatic corrections switched OFF. Nothing more will be started until AUTOFIX ON.\n\n' : '';
       return `${head}${autofixStatus()}`;
+    }
+
+    case 'briefing_feedback': {
+      const { addFeedback } = await import('../consultant/selfReview.js');
+      const done = addFeedback(command.text);
+      return done.ok ? 'Noted. The next briefing is told what you asked for and says how it applied it (it is also listed under "How to improve this briefing").' : done.reason;
     }
 
     case 'digest': {

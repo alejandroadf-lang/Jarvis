@@ -1443,9 +1443,36 @@ into products that handle health data and customer email, so it is a decision fo
 you to take on purpose, for a narrow class (say tests and docs only, with CI
 green), not a default.
 
+**How the briefing improves itself.** Technology moves every week, so the briefing
+also reviews itself, in a section called "How to improve this briefing" and as
+section 11 of the review. Nothing in it is a model's opinion of itself:
+
+- *Its own record.* From the last briefings: cost against budget, how many
+  citations pointed at nothing, how many KPIs could not be measured, whether the
+  panel was one model, how many pages on each reading list could not be read.
+- *A model check.* Weekly, the server asks each provider whose key is set for the
+  models the account can call (Anthropic, OpenAI, xAI, DeepSeek, OpenRouter,
+  Gemini) and compares them with the configured ones. It says "newer on this
+  account: X" or "the configured model is no longer listed". It never switches a
+  model: changing one changes what a briefing costs, and the spend meter needs the
+  new model's price set beside it (the INPUT and OUTPUT price variables in
+  `server/.env.example`), so the advice says both.
+- *A technology reading list* (cited as [T#]): once a week, pages from the last
+  sixty days on new models, agent tooling and protocols, data sources, security
+  and regulation, read and quote-checked by the server like the other two lists.
+- *Your own sources.* A vault note with `type: briefing-sources` and headings
+  `## company`, `## vibe` or `## tech`, each followed by `- https://…` bullets,
+  puts those pages first on that list. They pass the same fetch and quote checks.
+- *Your notes.* `BRIEFING FEEDBACK <what to change>` from WhatsApp is stored
+  (through the write gate, so a pasted key is refused) and shown to every model
+  the next morning and in the email.
+
+The improvements are chosen by code from fixed rules and cited as [B#]; the
+models may add their own, marked (judgement).
+
 Costs: the daily review is about $0.15 to $0.45. Reading the sources costs more
 but runs at most once a week per reading list (and once a week for the competitor search), under its own ceiling
-(`CONSULTANT_READING_BUDGET_USD`, default $1.00), so it cannot squeeze out the
+(`CONSULTANT_READING_BUDGET_USD`, default $1.50), so it cannot squeeze out the
 daily review or be squeezed by it.
 
 Not built: automatic pricing benchmarks (nothing here can verify a competitor's

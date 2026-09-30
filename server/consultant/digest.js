@@ -36,6 +36,8 @@ import { refreshBenchmark, getBenchmark, benchmarkIsStale, benchmarkFacts, rende
 import { isGithubConfigured } from '../deploy/github.js';
 import { autofixOn, buildCandidates, selectCandidates, runAutofix, lastFixRun, renderFixes } from './autofix.js';
 import { refreshPlaybook, getPlaybook, playbookIsStale, renderPlaybook } from './playbook.js';
+import { scoutModels, getModelScout, modelScoutIsStale, scoutFacts } from './modelScout.js';
+import { briefingHealth, improvementCandidates, improvementsText, renderSelfReview, getFeedback, feedbackText, founderSources } from './selfReview.js';
 import { runPanel } from './panel.js';
 import { createBudget, panelMembers } from './models.js';
 
@@ -53,7 +55,7 @@ export function digestBudgetUsd() {
 // out by, or squeeze out, the daily review.
 export function readingBudgetUsd() {
   const n = Number(process.env.CONSULTANT_READING_BUDGET_USD);
-  return Number.isFinite(n) && n > 0 ? n : 1.0;
+  return Number.isFinite(n) && n > 0 ? n : 1.5;
 }
 
 export function lastDigest() {
@@ -61,26 +63,27 @@ export function lastDigest() {
 }
 
 /** The email, assembled: the model's review first, then everything a person needs to check it. Pure. */
-export function composeDigest({ date, review, scorecard, kpis, engineering, benchmark, practice, fixes, playbook, vibe, panel, budgetUsd, readingUsd = 0 }) {
+export function composeDigest({ date, review, scorecard, kpis, engineering, benchmark, practice, fixes, selfReview, playbook, vibe, tech, panel, budgetUsd, readingUsd = 0 }) {
   const parts = [];
   parts.push(`# Your AI-company briefing, ${date}`, '', review.trim(), '', '---');
   parts.push('', "## KPIs and maturity (computed by code from the company's records, not written by any model)", '', renderKpis(kpis));
   parts.push('', '## Technology against competitors (public signals, measured the same way for everyone)', '', renderBenchmark(benchmark));
   parts.push('', '## Your building practice: KPIs, trend and the actions that would lift them', '', renderPractice(practice));
   parts.push('', '## Corrections the team starts on its own, without asking you', '', renderFixes(fixes || { planned: [], last: null, on: false }));
+  if (selfReview) parts.push('', '## How to improve this briefing (its own record, the model check and your notes)', '', renderSelfReview(selfReview));
   parts.push('', '## Readiness scorecard (also computed by code)', '', renderScorecard(scorecard));
   parts.push('', '## Code review: what is in place and what is missing', '', renderCodeReview(engineering));
   parts.push('', '## The facts behind the numbers', '', renderFacts(scorecard));
 
-  const claims = [...(playbook?.items || []), ...(vibe?.items || [])];
+  const claims = [...(playbook?.items || []), ...(vibe?.items || []), ...(tech?.items || [])];
   const urls = [...new Set(claims.map((i) => i.url))];
   parts.push('', '## Sources read and verified', '');
   parts.push(
     urls.length
-      ? `Read by the server (${[playbook?.refreshedAt, vibe?.refreshedAt].filter(Boolean).map((d) => d.slice(0, 10)).join(' and ')}); a claim is kept only if its quote is in the page.\n${urls.map((u) => `- ${u}`).join('\n')}`
-      : 'No source could be read and verified yet, so nothing above rests on a source. Cited [P#] and [V#] items would appear here.',
+      ? `Read by the server (${[playbook?.refreshedAt, vibe?.refreshedAt, tech?.refreshedAt].filter(Boolean).map((d) => d.slice(0, 10)).join(' and ')}); a claim is kept only if its quote is in the page.\n${urls.map((u) => `- ${u}`).join('\n')}`
+      : 'No source could be read and verified yet, so nothing above rests on a source. Cited [P#], [V#] and [T#] items would appear here.',
   );
-  const unread = [...(playbook?.unread || []), ...(vibe?.unread || [])];
+  const unread = [...(playbook?.unread || []), ...(vibe?.unread || []), ...(tech?.unread || [])];
   if (unread.length) parts.push('', 'Could not be read or verified (so not relied on):', ...unread.map((u) => `- ${u.url}: ${u.reason}`));
 
   const drafters = panel.members.filter((m) => m.ok && !/merge/.test(m.name));
@@ -119,6 +122,7 @@ export async function runConsultantDigest({
   practiceReview = (o) => (isGithubConfigured() ? reviewPractice(o) : null),
   benchmarkRefresh = refreshBenchmark,
   autofix = runAutofix,
+  modelScan = scoutModels,
   send = sendConsultantDigestEmail,
   publish = publishServerPage,
 } = {}) {
@@ -175,11 +179,34 @@ export async function runConsultantDigest({
 
     // Read the sources first if the last reading is over a week old, so today's
     // review rests on this week's pages. A failure leaves the previous reading.
-    for (const topic of ['company', 'vibe']) {
-      if (playbookIsStale(now, topic)) await refresh({ topic, anthropic, member: members[0], budget: reading, now });
+    // Pages the founder asked to have read are read first, from their own vault note.
+    for (const topic of ['company', 'vibe', 'tech']) {
+      if (playbookIsStale(now, topic)) await refresh({ topic, anthropic, member: members[0], budget: reading, now, extraPages: founderSources(notes, topic) });
     }
     const playbook = getPlaybook('company');
     const vibe = getPlaybook('vibe');
+    const tech = getPlaybook('tech');
+
+    // Are the reviewing models the newest the account can use? Weekly, quiet on failure.
+    if (modelScoutIsStale(now)) await modelScan({ now }).catch((err) => console.error('Consultant: the model check failed:', err.message));
+    const scout = getModelScout();
+
+    // The briefing reviewing itself: its own record, the model check, the
+    // founder's notes. Health lines become facts the models can cite; the
+    // improvements are chosen by code and cited as [B#].
+    const shelf = (pb) => ({ read: new Set((pb?.items || []).map((i) => i.url)).size, unread: (pb?.unread || []).length });
+    const today = {
+      unmeasuredKpis: kpis.kpis.filter((k) => k.status === 'unmeasured').length,
+      kpiTotal: kpis.kpis.length,
+      singleModel: members.length < 2,
+      drafters: members.length,
+      sources: { company: shelf(playbook), coding: shelf(vibe), technology: shelf(tech) },
+    };
+    const health = briefingHealth({ history: state.history, today });
+    for (const text of [...health.facts, ...scoutFacts(scout)]) addFact(scorecard, 'briefing', text);
+    const feedback = getFeedback();
+    const candidates = improvementCandidates({ health, today, scout, feedback, budgetUsd: budget.limit, now });
+    const selfReview = { health, candidates, scoutFacts: scoutFacts(scout), feedback: feedback.slice(-3) };
 
     const roadmap = getLatestRoadmap();
     const steering = isWorkspaceConfigured() ? await readFounderSteering().catch(() => '') : '';
@@ -194,15 +221,18 @@ export async function runConsultantDigest({
       kpiText: kpiFactsText(kpis),
       playbookText: renderPlaybook(playbook),
       vibeText: vibe?.items?.length ? renderPlaybook(vibe) : '',
+      techText: tech?.items?.length ? renderPlaybook(tech) : '',
+      improvementsText: improvementsText(candidates),
+      feedbackText: feedbackText(feedback),
       actionsText: actionsText(practice),
       brief,
       factIds: scorecard.facts.map((f) => f.id),
       // Everything that is not an E fact and may be cited: sources and KPIs.
-      playbookIds: [...(playbook?.items || []).map((i) => i.id), ...(vibe?.items || []).map((i) => i.id), ...kpis.kpis.map((k) => k.id), ...(practice?.actions || []).map((a) => a.id)],
+      playbookIds: [...(playbook?.items || []).map((i) => i.id), ...(vibe?.items || []).map((i) => i.id), ...(tech?.items || []).map((i) => i.id), ...candidates.map((c) => c.id), ...kpis.kpis.map((k) => k.id), ...(practice?.actions || []).map((a) => a.id)],
     };
     const panel = await runPanel({ anthropic, budget, inputs, members });
 
-    const text = composeDigest({ date, review: panel.text, scorecard, kpis, engineering, benchmark, practice, fixes, playbook, vibe, panel, budgetUsd: budget.limit, readingUsd: reading.spent });
+    const text = composeDigest({ date, review: panel.text, scorecard, kpis, engineering, benchmark, practice, fixes, selfReview, playbook, vibe, tech, panel, budgetUsd: budget.limit, readingUsd: reading.spent });
     const subject = subjectLine({ date, scorecard, kpis });
 
     let emailed = false;
@@ -240,7 +270,7 @@ export async function runConsultantDigest({
     }
 
     state.lastDate = date;
-    state.history = [...state.history, { date, readiness: scorecard.readiness, kpiHealth: kpis.health, usd: panel.usd + reading.spent, models: panel.members.filter((m) => m.ok).length, emailed, published, unknownCitations: panel.unknown }].slice(-HISTORY);
+    state.history = [...state.history, { date, readiness: scorecard.readiness, kpiHealth: kpis.health, usd: panel.usd + reading.spent, models: panel.members.filter((m) => m.ok).length, emailed, published, unknownCitations: panel.unknown, citations: panel.cited, unmeasuredKpis: today.unmeasuredKpis }].slice(-HISTORY);
     writeJson(FILE, state);
     return { sent: true, emailed, published, usd: panel.usd + reading.spent + (corrections?.usd || 0), readiness: scorecard.readiness, kpiHealth: kpis.health, subject, text, corrections };
   } catch (err) {

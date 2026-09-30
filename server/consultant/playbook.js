@@ -50,10 +50,25 @@ export const TOPICS = {
     vaultName: 'Vibe coding playbook.md',
     audience: 'a non-engineer founder who builds an AI-agent-run company by directing AI coding tools ("vibe coding") and needs it to be reliable',
   },
+  tech: {
+    file: 'consultant-playbook-tech.json',
+    prefix: 'T',
+    vaultName: 'AI technology watch.md',
+    audience: 'the operator of an AI-agent-run company that wants to know which new models, agent tools, protocols and data sources have appeared and are worth adopting, and which changes affect how its own daily briefing should be produced',
+  },
 };
 
 export function discoveryPrompt(now = new Date(), topic = 'company') {
   const date = now.toISOString().slice(0, 10);
+  if (topic === 'tech') {
+    return `It's ${date}. Use web search to find up to ${MAX_PAGES} public web pages from the last 60 days about what has changed in the technology an AI-agent company runs on. Choose primary sources that state something checkable (release notes, changelogs, official announcements, documentation, benchmark write-ups with their method), not commentary:
+- new or retired language models from Anthropic, OpenAI, Google, xAI and DeepSeek, with prices or capabilities;
+- new agent tooling and open protocols (agent frameworks, tool-use and computer-use features, MCP and similar) that a small team could adopt;
+- new sources of data or search that an analyst could use to measure a company, its customers or its competitors;
+- changes to how AI-generated content, agents or data are regulated or secured that a small AI company must respond to;
+- approaches to producing an evidence-led, cited daily briefing more accurately or more cheaply.
+Reply with JSON only, an array of {"url": "https://…", "publisher": "…", "title": "…"}. Nothing else.`;
+  }
   if (topic === 'vibe') {
     return `It's ${date}. Use web search to find up to ${MAX_PAGES} public web pages worth a founder's time on building software well with AI coding tools ("vibe coding") and on making agent systems reliable. Choose pages that state something checkable, not listicles:
 - official guidance on using AI coding agents and building effective agents (for example from Anthropic, OpenAI, Google, GitHub);
@@ -131,12 +146,18 @@ export async function refreshPlaybook({
   budget,
   now = new Date(),
   discover = defaultDiscover,
+  extraPages = [],
   fetchText = safeFetchText,
   publish = publishServerPage,
 } = {}) {
   try {
     const t = TOPICS[topic];
-    const pages = await discover({ anthropic, budget, now, topic });
+    // The founder's own pages come first: what they chose to be read is read,
+    // and each still passes the same public-https fetch and quote check.
+    const chosen = extraPages.filter((p) => typeof p?.url === 'string' && /^https:\/\//.test(p.url));
+    const found = await discover({ anthropic, budget, now, topic });
+    const seen = new Set(chosen.map((p) => p.url));
+    const pages = [...chosen, ...found.filter((p) => !seen.has(p.url))];
     const items = [];
     const unread = [];
     for (const page of pages.slice(0, MAX_PAGES)) {

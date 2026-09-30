@@ -47,6 +47,9 @@ beforeEach(() => {
     items: [{ id: 'V1', url: 'https://vibe.example.com/tests', publisher: 'A Lab', title: 'T', retrievedAt: '2026-10-10', claim: 'Tests catch what the agent breaks.', quote: 'agents break things quietly without tests', type: 'first_hand_revenue' }],
     unread: [],
   });
+  store.writeJson('consultant-playbook-tech.json', { refreshedAt: '2026-10-10T01:00:00.000Z', items: [], unread: [] });
+  store.writeJson('consultant-models.json', { checkedAt: '2026-10-10T01:00:00.000Z', results: [] });
+  store.writeJson('consultant-feedback.json', { items: [] });
   store.writeJson('consultant-playbook.json', {
     refreshedAt: '2026-10-10T01:00:00.000Z',
     items: [{ id: 'P1', url: 'https://good.example.com/a', publisher: 'A Founder', title: 'T', retrievedAt: '2026-10-10', claim: 'Flat pricing worked.', quote: 'charged a flat monthly fee from day one', type: 'first_hand_revenue' }],
@@ -150,7 +153,7 @@ test('a stale reading list is refreshed first, per topic, and a fresh one is not
   await run({ now: new Date('2026-10-12T03:00:00Z') });
   assert.deepEqual(topics, [], 'two days old is fresh for both');
   await run({ now: new Date('2026-10-30T03:00:00Z') });
-  assert.deepEqual(topics, ['company', 'vibe'], 'three weeks old is not');
+  assert.deepEqual(topics, ['company', 'vibe', 'tech'], 'three weeks old is not');
 });
 
 test('the code review and the coding sources reach the email, and their citations are valid', async () => {
@@ -255,4 +258,52 @@ test('with corrections switched off the email says nothing is being started', as
   await digest.runConsultantDigest({ now: NOW, members: panel(), refresh: async () => {}, send: async (m) => { sent.push(m); }, autofix: async () => { called = true; return { ran: true, outcomes: [], prs: [] }; } });
   assert.match(sent[0].text, /Automatic corrections are OFF \(AUTOFIX ON turns them on\), so nothing below is being started\./);
   assert.equal(called, false);
+});
+
+test('the briefing reviews itself: health, the model check, the founder\'s notes and improvements cited as [B#]', async () => {
+  process.env.SMTP_HOST = 'smtp.example.com';
+  process.env.REPORT_EMAIL_TO = 'me@example.com';
+  const selfReview = await import('../consultant/selfReview.js');
+  selfReview.addFeedback('Put the KPIs first and keep it shorter');
+  store.writeJson('consultant-playbook-tech.json', {
+    refreshedAt: '2026-10-10T01:00:00.000Z',
+    items: [{ id: 'T1', url: 'https://labs.example.com/release', publisher: 'A Lab', title: 'Release', retrievedAt: '2026-10-10', claim: 'A newer model is out.', quote: 'a new model with lower prices is available', type: 'first_hand_revenue' }],
+    unread: [],
+  });
+  store.writeJson('consultant-models.json', {
+    checkedAt: '2026-10-09T01:00:00.000Z',
+    results: [{ provider: 'OpenAI', configured: 'gpt-4o-mini', found: true, createdOn: '2024-07-18', newer: [{ id: 'gpt-5-mini', created: '2026-08-01' }] }],
+  });
+  const seen = [];
+  const sent = [];
+  const reply = (p) => { seen.push(p.messages[0].content); return /independent reviews/.test(p.messages[0].content) ? '## How to improve this briefing\nA newer model exists [T1] and the panel is thin [B1]. Bogus [B99].' : '## Draft [E1]'; };
+  await digest.runConsultantDigest({ now: NOW, members: [member('Claude', 'frontier', reply), member('OpenAI', 'assistant', reply)], refresh: async () => {}, send: async (m) => { sent.push(m); } });
+  const t = sent[0].text;
+  assert.match(t, /## How to improve this briefing/);
+  assert.match(t, /Model check, OpenAI: configured gpt-4o-mini \(created 2024-07-18\); newer on this account: gpt-5-mini/);
+  assert.match(t, /\[B\d+\] OpenAI lists newer models than gpt-4o-mini: gpt-5-mini/);
+  assert.match(t, /Your recent notes on the briefing:\n- 2026-\d\d-\d\d: Put the KPIs first and keep it shorter/);
+  assert.match(t, /A newer model exists \[T1\] and the panel is thin \[B1\]\. Bogus \[\?\]\./);
+  assert.match(t, /Read by the server \(.*\)[\s\S]*labs\.example\.com\/release/);
+  assert.ok(seen[0].includes('Put the KPIs first and keep it shorter'), 'the founder\'s note reaches the models');
+  assert.ok(seen[0].includes('[T1] A newer model is out.'));
+  const state = store.readJson('consultant.json', {});
+  assert.equal(typeof state.history[0].unmeasuredKpis, 'number');
+});
+
+test('a stale model check runs once, and its failure never stops the briefing', async () => {
+  store.writeJson('consultant-models.json', { checkedAt: '2026-09-01T00:00:00.000Z', results: [] });
+  let calls = 0;
+  const out = await digest.runConsultantDigest({ now: NOW, members: panel(), refresh: async () => {}, send: async () => {}, publish: async () => true, modelScan: async () => { calls += 1; throw new Error('provider down'); } });
+  assert.equal(calls, 1);
+  assert.equal(out.sent, true);
+});
+
+test('the sources the founder listed are read first, on the right shelf', async () => {
+  const notes = [{ path: 'Library/Briefing sources.md', fm: { type: 'briefing-sources' }, body: '## company\n- https://mine.example.com/a\n## tech\n- https://mine.example.com/changelog\n' }];
+  const selfReview = await import('../consultant/selfReview.js');
+  assert.deepEqual(selfReview.founderSources(notes, 'tech').map((p) => p.url), ['https://mine.example.com/changelog']);
+  assert.deepEqual(selfReview.founderSources(notes, 'company').map((p) => p.url), ['https://mine.example.com/a']);
+  assert.deepEqual(selfReview.founderSources(notes, 'vibe'), []);
+  assert.deepEqual(selfReview.founderSources([], 'tech'), []);
 });

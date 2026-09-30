@@ -133,5 +133,5 @@ test('coding-source and KPI citations are valid when they exist, and the draft a
   assert.match(prompt, /\[K1\] Recurring revenue/);
   assert.match(prompt, /\[V1\] Tests catch/);
   assert.match(panel.SYSTEM, /is not an engineer/);
-  assert.match(panel.synthesisPrompt({ drafts: [{ name: 'A', model: 'm', text: 't' }], factsText: 'f', kpiText: '[K1] x', playbookText: 'p', vibeText: '[V1] y', date: 'd' }), /same ten sections/);
+  assert.match(panel.synthesisPrompt({ drafts: [{ name: 'A', model: 'm', text: 't' }], factsText: 'f', kpiText: '[K1] x', playbookText: 'p', vibeText: '[V1] y', date: 'd' }), /same eleven sections/);
 });
