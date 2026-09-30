@@ -139,11 +139,11 @@ test('an unreadable repo is reported and the others still count', async () => {
 
 test('the net under the agents comes from the code review checklist, and the email shows how each area is scored', async () => {
   const prs = [1, 2, 3].map((n) => ({ n, lines: 100, tests: true, reviewed: true, green: true, leadHours: 5 }));
-  const engineering = { repos: [{ checklist: [{ key: 'evals', present: true }, { key: 'observability', present: false }, { key: 'guardrails', present: true }, { key: 'lockfile', present: true }, { key: 'updates', present: false }] }] };
+  const engineering = { repos: [{ label: 'the company\'s own code', checklist: [{ key: 'evals', present: true }, { key: 'observability', present: false }, { key: 'guardrails', present: true }, { key: 'lockfile', present: true }, { key: 'updates', present: false }] }] };
   const p = await pr.reviewPractice({ targets: [target('net')], engineering, now: NOW, get: fakeRepo({ prs, commits: PLENTY }) });
   const net = p.areas.find((a) => a.key === 'net');
   assert.equal(net.level, 2);
-  assert.match(net.display, /missing: tracing or error reporting, locked dependencies and automatic updates/);
+  assert.match(net.display, /missing: tracing or error reporting \(the company's own code\), locked dependencies and automatic updates \(the company's own code\)/);
   assert.ok(p.actions.some((a) => a.area === 'net'));
 
   const text = pr.renderPractice(p);
@@ -155,4 +155,15 @@ test('the net under the agents comes from the code review checklist, and the ema
   assert.match(kpis[0].name, /Building-practice level/);
   assert.equal(kpis.find((k) => /Practice: A net/.test(k.name)).status, 'watch');
   assert.match(pr.renderPractice(null), /was not measured: GITHUB_TOKEN is not set/);
+});
+
+test('the net names which repo lacks each thing, so one small repo does not read as the whole company lacking it', async () => {
+  const prs = [1, 2, 3].map((n) => ({ n, lines: 100, tests: true, reviewed: true, green: true, leadHours: 5 }));
+  const all = (present) => ['evals', 'observability', 'guardrails', 'lockfile', 'updates'].map((key) => ({ key, present }));
+  const engineering = { repos: [{ label: 'the company\'s own code', checklist: all(true) }, { label: 'CircadianAPI\'s repo', checklist: all(false).map((c) => (c.key === 'lockfile' ? { ...c, present: true } : c)) }] };
+  const p = await pr.reviewPractice({ targets: [target('net')], engineering, now: NOW, get: fakeRepo({ prs, commits: PLENTY }) });
+  const net = p.areas.find((a) => a.key === 'net');
+  assert.equal(net.level, 0);
+  assert.match(net.display, /missing: evals \(CircadianAPI's repo\), tracing or error reporting \(CircadianAPI's repo\), a kill switch and spend cap \(CircadianAPI's repo\), locked dependencies and automatic updates \(CircadianAPI's repo\)/);
+  assert.doesNotMatch(net.display, /the company's own code\)/, 'the repo that has them is not blamed');
 });

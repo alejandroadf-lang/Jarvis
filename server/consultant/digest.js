@@ -37,7 +37,7 @@ import { isGithubConfigured } from '../deploy/github.js';
 import { autofixOn, buildCandidates, selectCandidates, runAutofix, lastFixRun, renderFixes } from './autofix.js';
 import { refreshPlaybook, getPlaybook, playbookIsStale, renderPlaybook } from './playbook.js';
 import { scoutModels, getModelScout, modelScoutIsStale, scoutFacts } from './modelScout.js';
-import { briefingHealth, improvementCandidates, improvementsText, renderSelfReview, getFeedback, feedbackText, founderSources } from './selfReview.js';
+import { briefingHealth, improvementCandidates, panelImprovements, improvementsText, renderSelfReview, getFeedback, feedbackText, founderSources } from './selfReview.js';
 import { runPanel } from './panel.js';
 import { createBudget, panelMembers } from './models.js';
 
@@ -80,7 +80,7 @@ export function composeDigest({ date, review, scorecard, kpis, engineering, benc
   parts.push('', '## Sources read and verified', '');
   parts.push(
     urls.length
-      ? `Read by the server (${[playbook?.refreshedAt, vibe?.refreshedAt, tech?.refreshedAt].filter(Boolean).map((d) => d.slice(0, 10)).join(' and ')}); a claim is kept only if its quote is in the page.\n${urls.map((u) => `- ${u}`).join('\n')}`
+      ? `Read by the server (${[...new Set([playbook?.refreshedAt, vibe?.refreshedAt, tech?.refreshedAt].filter(Boolean).map((d) => d.slice(0, 10)))].join(' and ')}); a claim is kept only if its quote is in the page.\n${urls.map((u) => `- ${u}`).join('\n')}`
       : 'No source could be read and verified yet, so nothing above rests on a source. Cited [P#], [V#] and [T#] items would appear here.',
   );
   const unread = [...(playbook?.unread || []), ...(vibe?.unread || []), ...(tech?.unread || [])];
@@ -95,7 +95,7 @@ export function composeDigest({ date, review, scorecard, kpis, engineering, benc
     panel.singleModel
       ? `One model wrote this review (${panel.members.filter((m) => m.ok).map((m) => `${m.name}, ${m.model}`).join('; ')}). It is NOT an independent panel: one model reviewing a company will be wrong in its own consistent way. Set more model keys (OPENAI_API_KEY, GEMINI_API_KEY, XAI_API_KEY) for a real panel.`
       : `${drafters.length} models each reviewed the company alone (${drafters.map((m) => `${m.name}, ${m.model}`).join('; ')}) and one merged them, listing where they disagreed.`,
-    ...(bad.length ? [`Did not answer: ${bad.map((m) => `${m.name} (${m.error})`).join('; ')}.`] : []),
+    ...(bad.length ? [`Did not answer: ${bad.map((m) => `${m.name} (${String(m.error).replace(/\s+/g, ' ').slice(0, 140)})`).join('; ')}.`] : []),
     `Citations: ${panel.cited} checked against the facts, KPIs and sources above${panel.unknown ? `; ${panel.unknown} pointed at nothing and were replaced with [?], so treat the sentences around them as unsupported` : ''}. Anything marked (judgement) has no source.`,
     `Cost: $${panel.usd.toFixed(3)} for the review${budgetUsd ? ` (budget $${budgetUsd})` : ''}${readingUsd ? `, plus $${readingUsd.toFixed(3)} reading this week's sources` : ''}.`,
     'The layout follows the AI-readiness reviews the large consultancies publish. It is not produced by, or endorsed by, any of them.',
@@ -244,6 +244,10 @@ async function buildAndSend({
       playbookIds: [...(playbook?.items || []).map((i) => i.id), ...(vibe?.items || []).map((i) => i.id), ...(tech?.items || []).map((i) => i.id), ...candidates.map((c) => c.id), ...kpis.kpis.map((k) => k.id), ...(practice?.actions || []).map((a) => a.id)],
     };
     const panel = await runPanel({ anthropic, budget, inputs, members });
+
+    // What the panel actually did, now that it has run: a model that did not
+    // answer becomes an improvement with the fix its own error names.
+    selfReview.candidates = [...candidates, ...panelImprovements(panel.members, candidates.length)];
 
     const text = composeDigest({ date, review: panel.text, scorecard, kpis, engineering, benchmark, practice, fixes, selfReview, playbook, vibe, tech, panel, budgetUsd: budget.limit, readingUsd: reading.spent });
     const subject = subjectLine({ date, scorecard, kpis });

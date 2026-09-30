@@ -135,3 +135,35 @@ test('coding-source and KPI citations are valid when they exist, and the draft a
   assert.match(panel.SYSTEM, /is not an engineer/);
   assert.match(panel.synthesisPrompt({ drafts: [{ name: 'A', model: 'm', text: 't' }], factsText: 'f', kpiText: '[K1] x', playbookText: 'p', vibeText: '[V1] y', date: 'd' }), /same eleven sections/);
 });
+
+test('a Claude call that spends its allowance before writing is retried once with thinking off, and both calls are paid for', async () => {
+  const calls = [];
+  const claude = {
+    name: 'Claude', tier: 'frontier', retryEmpty: true,
+    create: async (p) => {
+      calls.push(p);
+      return p.thinkingOff
+        ? { content: [{ type: 'text', text: 'Written [E1]' }], usage: { input_tokens: 1000, output_tokens: 500 }, stop_reason: 'end_turn' }
+        : { content: [{ type: 'thinking', thinking: '…' }], usage: { input_tokens: 1000, output_tokens: 3400 }, stop_reason: 'max_tokens' };
+    },
+  };
+  const budget = models.createBudget(5);
+  const out = await models.ask(claude, { system: 's', user: 'u', maxTokens: 3000 }, budget);
+  assert.equal(out.text, 'Written [E1]');
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].maxTokens, 6000);
+  assert.equal(calls[1].thinkingOff, true);
+  assert.ok(budget.spent > 0 && Math.abs(budget.spent - out.usd) < 1e-9, 'the empty call is in the total');
+});
+
+test('an empty answer is reported with why it stopped, and what it cost is still counted', async () => {
+  const empty = { name: 'Claude', tier: 'frontier', create: async () => ({ content: [], usage: { input_tokens: 4000, output_tokens: 100 }, stop_reason: 'refusal' }) };
+  const other = member('OpenAI', 'assistant', 'Only one [E1]');
+  const out = await panel.runPanel({ inputs, members: [empty, other], budget: models.createBudget(5) });
+  const bad = out.members.find((m) => m.name === 'Claude');
+  assert.equal(bad.ok, false);
+  assert.match(bad.error, /an empty answer \(stopped: refusal\)/);
+  assert.ok(bad.usd > 0);
+  assert.equal(out.singleModel, true);
+  assert.ok(out.usd > other.calls.length * 0 + bad.usd - 1e-12, 'the total includes the empty call');
+});

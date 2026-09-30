@@ -1460,6 +1460,10 @@ section 11 of the review. Nothing in it is a model's opinion of itself:
   model: changing one changes what a briefing costs, and the spend meter needs the
   new model's price set beside it (the INPUT and OUTPUT price variables in
   `server/.env.example`), so the advice says both.
+- *What the panel actually did.* A model that did not answer (no balance, over its
+  quota, a rejected key, an empty reply) becomes an improvement naming the fix its
+  own error points at, and its cost is still counted. A Claude call that spends its
+  whole allowance thinking is retried once with thinking off.
 - *A technology reading list* (cited as [T#]): once a week, pages from the last
   sixty days on new models, agent tooling and protocols, data sources, security
   and regulation, read and quote-checked by the server like the other two lists.

@@ -70,19 +70,25 @@ export function buildKpis(sc, { now = new Date(), engineering = null, benchmark 
   add({
     group: 'Revenue and growth',
     name: 'Customers the goal needs at today\'s price',
-    display: needs.length ? needs.map((n) => `${n.title}: ${n.have} of ${n.need} at ${n.cur} ${n.price}/month`).join('; ') : 'no venture has a monthly price set, so the number of customers the goal needs cannot be worked out',
+    // The count divides the € goal by the price as written, so a price in another currency is only approximate; say so.
+    display: needs.length ? needs.map((n) => `${n.title}: ${n.have} of ${n.need} at ${n.cur} ${n.price}/month${n.cur && n.cur !== 'EUR' ? ' (not converted to €)' : ''}`).join('; ') : 'no venture has a monthly price set, so the number of customers the goal needs cannot be worked out',
     status: !needs.length ? 'unmeasured' : needs.some((n) => n.have >= n.need) ? 'on_track' : needs.some((n) => n.have > 0) ? 'watch' : 'behind',
     rule: 'on track when one venture has all it needs; watch with any paying customer',
   });
 
   const target = mrr < 10_000 ? 10_000 : MRR_GOAL;
   const gap = Math.max(1, target - mrr);
+  // A list nobody has spoken to is not yet a pipeline: value counts as coverage
+  // only once someone has been contacted or has moved past "lead".
+  const worked = sc.ventures.reduce((n, v) => n + Object.entries(v.pipe.byStage).filter(([k]) => k !== 'lead' && k !== 'paying').reduce((a, [, c]) => a + c, 0), 0)
+    + raw.reduce((n, v) => n + (v.sentEmails || []).length, 0);
+  const cover = open / gap;
   add({
     group: 'Revenue and growth',
     name: `Pipeline coverage of the next target (${eur(target)} a month)`,
-    display: open > 0 ? `open pipeline ${eur(open)} a month is ${(open / gap).toFixed(1)}x the ${eur(gap)} still to find` : contacts ? `${contacts} contacts but none has a deal value recorded, so coverage cannot be computed` : 'no pipeline recorded',
-    status: open > 0 ? (open / gap >= 3 ? 'on_track' : open / gap >= 1 ? 'watch' : 'behind') : contacts ? 'unmeasured' : 'behind',
-    rule: 'on track at 3x or more, watch at 1x or more',
+    display: open > 0 ? `open pipeline ${eur(open)} a month is ${cover.toFixed(1)}x the ${eur(gap)} still to find${worked ? '' : ', but nobody has been contacted yet, so none of it is qualified'}` : contacts ? `${contacts} contacts but none has a deal value recorded, so coverage cannot be computed` : 'no pipeline recorded',
+    status: open > 0 ? (cover >= 3 && worked ? 'on_track' : cover >= 1 ? 'watch' : 'behind') : contacts ? 'unmeasured' : 'behind',
+    rule: 'on track at 3x or more, watch at 1x or more; never on track until someone in it has been contacted',
   });
 
   add({

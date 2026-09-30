@@ -125,7 +125,7 @@ test('the briefing\'s health comes from its own record', () => {
   assert.match(text, /3 briefings sent so far, averaging \$0\.60 each over the last 3/);
   assert.match(text, /9 of 24 KPIs could not be measured/);
   assert.match(text, /4 of 60 citations pointed at nothing/);
-  assert.match(text, /3 models reviewed independently today/);
+  assert.match(text, /3 models were asked to review today/);
   assert.match(text, /company: 3 read, 1 unreadable; technology: 0 read, 0 unreadable/);
 });
 
@@ -209,4 +209,31 @@ test('the technology shelf has its own file, prefix and question, and the founde
   assert.deepEqual(out.items.map((i) => i.id), ['T1', 'T2']);
   assert.equal(pb.getPlaybook('tech').items.length, 2);
   assert.equal(pb.getPlaybook('company')?.items?.length ?? 0, 0, 'the other shelves are untouched');
+});
+
+test('a model that did not answer becomes an improvement with the fix its own error names', () => {
+  const members = [
+    { name: 'Claude', ok: false, error: 'an empty answer (stopped: max_tokens)' },
+    { name: 'OpenAI', ok: true, model: 'gpt-4o-mini' },
+    { name: 'Gemini', ok: false, error: 'Gemini request failed (429): You exceeded your current quota, please check your plan and billing details.' },
+    { name: 'DeepSeek', ok: false, error: 'DeepSeek request failed (402): {"error":{"message":"Insufficient Balance"}}' },
+    { name: 'Hermes (OpenRouter)', ok: false, error: 'OpenRouter request failed (402): Insufficient credits. This account never purchased credits.' },
+    { name: 'Grok', ok: false, error: 'Grok request failed (401): Incorrect API key provided' },
+  ];
+  const c = review.panelImprovements(members, 6);
+  assert.deepEqual(c.map((x) => x.id), ['B7', 'B8', 'B9', 'B10', 'B11', 'B12']);
+  const t = c.map((x) => x.text);
+  assert.match(t[0], /^Claude returned no text \(an empty answer \(stopped: max_tokens\)\)/);
+  assert.match(t[1], /^Gemini is over its quota or rate limit.*remove GEMINI_API_KEY/);
+  assert.match(t[2], /^DeepSeek refused the request because the account has no balance.*remove DEEPSEEK_API_KEY/);
+  assert.match(t[3], /^Hermes \(OpenRouter\) refused the request because the account has no balance.*OPENROUTER_API_KEY/);
+  assert.match(t[4], /^Grok rejected its key.*XAI_API_KEY/);
+  assert.match(t[5], /^Only OpenAI wrote today's review, so it was not an independent panel and nothing was merged/);
+  assert.deepEqual(review.panelImprovements([{ name: 'Claude', ok: true }, { name: 'OpenAI', ok: true }, { name: 'Claude (merge)', ok: true }]), [], 'nothing to fix when they all answered');
+});
+
+test('the health line says how many models were asked, not how many independently reviewed', () => {
+  const h = review.briefingHealth({ history: [], today: { singleModel: false, drafters: 5 } });
+  assert.match(h.facts.join('\n'), /5 models were asked to review today/);
+  assert.doesNotMatch(h.facts.join('\n'), /independently/);
 });

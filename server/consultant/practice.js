@@ -200,11 +200,19 @@ export function scoreAreas(repos, engineering = null) {
   };
   const lists = (engineering?.repos || []).filter((r) => !r.error);
   if (lists.length) {
-    const has = (key) => lists.every((r) => r.checklist.find((c) => c.key === key)?.present);
-    const parts = [['evals', has('evals')], ['tracing or error reporting', has('observability')], ['a kill switch and spend cap', has('guardrails')], ['locked dependencies and automatic updates', has('lockfile') && has('updates')]];
+    // Every repo has to have it, so the weakest repo decides; the gap names the repo,
+    // because "missing: evals" reads as the company's own code lacking them when it
+    // may be a small API repo that has no agents to test.
+    const lacking = (test) => lists.filter((r) => !test((key) => r.checklist.find((c) => c.key === key)?.present)).map((r) => r.label || `${r.owner}/${r.name}`);
+    const parts = [
+      ['evals', lacking((h) => h('evals'))],
+      ['tracing or error reporting', lacking((h) => h('observability'))],
+      ['a kill switch and spend cap', lacking((h) => h('guardrails'))],
+      ['locked dependencies and automatic updates', lacking((h) => h('lockfile') && h('updates'))],
+    ];
     s.checklist = true;
-    s.net = parts.filter(([, ok]) => ok).length;
-    s.netMissing = parts.filter(([, ok]) => !ok).map(([n]) => n);
+    s.net = parts.filter(([, repos]) => !repos.length).length;
+    s.netMissing = parts.filter(([, repos]) => repos.length).map(([n, repos]) => `${n} (${repos.join(', ')})`);
   }
   return AREAS.map((a) => {
     const m = a.measure(s);

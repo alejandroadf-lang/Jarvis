@@ -110,3 +110,16 @@ test('KPI health counts only measured KPIs, and the model is given citable ids',
   assert.match(facts, /^\[K1\] Recurring revenue: /);
   assert.match(facts, /this company's threshold: /);
 });
+
+test('a pipeline nobody has been contacted in is never on track, and a price in another currency is marked as not converted', () => {
+  // Earlier tests in this file left ventures with contacted deals; only this one should count.
+  for (const v of ventures.listVentures().filter((x) => x.status === 'active')) ventures.killVenture(v.id, 'test isolation');
+  const a = ventures.createVenture({ title: 'Cold List', oneLiner: 'x', proposedBy: 'venture_partner' });
+  ventures.setPricing(a.id, { currency: 'USD', floorMonthly: 29 });
+  for (let i = 0; i < 12; i++) ventures.updatePipeline(a.id, { handle: `cold${i}`, source: 'https://example.com/list', stage: 'lead', dealValueMonthly: 3500 });
+  const { k } = build();
+  const cov = by(k, 'Pipeline coverage');
+  assert.match(cov.display, /but nobody has been contacted yet, so none of it is qualified/);
+  assert.equal(cov.status, 'watch', 'well over 3x on paper, but every contact is an untouched lead');
+  assert.match(by(k, 'Customers the goal needs').display, /at USD 29\/month \(not converted to €\)/);
+});
