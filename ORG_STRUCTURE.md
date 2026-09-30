@@ -1203,6 +1203,31 @@ and offered like the library's own (it can never take a library skill's name).
 Notes you drop in `Library/` are summarised weekly, as data, into
 `Company/Library Notes/`; a note with `origin: web` goes to quarantine.
 
+Once a day the server also fetches the source pages listed on each rule page
+(the "Sources" section) and compares them with the last look. When one changes,
+the rule's status becomes `source-changed`, it shows on `Today.md`, and you get
+one WhatsApp message; the detail (what the page now says differently) is in
+`Inbox/untrusted/`, screened line by line, because text from a web page is
+never something the team should rest a conclusion on. There is no model call and
+no vendor: it is a page fetched and compared. Because the URLs live on pages
+agents can edit, the fetch is limited to public https addresses (no IP
+addresses, localhost, ports or credentials; every resolved address and every
+redirect is checked). The first look at a page is a baseline, not an alert, and
+a page that fails three times in a row is reported once.
+
+Circadian's own usage numbers come back too. The app already sends anonymous
+events to PostHog (`ventures/circadian/src/analytics.py`); it never read them
+back, so the team planned the product with no view of whether anyone used it.
+With `POSTHOG_PERSONAL_API_KEY` (a personal key with the Query Read permission,
+not the `phc_` key the app sends with), `POSTHOG_PROJECT_ID` and, for an EU
+project, `POSTHOG_APP_HOST`, set on the Jarvis service, the daily refresh runs
+two small queries and keeps the answer: devices that opened the app, made a
+plan, turned reminders on, connected WHOOP, and came back, this week against
+last. It appears on `Today.md` and as one line in the team's context. Counts
+only, no person, IP address or trip. The request shape was confirmed from
+search results and not from PostHog's own page (it was blocked), so the first
+live run is the check; a refused key logs which key is wanted.
+
 A Forge manifest change that adds a remote, web trigger or egress permission
 (which can cost the app its Runs on Atlassian badge) files a decision request
 when the pull request opens.
