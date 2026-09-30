@@ -418,4 +418,5 @@ export async function runNotebookTool(name, input = {}, { agentId, usage } = {})
   }
 }
 
+export { requestDecision as sendDecisionRequest };
 export { recentLessons, buildLessonsContext } from './lessons.js';

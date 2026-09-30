@@ -12,6 +12,17 @@
 // contradicts what. The page is published to the vault (Obsidian, VS Code)
 // and kept locally so the next turn's context actually contains it — a wiki
 // nobody reads is a diary.
+//
+// Rewriting a whole page with a model every week erodes it: each pass loses a
+// little detail and keeps the confident summary (context collapse). So the
+// compile is a delta: the page is itemised bullets, each citing the lesson
+// notes that support it as [[wikilinks]]; a pass keeps every bullet that is
+// still true word for word, adds what is new, and marks what newer evidence
+// replaced instead of deleting it. It builds only on trusted lessons (a claim
+// two independent sources agree on, or the founder approved), so an unchecked
+// note cannot become an unlabelled sentence in a page every agent reads. A page
+// the founder marked `locked: true` in Obsidian is never touched, and one they
+// edited is the base of the next pass, not overwritten by it.
 
 import { readJson, writeJson } from '../store.js';
 import { runAgent } from '../agents/agentRunner.js';
@@ -19,8 +30,10 @@ import { AGENTS as COMPANY_AGENTS, ROOT_AGENT_ID as COMPANY_ROOT } from '../agen
 import { listVentures, listVentureNotes, listObjectives, pipelineSummary, listPayments, describePricing } from '../finance/ventures.js';
 import { listDailyReports } from '../dailyReports.js';
 import { usageSummary } from '../ventureUsage.js';
-import { publishKnowledge } from './vault.js';
-import { recentLessons } from './lessons.js';
+import { publishKnowledge, knowledgePath, workspaceConfig, isWorkspaceConfigured } from './vault.js';
+import { trustedLessons, syncLessons } from './lessons.js';
+import { readFile } from '../deploy/github.js';
+import { parseNote } from './frontmatter.js';
 
 const FILE = 'knowledge.json';
 // What of each page reaches the shared context. The page can be long; the
@@ -37,7 +50,7 @@ export function getKnowledgePage(ventureId) {
 
 // A roster where the CEO has no reports, so the rewrite is one call and not a
 // committee. Same shape as dailyMeeting's soloRoster.
-function alone(agents, rootId) {
+export function alone(agents, rootId) {
   return { ...agents, [rootId]: { ...agents[rootId], reports: [] } };
 }
 
@@ -50,7 +63,7 @@ function material(venture) {
   const pipeline = pipelineSummary(venture.id);
   const payments = listPayments(venture.id).slice(0, 10).map((p) => `- ${p.paidAt.slice(0, 10)}: ${p.currency} ${p.amount} ${p.kind}${p.customerEmail ? ` from ${p.customerEmail}` : ''}`);
   const usage = usageSummary(venture.id, { days: 30 });
-  const lessons = recentLessons({ days: 14, ventureId: venture.id }).map((l) => `- ${l.at.slice(0, 10)} ${l.title} (${l.agentId}): ${l.summary}`);
+  const lessons = trustedLessons({ ventureId: venture.id }).map((l) => `- [[${l.path.split('/').pop().replace(/\.md$/, '')}]] (${l.agentId}; evidence: ${l.evidence}): ${l.summary}`);
 
   return [
     `# Venture record`,
@@ -69,7 +82,7 @@ function material(venture) {
     `# Notes (most recent 25)`,
     notes.join('\n') || 'none',
     '',
-    `# Lessons the team kept (last 14 days; full notes in Company/Lessons/)`,
+    `# Trusted lessons (confirmed; cite each one you use as its [[wikilink]])`,
     lessons.join('\n') || 'none',
     '',
     `# Daily leadership syncs (last 7)`,
@@ -95,14 +108,38 @@ current understanding. Sections, in this order, each short:
    by picking one.
 6. Open questions.
 
-Keep everything from the existing page that is still true; update what
-changed; delete only what is contradicted by newer evidence, and say what
-replaced it. Write in plain prose. No preamble. Under 900 words.
+This is an update, not a rewrite. The page is a list of short bullets, each one
+ending with the [[wikilinks]] of the lessons, reports or notes that support it.
+Keep every existing bullet that is still true, word for word. Add bullets for
+what is new, citing the trusted lessons below. Where newer evidence replaces a
+bullet, keep it and append "(replaced YYYY-MM-DD: why)" instead of deleting it.
+Do not introduce a claim you cannot cite. Under 900 words. No preamble.
 
 ${existing ? `## Existing page\n\n${existing}\n\n` : '## Existing page\n\n(none — this is the first)\n\n'}## This week's material
 
 ${material(venture)}`;
 }
+
+// The page as it stands in the vault, if the founder has touched it: their
+// edit is the base of the next pass, and `locked: true` means leave it alone.
+async function readVaultPage(venture) {
+  if (!isWorkspaceConfigured()) return null;
+  try {
+    const { owner, repo, branch } = workspaceConfig();
+    const text = await readFile({ owner, repo, branch, path: knowledgePath(venture) });
+    if (!text) return null;
+    const { fm, body } = parseNote(text);
+    return { locked: String(fm.locked) === 'true', markdown: body.replace(/^\s*# .*\n+(_Compiled[^\n]*\n+)?/, '').trim() };
+  } catch (err) {
+    console.error(`Knowledge: could not read the vault page for ${venture.title}:`, err.message);
+    return null;
+  }
+}
+
+// A pass that returns much less than it was given has lost the page, not
+// improved it. Below this size a first draft legitimately changes a lot.
+const SHRINK_FLOOR_CHARS = 600;
+const SHRINK_LIMIT = 0.6;
 
 /**
  * Compiles a page for every active venture. Returns what was written.
@@ -110,8 +147,16 @@ ${material(venture)}`;
 export async function compileKnowledge({ anthropic, runAgentImpl = runAgent, publishImpl = publishKnowledge } = {}) {
   const active = listVentures().filter((v) => v.status === 'active');
   const written = [];
+  // Statuses the founder changed in Obsidian, and lessons that have expired,
+  // take effect before the compile decides what counts as trusted.
+  await syncLessons().catch(() => {});
   for (const venture of active) {
-    const existing = getKnowledgePage(venture.id)?.markdown || '';
+    const remote = await readVaultPage(venture);
+    if (remote?.locked) {
+      console.log(`Knowledge: ${venture.title} is locked in the vault; left as it is.`);
+      continue;
+    }
+    const existing = remote?.markdown || getKnowledgePage(venture.id)?.markdown || '';
     let markdown;
     try {
       const result = await runAgentImpl({
@@ -128,6 +173,10 @@ export async function compileKnowledge({ anthropic, runAgentImpl = runAgent, pub
       continue;
     }
     if (!markdown) continue;
+    if (existing.length >= SHRINK_FLOOR_CHARS && markdown.length < existing.length * SHRINK_LIMIT) {
+      console.error(`Knowledge: the new page for ${venture.title} is ${markdown.length} characters against ${existing.length}; kept the old one.`);
+      continue;
+    }
 
     const data = load();
     data.pages[venture.id] = { title: venture.title, markdown, updatedAt: new Date().toISOString() };

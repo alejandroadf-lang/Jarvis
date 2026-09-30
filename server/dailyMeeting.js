@@ -70,6 +70,7 @@ import {
 import { todayKey, saveDailyReport, getLatestDailyReport } from './dailyReports.js';
 import { sendDailyReportEmail, sendPitchEmail } from './email.js';
 import { publishDailyReport, publishVenture, readFounderSteering } from './workspace/vault.js';
+import { refreshFounderPages } from './workspace/founderPages.js';
 import { estimateCostUsd, sumUsage, emptyUsage } from './usage.js';
 import { withSpendContext } from './spend.js';
 import { ensureRoadmap } from './roadmap.js';
@@ -587,6 +588,9 @@ export async function runDailyMeeting({ anthropic }) {
   for (const venture of listVentures().filter((v) => v.status === 'active' || proposedVentureIds.includes(v.id))) {
     await publishVenture(venture);
   }
+  // Today.md, the decision inbox, the index, dashboards and the rules register.
+  // After the report because the report is the real work; never throws.
+  await refreshFounderPages().catch((err) => console.error('Founder pages failed:', err.message));
 
   // The morning pitch. Deliberately outside the scope check that skips the
   // Studio on a quiet day: the founder asked for one every morning, and a

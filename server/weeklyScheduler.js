@@ -70,6 +70,15 @@ export async function runWeeklyFollowUps({ anthropic }) {
     } catch (err) {
       console.error('Knowledge compile failed:', err.message);
     }
+    // After the compile, so the check sees the pages it just wrote. It reports
+    // and never edits; see workspace/vaultLint.js.
+    try {
+      const { runVaultLint } = await import('./workspace/vaultLint.js');
+      const found = await runVaultLint({ anthropic });
+      if (found) console.log('Vault check written to Company/Lint/.');
+    } catch (err) {
+      console.error('Vault check failed:', err.message);
+    }
   }
 }
 

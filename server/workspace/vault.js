@@ -25,6 +25,7 @@
 
 import { commitFile, readFile, isGithubConfigured } from '../deploy/github.js';
 import { serializeNote } from './frontmatter.js';
+import { readJson, writeJson } from '../store.js';
 import { getKillSwitch } from '../killSwitch.js';
 
 // Where each kind of note lands. Folder names read as an Obsidian vault
@@ -324,6 +325,29 @@ export function publishWorkSession(entry, venture) {
   );
 }
 
+// What agents have written, for the Vault Log page: git history has it too,
+// but nobody reads a commit list on a phone.
+const LOG_FILE = 'vault-writes.json';
+function logWrite(path, message) {
+  try {
+    const data = readJson(LOG_FILE, { items: [] });
+    data.items.push({ at: new Date().toISOString(), path, message });
+    data.items = data.items.slice(-300);
+    writeJson(LOG_FILE, data);
+  } catch {
+    // A log that cannot be written must not fail the write it describes.
+  }
+}
+
+export function recentVaultWrites(n = 100) {
+  return readJson(LOG_FILE, { items: [] }).items.slice(-n).reverse();
+}
+
+/** A page the server owns outright (Today, Index, Vault Log, lint): replaced each time. */
+export function publishServerPage(path, content, message) {
+  return publish(path, content, message);
+}
+
 // One write at a time. The Contents API rejects a commit made while another to
 // the same branch is landing, so two leads writing in the same second would
 // have one of them fail for no reason the agent could act on.
@@ -347,6 +371,7 @@ export function writeVaultNote({ path, content, message, expectedSha }) {
     const { owner, repo, branch } = workspaceConfig();
     try {
       await commitFile({ owner, repo, branch, path, content, message, expectedSha });
+      logWrite(path, message);
       return { ok: true };
     } catch (err) {
       if (err.status === 409 || err.status === 422) {
@@ -359,10 +384,17 @@ export function writeVaultNote({ path, content, message, expectedSha }) {
 
 export { serializeNote };
 
+export function knowledgePath(venture) {
+  return `${FOLDERS.knowledge}/${noteName(venture.title)}.md`;
+}
+
 export function publishKnowledge(venture, markdown) {
+  const day = new Date().toISOString().slice(0, 10);
   return publish(
-    `${FOLDERS.knowledge}/${noteName(venture.title)}.md`,
-    `# ${venture.title} — what we know\n\n_Compiled ${new Date().toISOString().slice(0, 10)} by the company from its reports and notes. Rewritten weekly._\n\n${markdown}\n`,
+    knowledgePath(venture),
+    // `locked` is the founder's: set it to true in Obsidian and the weekly
+    // compile leaves this page alone.
+    `${frontmatter({ type: 'knowledge', venture: venture.title, compiled: day, locked: false, tags: ['company/knowledge'] })}\n# ${venture.title} — what we know\n\n_Compiled ${day} from trusted lessons, reports and notes; updated weekly, each bullet cites its source._\n\n${markdown}\n`,
     `Knowledge — ${venture.title}`
   );
 }

@@ -6,6 +6,7 @@
 // today, only propose_venture (never money-moving or venture-killing
 // actions; see dailyMeeting.js for why).
 
+import { guardManifestChange } from './workspace/marketplaceGuard.js';
 import { getLedger, addTransaction } from './finance/ledger.js';
 import { assertRealActionsAllowed } from './killSwitch.js';
 import {
@@ -430,6 +431,9 @@ export async function handleOpenPullRequest(input, triggeredBy = 'interactive', 
       agentId: ctx.agentId,
     });
     recordContribution({ agentId: ctx.agentId, kind: 'open_pull_request', ventureId, detail: title });
+    // A manifest change that can cost a marketplace badge also goes to the
+    // founder's decision inbox. Never fails the pull request that is already open.
+    await guardManifestChange({ venture, changes, pr, agentId: ctx.agentId }).catch((err) => console.error('Manifest guard failed:', err.message));
     return `Opened pull request #${pr.number} on ${venture.repo.owner}/${venture.repo.name}: "${title}".\nBranch ${branch} -> ${base}, ${changes.length} file${changes.length === 1 ? '' : 's'}:\n${describeChanges(changes)}\n${pr.url}\n\nNothing has landed. The founder reviews and merges, or closes it and nothing happened.`;
   } catch (err) {
     return `Could not open a pull request: ${err.message}`;
