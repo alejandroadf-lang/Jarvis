@@ -38,7 +38,7 @@ import { dailyCapUsd, getSpendToday, withSpendContext } from './spend.js';
 import { listActivity } from './activityLog.js';
 import { getLatestDailyReport } from './dailyReports.js';
 import { readJson, updateJson } from './store.js';
-import { readFounderSteering } from './workspace/vault.js';
+import { readFounderSteering, publishWorkSession } from './workspace/vault.js';
 
 const FILE = 'workSessions.json';
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -244,6 +244,10 @@ export async function runWorkSession({ anthropic, now = new Date() }) {
   updateJson(FILE, { entries: [] }, (data) => {
     data.entries = [...data.entries, entry].slice(-60);
   });
+  // A note in the founder's vault of what this session did: the log they read,
+  // and, through the weekly knowledge pass, part of what the team learns from.
+  // Fail-quiet, and inert when no workspace is set.
+  await publishWorkSession(entry, venture);
   return { ran: true, ...entry };
 }
 

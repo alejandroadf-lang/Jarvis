@@ -1030,8 +1030,36 @@ from a cloud host — and it happens to be the one both tools already speak.
 Company/Daily Reports/2026-03-05.md
 Company/Weekly Reflections/2026-01-04.md
 Company/Ventures/Ledger Watch.md
+Company/Knowledge/Ledger Watch.md          ← compiled weekly, read back by the team
+Company/Roadmap/2026-09-30.md              ← the Road to €1M, one a week
+Company/Work Sessions/2026-09-30 Happy Company.md
 Steering.md              ← yours, not the company's
 ```
+
+The last two are how you see whether the team is going anywhere: the roadmap
+is what it proposed for each venture, and a work-session note is what one
+session did (or why it did not finish), linked to its venture so the graph
+view shows the trail. The loop back to the team runs through three paths: your
+`Steering.md`, the weekly knowledge pages built from the reports and venture
+notes, and the roadmap itself, which is also in the shared context.
+
+### Switching it on, from a phone
+
+1. On GitHub, create a **private** repository, for example `jarvis-vault`.
+2. Make sure `GITHUB_TOKEN` can write to it. A fine-grained token is limited to
+   the repositories it names, so add the new one to the token's list.
+3. In Railway, set `WORKSPACE_REPO_OWNER` (your GitHub user) and
+   `WORKSPACE_REPO_NAME` (`jarvis-vault`); `WORKSPACE_REPO_BRANCH` defaults to
+   `main`. Redeploy. `INTEGRATIONS` then shows the workspace as connected.
+4. To read it: the GitHub app renders the notes as they are written. To open it
+   as a real vault with graph view, use Obsidian with a git plugin (on a phone,
+   Obsidian Git's mobile support is limited; a git client such as Working Copy
+   on iOS alongside Obsidian is the usual route) or open the repo in VS Code.
+5. To steer the team: create `Steering.md` at the top of the repo and write in
+   it. Every agent reads it, within a minute of the commit.
+
+Nothing is published until step 3, and a publish failure never breaks the
+meeting or session that produced the note.
 
 The markdown is genuinely Obsidian-shaped rather than merely valid:
 **YAML frontmatter** becomes note properties you can filter and sort on
