@@ -1578,6 +1578,13 @@ const actionsFrom = (agentId, names) =>
     return action;
   });
 
+// The two leads that run work sessions need to set a venture's objective when
+// it has none, or a session on a venture nobody has briefed has nowhere to
+// start. Same definition and handler as the CEO's, so nothing is defined twice.
+for (const lead of ['cto', 'coo']) {
+  AGENTS[lead].actions = [...(AGENTS[lead].actions || []), ...actionsFrom('ceo', ['set_objective'])];
+}
+
 const HAPPY_COMPANY_CONTEXT = `Happy Company lives in ventures/happycompany: an Atlassian Forge app for Jira
 and Confluence that grades each team's working conditions from A to E, never a
 person, from when and how much work happens, never what anyone writes. Read

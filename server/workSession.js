@@ -30,7 +30,7 @@
 import { runAgent } from './agents/agentRunner.js';
 import { AGENTS as COMPANY_AGENTS } from './agents/orgChart.js';
 import { buildCompanyContext, buildPerAgentContext, buildRepoManifests } from './finance/context.js';
-import { listVentures, getFocus } from './finance/ventures.js';
+import { listVentures, getFocus, REVENUE_GOAL_EUR } from './finance/ventures.js';
 import { dailyCycleActionHandlers } from './dailyMeeting.js';
 import { isDailyMeetingRunning, TARGET_UTC_HOUR } from './scheduler.js';
 import { getKillSwitch } from './killSwitch.js';
@@ -102,9 +102,19 @@ function isWork(e) {
   return e.kind === 'action' && e.ok && WORK_TOOLS.has(e.tool);
 }
 
+/** 'build' when the venture has a repo with writes on, otherwise 'grow'. */
+export function sessionKind(venture) {
+  return venture.repo?.enabled ? 'build' : 'grow';
+}
+
 /**
- * The venture the team is furthest behind on today, or null when none can be
- * worked on (active, with a repo and writes on).
+ * The venture the team is furthest behind on today, or null when there is no
+ * active venture.
+ *
+ * Every active venture is eligible, not only ones with a repo: the founder's
+ * aim is each of them on the road to €1M, and a venture with nothing to build
+ * in yet still has a market to research, a price to set and prospects to find.
+ * Those get a growth session instead of a build one (see sessionKind).
  *
  * "Behind" is against the founder's split: a venture's target share of the
  * last day's work less the share it actually got. With no split, every
@@ -113,7 +123,7 @@ function isWork(e) {
  * looks closer to revenue, the failure FOCUS was added for.
  */
 export function pickVenture({ now = new Date() } = {}) {
-  const eligible = listVentures().filter((v) => v.status === 'active' && v.repo?.enabled);
+  const eligible = listVentures().filter((v) => v.status === 'active');
   if (!eligible.length) return null;
 
   const since = new Date(now.getTime() - DAY_MS).toISOString();
@@ -145,7 +155,7 @@ export function skipReason({ now = new Date() } = {}) {
   const cap = dailyCapUsd();
   if (cap && getSpendToday() >= cap) return 'The daily model spend cap is reached: DAILY_SPEND_CAP_USD raises it; otherwise this waits for tomorrow.';
   if (isDailyMeetingRunning()) return 'The daily meeting is running.';
-  if (!pickVenture({ now })) return 'No active venture has a repo linked with writes on: LINK a repo, then DEPLOY ON <ventureId>.';
+  if (!pickVenture({ now })) return 'There is no active venture to work on: START <title> | <one-liner> begins one.';
 
   const entries = loadEntries();
   const today = now.toISOString().slice(0, 10);
@@ -168,12 +178,29 @@ export function skipReason({ now = new Date() } = {}) {
 export function workSessionKickoff(venture, { now = new Date() } = {}) {
   const split = getFocus().find((f) => f.id === venture.id);
   const share = split ? ` The founder's split gives it ${split.pct}% of the team's work.` : '';
-  return `It's ${now.toISOString().slice(0, 16).replace('T', ' ')} UTC. This is a work session, not a meeting: nobody reads a status report from it, and nobody will tell you what to do. Its only output is work done.
+  const goal = REVENUE_GOAL_EUR.toLocaleString('en');
+  const opening = `It's ${now.toISOString().slice(0, 16).replace('T', ' ')} UTC. This is a work session, not a meeting: nobody reads a status report from it, and nobody will tell you what to do. Its only output is work done.
 
-Venture: "${venture.title}" [${venture.id}].${share}
+Venture: "${venture.title}" [${venture.id}].${share} The founder's aim is for it to reach €${goal} a year in recurring revenue; the latest Road to €1M in your context lists the improvements the team proposed for it.`;
+
+  if (sessionKind(venture) === 'grow') {
+    return `${opening}
+
+This venture has no repo with writes on, so today's work is growing the business, not building code.
 
 1. Call next_task for this venture. If there is one: start_task, do it, then complete_task, or fail_task with the reason.
-2. If the queue is empty, find the venture's open objective. If it has none, set one now with set_objective: one measurable target and a date, derived from its one-liner and the founder's standing direction. Then break the next step toward it into at most three concrete, testable tasks with queue_work, and start the first.
+2. If the queue is empty, take the top improvement the Road to €1M proposes for this venture. If it has no open objective, set one now with set_objective: one measurable target and a date, in what a customer pays for. Break the next step into at most three concrete tasks with queue_work and start the first.
+3. Do it. Research the buyer and the competitors, sharpen the offer and the price, find prospects (update_pipeline), draft the outreach (draft_customer_email: a draft reaches nobody, the founder releases it). Ask the specialists that fit the task.
+4. Write down what you learned and any better improvement than the one on the roadmap, with its evidence (log_venture_note), so the next week's roadmap starts from it.
+5. Do not stop to ask what to work on: pick. Ask the founder only for something only they can do (a credential, a payment, a legal decision), say exactly what, and say what you did in the meantime.
+
+Finish in three lines: what you did, what is queued next, and what you need from the founder, if anything.`;
+  }
+
+  return `${opening}
+
+1. Call next_task for this venture. If there is one: start_task, do it, then complete_task, or fail_task with the reason.
+2. If the queue is empty, take the top improvement the Road to €1M proposes for this venture, or find its open objective. If it has none, set one now with set_objective: one measurable target and a date, derived from its one-liner and the founder's standing direction. Then break the next step into at most three concrete, testable tasks with queue_work, and start the first.
 3. Build it by delegating to the Engineering Lead or the Forge Engineer, and read the repo before writing to it. Code goes out as open_pull_request, one per task, with run_checks and list_checks first. Direct commits only where the approved plan and the venture's setting allow them: a refusal names the reason, so follow it and do not retry it.
 4. Research, drafting and pipeline work count too: ask the Health Researcher, the Privacy Officer or the Pilot Manager when the task needs them.
 5. Do not stop to ask what to work on: pick. Ask the founder only for something only they can do (a credential, a payment, a legal decision), say exactly what, and say what you did in the meantime.
@@ -199,7 +226,7 @@ export async function runWorkSession({ anthropic, now = new Date() }) {
       runAgent({
         anthropic,
         agents: COMPANY_AGENTS,
-        agentId: 'cto',
+        agentId: sessionKind(venture) === 'grow' ? 'coo' : 'cto',
         messages: [{ role: 'user', content: workSessionKickoff(venture, { now }) }],
         actionHandlers: dailyCycleActionHandlers(),
         extraContext: [buildCompanyContext(), steering].filter(Boolean).join('\n\n'),

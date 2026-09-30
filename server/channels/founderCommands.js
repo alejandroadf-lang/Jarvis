@@ -55,6 +55,7 @@ import {
   describePricing as describeVenturePricing,
 } from '../finance/ventures.js';
 import { getLatestDailyReport } from '../dailyReports.js';
+import { getLatestRoadmap } from '../roadmapStore.js';
 import { withdrawPlan, getApprovedPlan } from '../dailyPlan.js';
 import { listAffordableModels } from '../agents/openrouter.js';
 import { describeModelMode, setModelMode, getModelMode } from '../agents/models.js';
@@ -114,6 +115,8 @@ const COMMANDS = [
   // rejectPlan already handled any status; it simply had no route to it.
   { kind: 'plan_clear', re: /^plan\s+clear(?:\s+(.+))?$|^(?:withdraw|unapprove)$/i, arg: 'reason' },
   { kind: 'report', re: /^(report|daily\s+report|latest\s+report)$/i },
+  // The team's latest proposals for getting each venture to €1M a year.
+  { kind: 'roadmap', re: /^(?:roadmap|road\s+to\s+(?:€?1m|a\s+million))$/i },
   // The company as a picture. A list sorts by name; a graph sorts by
   // structure, and "who did the CEO actually talk to" is one look at a picture
   // and a paragraph of text.
@@ -469,6 +472,7 @@ INTEGRATIONS — what's actually connected
 MODELS [search] — live OpenRouter models and their prices
 MODE [ECO|NORMAL|MAX] — switch between cheap models and Claude to save tokens
 REPORT — the latest daily report
+ROADMAP — the team's proposals for getting each venture to €1M a year
 PITCH — generate today's pitch now and email it, exactly as the 8am one
 
 ISSUES — the support desk's procedures, and what a caller reaches
@@ -575,6 +579,12 @@ export async function runFounderCommand(command, deps = {}) {
       return `${ventures.length} active venture${ventures.length === 1 ? '' : 's'}:\n\n${ventures
         .map(describeVenture)
         .join('\n\n')}`;
+    }
+
+    case 'roadmap': {
+      const latest = getLatestRoadmap();
+      if (!latest?.text) return 'No Road to €1M has been written yet. The next daily meeting writes the first, and it is refreshed weekly after that.';
+      return `Road to €1M, written ${latest.generatedAt.slice(0, 10)}:\n\n${latest.text}`;
     }
 
     case 'ready': {
