@@ -34,11 +34,22 @@ export const GROK_TIER = 'grok';
 // checked 2026-06-24; OpenRouter's for hermes-4-70b checked 2026-09-10.
 // Update here if either moves; nothing else reads a price.
 export const MODELS = {
+  // Settable from Railway like the alternatives below, for the same reason: the
+  // newest model an account can call moves faster than this file is edited (the
+  // daily briefing's model check reports it). Moving to a newer model means
+  // setting its price beside it, or the spend meter mis-counts the company's
+  // biggest cost; claude-sonnet-5-5 is priced the same as claude-sonnet-5.
   [DEFAULT_TIER]: {
     provider: 'anthropic',
-    model: 'claude-sonnet-5',
-    inputPricePerMTok: 2.0,
-    outputPricePerMTok: 10.0,
+    get model() {
+      return (process.env.ANTHROPIC_MODEL || '').trim() || 'claude-sonnet-5';
+    },
+    get inputPricePerMTok() {
+      return numberFromEnv('ANTHROPIC_INPUT_PRICE_PER_MTOK', 2.0);
+    },
+    get outputPricePerMTok() {
+      return numberFromEnv('ANTHROPIC_OUTPUT_PRICE_PER_MTOK', 10.0);
+    },
   },
   // Read at call time like the other two alternatives. OpenRouter retires
   // and renames models as readily as anyone, and a pinned name that stops
