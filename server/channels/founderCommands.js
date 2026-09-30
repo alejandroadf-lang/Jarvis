@@ -25,6 +25,7 @@ import { pendingDrafts, releasableDrafts, getDraft, approveDraft, rejectDraft } 
 import { listSearches, searchBalance } from '../searchLog.js';
 import { haltRealActions, resumeRealActions } from '../killSwitch.js';
 import { getSpendSummary, spendBreakdown } from '../spend.js';
+import { buildVaultReport } from '../workspace/founderPages.js';
 import {
   listVentures,
   getVenture,
@@ -77,6 +78,7 @@ const COMMANDS = [
   { kind: 'halt', re: /^(halt|stop|freeze)(?:(?:\s*[:,\-–—]|\s)\s*(.+))?$/i, arg: 'reason' },
   { kind: 'resume', re: /^(resume|unhalt|go\s+live)$/i },
   { kind: 'spend', re: /^(spend|cost|budget)$/i },
+  { kind: 'vault', re: /^(vault|notebook)$/i },
   { kind: 'integrations', re: /^(integrations|connections|health)$/i },
   { kind: 'pitch', re: /^(pitch|pitch now|pitch of the day)$/i },
   { kind: 'issues', re: /^(issues|procedures|desk)$/i },
@@ -468,6 +470,7 @@ VENTURES — every venture, its id and what it's allowed to do
 READY [ventureId] — what is actually stopping the team, and what opens it
 BUILD [ventureId] — what the team is building right now
 SPEND — today's model spend against the cap
+VAULT — is the team's notebook being used: lessons, reads, decisions
 INTEGRATIONS — what's actually connected
 MODELS [search] — live OpenRouter models and their prices
 MODE [ECO|NORMAL|MAX] — switch between cheap models and Claude to save tokens
@@ -544,6 +547,9 @@ export async function runFounderCommand(command, deps = {}) {
       const state = resumeRealActions();
       return `Resumed at ${state.changedAt}. Real actions are live again, still inside whatever scopes each venture has.`;
     }
+
+    case 'vault':
+      return buildVaultReport();
 
     case 'spend': {
       const { spentUsd, capUsd, date, overCap, cache } = getSpendSummary();

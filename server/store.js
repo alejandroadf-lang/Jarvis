@@ -39,6 +39,13 @@ function dataDir() {
   return process.env.JARVIS_DATA_DIR ? path.resolve(process.env.JARVIS_DATA_DIR) : path.join(__dirname, 'data');
 }
 
+/** A path under the data directory, for files that are not JSON records (approved skills). */
+export function dataPath(...parts) {
+  const dir = dataDir();
+  ensureDataDir(dir);
+  return path.join(dir, ...parts);
+}
+
 function ensureDataDir(dir) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 }

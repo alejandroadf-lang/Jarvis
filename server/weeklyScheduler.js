@@ -70,6 +70,14 @@ export async function runWeeklyFollowUps({ anthropic }) {
     } catch (err) {
       console.error('Knowledge compile failed:', err.message);
     }
+    // The founder's Library, summarised into pages the team's search finds.
+    try {
+      const { ingestLibrary } = await import('./workspace/library.js');
+      const made = await ingestLibrary({ anthropic });
+      if (made.length) console.log(`Library notes summarised: ${made.length}.`);
+    } catch (err) {
+      console.error('Library ingest failed:', err.message);
+    }
     // After the compile, so the check sees the pages it just wrote. It reports
     // and never edits; see workspace/vaultLint.js.
     try {

@@ -32,6 +32,7 @@ import {
 } from './vault.js';
 import { readFileMeta } from '../deploy/github.js';
 import { seedRulesRegister } from './rulesRegister.js';
+import { syncApprovedSkills } from './skillProposals.js';
 
 const DECISIONS_FILE = 'decisions.json';
 const TODAY_CHARS = 1500;
@@ -219,6 +220,8 @@ export async function refreshFounderPages({ now = new Date(), seedRules = seedRu
   try {
     invalidateIndex();
     await syncLessons();
+    // Skills the founder approved since yesterday become available today.
+    await syncApprovedSkills().catch((err) => console.error('Skill sync failed:', err.message));
     const notes = await loadNotes({});
     const decisions = await syncDecisions(notes, { now });
     await publishServerPage('Today.md', `${buildToday({ notes, decisions, now })}\n`, `Today — ${day(now)}`);
@@ -234,3 +237,23 @@ export async function refreshFounderPages({ now = new Date(), seedRules = seedRu
   return { done };
 }
 
+
+/**
+ * Whether the notebook is earning its keep, for the VAULT command: how many
+ * lessons, how far they got (trusted, disputed, expired), whether anyone reads
+ * them, what the founder decided, and what agents wrote this week. The number
+ * that matters most is the last-but-one: lessons nobody reads are a diary.
+ */
+export function buildVaultReport() {
+  const m = lessonMetrics();
+  const decisions = readJson(DECISIONS_FILE, { items: [] }).items;
+  const count = (s) => decisions.filter((d) => d.decision === s).length;
+  const writes = recentVaultWrites(300).filter((w) => w.at >= plusDays(-7));
+  return [
+    `Lessons: ${m.total} kept — ${m.trusted} trusted, ${m.candidate} unconfirmed, ${m.disputed} disputed, ${m.expired} expired, ${m.quarantined} quarantined.`,
+    `Reuse: ${m.totalReads} reads across ${m.everRead} lessons; ${m.neverRead} never read.`,
+    `Decisions: ${count('pending')} waiting, ${count('approved')} approved, ${count('rejected')} rejected, ${count('expired')} expired as a no.`,
+    `Written by the team in the last 7 days: ${writes.length} notes.`,
+    m.total && !m.totalReads ? 'Nothing has read a lesson yet: if that stays true, the notebook is not being used.' : '',
+  ].filter(Boolean).join('\n');
+}

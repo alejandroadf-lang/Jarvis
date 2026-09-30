@@ -17,6 +17,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { dataPath } from '../store.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -53,28 +54,45 @@ function parseFrontmatter(raw) {
   return { meta, body: match[2].trim() };
 }
 
+/** Where approved skill proposals are written (the data volume, so a redeploy keeps them). */
+export function approvedSkillsDir() {
+  return dataPath('skills-approved');
+}
+
 let cache = null;
 
 /** Every skill on disk. Read once; call reloadSkills() after editing them. */
 export function listSkills() {
   if (cache) return cache;
 
-  const dir = skillsDir();
-  let files = [];
-  try {
-    files = fs.readdirSync(dir).filter((name) => name.endsWith('.md'));
-  } catch {
-    // No library is a normal state — the company works without any skills.
+  // Skills the founder approved in the vault (workspace/skillProposals.js) are
+  // read after the library's own, and never shadow one of them: a curated
+  // skill cannot be replaced by an agent's draft that a person approved on a
+  // phone.
+  const dirs = [skillsDir(), approvedSkillsDir()];
+  const files = [];
+  for (const dir of dirs) {
+    try {
+      for (const name of fs.readdirSync(dir).filter((n) => n.endsWith('.md'))) files.push({ dir, name });
+    } catch {
+      // No library is a normal state: the company works without any skills.
+    }
+  }
+  if (!files.length) {
     cache = [];
     return cache;
   }
 
+  const seen = new Set();
   cache = files
-    .map((file) => {
+    .map(({ dir, name: file }) => {
       try {
         const { meta, body } = parseFrontmatter(fs.readFileSync(path.join(dir, file), 'utf-8'));
+        const id = meta.name || file.replace(/\.md$/, '');
+        if (seen.has(id)) return null;
+        seen.add(id);
         return {
-          id: meta.name || file.replace(/\.md$/, ''),
+          id,
           description: meta.description || '',
           // Omitted means every agent; a list restricts it. Restricting is
           // about keeping each agent's menu short, not about secrecy.
