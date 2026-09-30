@@ -26,6 +26,7 @@ import { listSearches, searchBalance } from '../searchLog.js';
 import { haltRealActions, resumeRealActions } from '../killSwitch.js';
 import { getSpendSummary, spendBreakdown } from '../spend.js';
 import { buildVaultReport } from '../workspace/founderPages.js';
+import { lastDigest } from '../consultant/digest.js';
 import {
   listVentures,
   getVenture,
@@ -79,6 +80,11 @@ const COMMANDS = [
   { kind: 'resume', re: /^(resume|unhalt|go\s+live)$/i },
   { kind: 'spend', re: /^(spend|cost|budget)$/i },
   { kind: 'vault', re: /^(vault|notebook)$/i },
+  { kind: 'digest', re: /^(digest|briefing|consultant|coach)$/i },
+  // A note on the briefing itself. Distinct from DIGEST by the words after it, and
+  // long enough to be a note (a bare "briefing feedback" is a mistake, answered below).
+  { kind: 'briefing_feedback', re: /^briefing\s+feedback(?:[:\s]+([\s\S]+))?$/i, arg: 'text' },
+  { kind: 'autofix', re: /^autofix(?:\s+(on|off|status))?$/i, arg: 'mode' },
   { kind: 'integrations', re: /^(integrations|connections|health)$/i },
   { kind: 'pitch', re: /^(pitch|pitch now|pitch of the day)$/i },
   { kind: 'issues', re: /^(issues|procedures|desk)$/i },
@@ -471,6 +477,9 @@ READY [ventureId] — what is actually stopping the team, and what opens it
 BUILD [ventureId] — what the team is building right now
 SPEND — today's model spend against the cap
 VAULT — is the team's notebook being used: lessons, reads, decisions
+DIGEST — build the consultant's briefing now and email it (also sent each morning)
+BRIEFING FEEDBACK <text> — tell the briefing what to change about itself (style, order, what to add)
+AUTOFIX [ON|OFF|STATUS] — the consultant's automatic corrections: pull requests, tasks, drafts (never merges, deploys, sends or spends)
 INTEGRATIONS — what's actually connected
 MODELS [search] — live OpenRouter models and their prices
 MODE [ECO|NORMAL|MAX] — switch between cheap models and Claude to save tokens
@@ -550,6 +559,29 @@ export async function runFounderCommand(command, deps = {}) {
 
     case 'vault':
       return buildVaultReport();
+
+    case 'autofix': {
+      // Loaded on demand: it pulls in the whole unattended cycle, and this module is read by most of the app.
+      const { setAutofix, autofixStatus } = await import('../consultant/autofix.js');
+      const mode = String(command.mode || 'status').toLowerCase();
+      if (mode === 'on') setAutofix(true);
+      if (mode === 'off') setAutofix(false);
+      const head = mode === 'on' ? 'Automatic corrections switched ON.\n\n' : mode === 'off' ? 'Automatic corrections switched OFF. Nothing more will be started until AUTOFIX ON.\n\n' : '';
+      return `${head}${autofixStatus()}`;
+    }
+
+    case 'briefing_feedback': {
+      const { addFeedback } = await import('../consultant/selfReview.js');
+      const done = addFeedback(command.text);
+      return done.ok ? 'Noted. The next briefing is told what you asked for and says how it applied it (it is also listed under "How to improve this briefing").' : done.reason;
+    }
+
+    case 'digest': {
+      if (!deps.startDigest) return 'The consultant briefing is not available on this build.';
+      const last = lastDigest();
+      deps.startDigest();
+      return `Building the briefing now: it reads the company's records and this week's sources and asks several models, which takes a minute or two. I'll message you when it has gone out to your email${last ? ` (the last one was ${last.date}, readiness ${last.readiness}/4)` : ''}.`;
+    }
 
     case 'spend': {
       const { spentUsd, capUsd, date, overCap, cache } = getSpendSummary();

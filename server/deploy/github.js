@@ -87,6 +87,14 @@ export async function readFile({ owner, repo, branch, path }) {
  * note the founder changed on their phone in the meantime fails instead of
  * silently discarding their change.
  */
+/**
+ * A plain GET against the GitHub API, for callers that only read (the
+ * consultant's code review). Same auth and error shape as everything here.
+ */
+export function githubGet(path) {
+  return githubRequest(path);
+}
+
 export async function readFileMeta({ owner, repo, branch, path }) {
   try {
     const file = await githubRequest(`/repos/${owner}/${repo}/contents/${encodeURI(path)}?ref=${branch}`);

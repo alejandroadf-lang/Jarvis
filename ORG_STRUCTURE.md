@@ -1265,6 +1265,220 @@ failure, which made "this file doesn't exist yet" — a normal state — look
 identical to "the token is wrong". It now carries `.status`, so a 404 reads
 as absence and everything else still throws.
 
+## The consultant: a daily briefing on how ready this company is
+
+Every morning, after the daily meeting, one email arrives: how ready the company
+is to earn its first million, what is working, what is weak, the one thing to do
+today, the next seven days, and what the best sources say that applies. `DIGEST`
+on WhatsApp builds it on demand. A copy lands in the vault under
+`Company/Consultant/`. It costs roughly $0.10 to $0.40 a day with a panel of
+several models (`CONSULTANT_BUDGET_USD`, default $0.75, is a hard ceiling for
+one briefing's review), and `CONSULTANT_DIGEST_DISABLED=true`
+switches it off.
+
+**How far away, without looking at money.** "You are not earning, so you are far
+away" is true on day one and helps nobody. What decides whether the money can
+come is whether each thing it depends on exists, so the briefing scores that:
+
+- Eight dimensions, each 0 to 4 (initial, emerging, defined, managed,
+  optimised): product and technology, revenue engine, go-to-market machinery,
+  operations and autonomy, data and learning, risk and governance, financial
+  discipline, founder leverage. The layout follows the AI-readiness reviews the
+  large consultancies publish; it is not produced by, or endorsed by, any of
+  them.
+- A ladder per venture from "a price is set" through "a working product",
+  "people are using it", "ten buyers identified", "first conversations", "first
+  paying customer", "three paying customers", "€10,000 a month" to "€1M a year",
+  with the first rung not yet reached and the fact that shows it.
+- The binding constraint: the lowest of product, revenue and go-to-market,
+  because raising anything else first is polishing.
+
+**Why it can be trusted more than a model's opinion.** The numbers are computed
+by code from the company's own records and printed beside the facts behind them
+(`E1`, `E2`…); no model can change them. What the sources say is read by the
+server itself: once a week a search finds pages (including the four big
+consultancies' own material on agentic AI, first-hand founder accounts with
+their own numbers, and accounts of what fails), the server fetches each one,
+and a model extracts claims each with a verbatim quote that code keeps only if
+it is really in the page's text. Pages that could not be read (a script-only
+site, a PDF, a block) are listed as unread, never replaced by what a model
+remembers. Then every model family you have a key for reviews the facts alone,
+one merges them and lists where they disagreed, and code checks every citation:
+one that points at nothing becomes `[?]` and is counted in the email. If only
+Anthropic is configured, the email says the review was written by one model and
+is not an independent panel. The consultant has no action tools: it reads and
+writes an email and a vault note, and cannot send, spend, deploy or change a
+record. The source pages and their claims are text from the outside, kept in
+the vault's quarantine tier and never read into the working agents' context.
+
+**KPIs and maturity.** A table of about twenty KPIs in six groups (revenue and
+growth, sales activity, product and usage, AI economics, autonomy and quality,
+delivery), each with its value, a status (on track, watch, behind, or not
+measured), the threshold that decided it, and the fact it cites. They are the
+numbers a company whose staff are agents and whose cost is inference is watched
+by: recurring revenue and the customers the goal needs at today's price,
+pipeline coverage of the next target, reply rate, activation and return in the
+product, model cost as a share of revenue (the AI equivalent of cost of goods),
+the share of work sessions that produce something, items waiting on the founder
+alone, the agents' eval pass rate, how often the guardrails refuse an action,
+and pull requests merged and CI passing. It also names the company stage
+(pre-revenue building, selling, early revenue, repeatable, scaling) and a KPI
+health percentage over the KPIs that can be measured. The count that cannot be
+measured is printed as a finding of its own. The thresholds are this company's
+own stage rules, printed beside each KPI; they are not industry benchmarks, and
+an outside benchmark appears in the review only where a verified source is
+cited.
+
+**The vibe-coding coach.** The founder builds this company by directing AI
+coding tools, and what goes wrong there is rarely a feature: it is that nothing
+checks it. So each morning the server reviews each repo through the GitHub API
+(the company's own, each venture's linked repo, or `CODE_REVIEW_REPOS`): whether
+a CI workflow runs the tests and passes, how many tests there are per source
+file, whether there are behaviour evals, tracing, a kill switch and spend cap,
+instructions for the coding tool, a settings template, locked dependencies, a
+security policy, automatic updates, a linter; which files are too large to hold
+in one head; and how many commits and merged pull requests landed in a
+fortnight. It reports what is present and what is missing and adds an
+engineering dimension to the scorecard. It reads structure and activity, not
+the logic, and the email says so. The review section then coaches from those
+facts and from a second weekly reading list (official guidance on AI coding
+agents, studies of AI-assisted development, first-hand accounts of what broke in
+AI-built products, writing on evals and observability), verified against the
+pages like the first: what the founder is doing well, what is missing for an
+autonomous AI-agent company, and three habits or prompts for the next coding
+sessions.
+
+**Technology against competitors.** Your technology cannot be compared with a
+competitor's from the inside, because their code is not yours to read. What can
+be measured identically for both is what a visitor or an AI agent can see. Once
+a week, for every venture with a live URL (`URL <id> https://…` sets it), the
+server finds the venture's closest competitors and probes them and you with the
+same fixed checks: whether the site answers over https and how fast, the
+security headers, public documentation, a machine-readable API description
+(OpenAPI), a status page, a dated changelog and how many entries it has in 90
+days, an SDK, the compliance frameworks it names, and, for products that other
+people's AI agents will use, an `llms.txt`, an MCP server, documented webhooks
+and integrations. Two rubrics, each out of ten and printed in full in the email,
+score them: technology quality and technology innovation. You get a rank against
+each competitor and the list of what the best one has that you were not seen to
+have. It is a comparison of observable signals: it says nothing about whose code
+is better, and a signal marked missing was not found on the pages probed, not
+proven absent.
+
+Who counts as a competitor is a judgement. Yours wins: a note in
+`Company/Competitors/` with `type: competitor-list`, the venture's title in
+`venture:`, and the URLs as bullets under a `## Track` heading. Where there is
+none, a search proposes up to four per venture, and the email says their
+relevance is unverified. Every URL still has to be public https and is fetched
+with the same address and redirect checks as everything else that fetches a URL
+from outside.
+
+```
+---
+type: competitor-list
+venture: Circadian
+---
+## Track
+- https://www.timeshifter.com
+- https://www.stopjetlag.com
+```
+
+**Your coding practice, and a plan to improve it.** From your pull requests and
+commits themselves (each merged pull request is read once and cached), eight
+areas are scored 0 to 4 against thresholds printed in the email: small changes
+that are easy to review; tests that travel with the code; CI passing before a
+merge; a second look before merge (a review bot counts); little rework straight
+after (fixes and reverts); how fast an idea reaches main; the coding tool's
+instructions file kept alive; and a net under the agents and the repo (evals,
+tracing, a kill switch and spend cap, locked and updated dependencies). They are
+habits visible in the record, not talent, and not whether the logic is right; the
+email says so. A snapshot is kept weekly, so each area shows whether it moved
+since about two weeks ago. The weakest areas produce candidate actions from a
+fixed catalogue in `consultant/practice.js`, each with a first prompt to give the
+coding tool and the number that says it worked; the review turns them into a
+30/60/90-day plan using only those actions (anything added is marked as
+judgement), and the next briefing shows whether the numbers moved.
+
+**Automatic corrections.** The briefing does not stop at advice. Once it has
+gone out, the team starts correcting what it found, without asking you first: up
+to three corrections a day, in one bounded session. Because that is a real grant
+of autonomy, the bounds are the design and they are enforced in code, not in the
+prompt.
+
+What it may start: pull requests in repos already linked to a venture (within
+that repo's allowed paths and its review-only setting, never merged: you or CI
+decide); the durable task queue, objectives, pipeline records that carry a source
+link, notes; draft emails (a draft reaches nobody until you release it); and a
+decision request in your inbox for anything that needs you (a price, a service to
+sign up for, a credential, a repo to link). What it cannot do, because those
+tools are not in the set the session is given (an allowlist, so a tool added to
+the unattended cycle later is not added here): commit to a main branch, deploy,
+revert, send an email, create a payment link, change a price, spend money, change
+a setting or a credential, or change this company's own platform code, where the
+guardrails themselves live and where a change stays a human's. The kill switch,
+the daily spend cap and each repo's review-only setting apply as they always do.
+
+What it corrects is chosen by code, from the scorecard's next rung on each
+venture, the gaps a competitor has over you on the benchmark (no llms.txt, no
+OpenAPI file, no security headers, no docs or changelog), and what the code review
+found missing in a venture's own repo (CLAUDE.md, tests, CI, .env.example,
+SECURITY.md, dependency updates). The instructions come from our own rubric
+labels, so nothing from a competitor's page can put an instruction in. A venture
+with no linked repo gets a request to link one, not a pull request.
+
+Each correction is recorded with its outcome, read from what actually happened
+(the pull requests that exist, the actions that succeeded or were refused), not
+only from what the session says; one that fails or reports nothing is recorded as
+blocked or unknown, never as done. It is not retried for a week and is given up on
+after three tries and left for you. The briefing lists what is about to start and
+what the last run did; a second email follows the run with the pull request links.
+
+`AUTOFIX OFF` from WhatsApp stops it, `AUTOFIX ON` restarts it, and `AUTOFIX`
+shows the state. `CONSULTANT_AUTOFIX_DISABLED=true` switches it off from Railway.
+`CONSULTANT_AUTOFIX_PER_DAY` and `CONSULTANT_AUTOFIX_BUDGET_USD` size it.
+
+Not included: merging. Every change lands as a pull request that waits for you or
+for CI. Letting a correction merge itself would put unreviewed AI-written changes
+into products that handle health data and customer email, so it is a decision for
+you to take on purpose, for a narrow class (say tests and docs only, with CI
+green), not a default.
+
+**How the briefing improves itself.** Technology moves every week, so the briefing
+also reviews itself, in a section called "How to improve this briefing" and as
+section 11 of the review. Nothing in it is a model's opinion of itself:
+
+- *Its own record.* From the last briefings: cost against budget, how many
+  citations pointed at nothing, how many KPIs could not be measured, whether the
+  panel was one model, how many pages on each reading list could not be read.
+- *A model check.* Weekly, the server asks each provider whose key is set for the
+  models the account can call (Anthropic, OpenAI, xAI, DeepSeek, OpenRouter,
+  Gemini) and compares them with the configured ones. It says "newer on this
+  account: X" or "the configured model is no longer listed". It never switches a
+  model: changing one changes what a briefing costs, and the spend meter needs the
+  new model's price set beside it (the INPUT and OUTPUT price variables in
+  `server/.env.example`), so the advice says both.
+- *A technology reading list* (cited as [T#]): once a week, pages from the last
+  sixty days on new models, agent tooling and protocols, data sources, security
+  and regulation, read and quote-checked by the server like the other two lists.
+- *Your own sources.* A vault note with `type: briefing-sources` and headings
+  `## company`, `## vibe` or `## tech`, each followed by `- https://…` bullets,
+  puts those pages first on that list. They pass the same fetch and quote checks.
+- *Your notes.* `BRIEFING FEEDBACK <what to change>` from WhatsApp is stored
+  (through the write gate, so a pasted key is refused) and shown to every model
+  the next morning and in the email.
+
+The improvements are chosen by code from fixed rules and cited as [B#]; the
+models may add their own, marked (judgement).
+
+Costs: the daily review is about $0.15 to $0.45. Reading the sources costs more
+but runs at most once a week per reading list (and once a week for the competitor search), under its own ceiling
+(`CONSULTANT_READING_BUDGET_USD`, default $1.50), so it cannot squeeze out the
+daily review or be squeezed by it.
+
+Not built: automatic pricing benchmarks (nothing here can verify a competitor's
+price), and any use of the email as an instruction to the team; the founder
+turns a recommendation into work by saying so (or in `Steering.md`).
+
 ## Ideas a company without payroll can actually win
 
 The studio's ambition bar asked whether an idea was *big*. It never asked the
