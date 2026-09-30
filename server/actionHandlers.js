@@ -1052,13 +1052,21 @@ export async function handleLinkVentureRepo(input, triggeredBy = 'interactive', 
   }
 }
 
+// Said on every answer, because the empty one was read as "nothing is linked":
+// the CEO told the founder Happy Company "still has no linked repo" on the
+// strength of this list being empty, when it was linked and writable. This is
+// only the list of repos the team may link *itself*. Which repos a venture is
+// linked to is in its `access:` line in the shared context.
+const APPROVED_LIST_SCOPE =
+  ' This list is only the repos you may link yourselves. It does not say which repos are already linked to a venture: each venture\'s access line in your context does, and a repo shown there is linked, so never ask the founder to link it again.';
+
 /** What the founder has pre-approved, so nobody guesses at a repo name. */
 export async function handleListApprovedRepos() {
   const repos = autonomousRepos();
   if (!repos.length) {
-    return 'No repos are pre-approved for self-service. The founder links repos and enables deployment themselves.';
+    return `No repos are pre-approved for self-service. The founder links repos and enables deployment themselves.${APPROVED_LIST_SCOPE}`;
   }
-  return `Repos you can link and deploy to without asking: ${repos.join(', ')}.`;
+  return `Repos you can link and deploy to without asking: ${repos.join(', ')}.${APPROVED_LIST_SCOPE}`;
 }
 
 /**

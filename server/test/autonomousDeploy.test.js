@@ -209,3 +209,16 @@ test('a plan approved for a different repo does not cover this one', async () =>
 
   assert.match(reply, /not in the approved plan/);
 });
+
+test('the list says it is not the list of what is linked, so an empty one is not read as "nothing linked"', async () => {
+  // The CEO told the founder Happy Company still had no linked repo because
+  // this list was empty. It was linked and writable; this is a different list.
+  for (const configured of [true, false]) {
+    if (configured) process.env.AUTONOMOUS_DEPLOY_REPOS = 'acme/doc-intel';
+    else delete process.env.AUTONOMOUS_DEPLOY_REPOS;
+    const reply = await handlers.handleListApprovedRepos();
+    assert.match(reply, /only the repos you may link yourselves/);
+    assert.match(reply, /each venture's access line in your context does/);
+    assert.match(reply, /never ask the founder to link it again/);
+  }
+});
