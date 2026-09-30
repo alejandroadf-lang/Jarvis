@@ -1,0 +1,48 @@
+# Automatic dependency updates. The daily briefing's code review scored this
+# repo "missing: automatic dependency updates", which also held the
+# "A net under the agents and the repo" practice at 1 of 4.
+#
+# Minor and patch bumps are grouped into one pull request per directory per
+# week, so the agents' own pull requests are not buried under Dependabot noise.
+# Major versions still come one per pull request: they are the ones that break.
+#
+# Dependabot opens pull requests only. CI runs on them like any other, and
+# nothing here merges them.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directories:
+      - /client
+      - /server
+      - /packages/action-layer
+      - /ventures/happycompany
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: Asia/Bangkok
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+
+  # Circadian ships inside the same image (see the circadian-tests job in ci.yml).
+  - package-ecosystem: pip
+    directory: /ventures/circadian/src
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: Asia/Bangkok
+    open-pull-requests-limit: 3
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
