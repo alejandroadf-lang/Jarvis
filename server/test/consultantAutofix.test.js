@@ -86,7 +86,12 @@ test('candidates come from our rubric labels, the ladder and the repo checklist,
 
   assert.equal(c[0].key, `ladder:${a.id}:used`, 'the venture closest to the goal comes first, at its next rung');
   for (const k of ['docs', 'headers', 'openapi', 'llms', 'mcp']) assert.ok(keys.includes(`bench:${a.id}:${k}`), k);
-  assert.ok(keys.includes(`repo:${a.id}:agentDocs`) && keys.includes(`repo:${a.id}:tests`));
+  // Alpha's repo link allows only src/, so a root CLAUDE.md would be refused: it becomes one request to widen the scope.
+  assert.ok(!keys.includes(`repo:${a.id}:agentDocs`), 'a pull request the scope would refuse is not started');
+  const widen = c.find((x) => x.key === `decision:${a.id}:paths:CLAUDE.md`);
+  assert.equal(widen.kind, 'decision');
+  assert.match(widen.instruction, new RegExp(`LINK ${a.id} me/alpha src/ CLAUDE\\.md`));
+  assert.ok(keys.includes(`repo:${a.id}:tests`));
   assert.ok(!keys.includes(`repo:${a.id}:ci`), 'what is present is not a gap');
   assert.equal(c.find((x) => x.key === `bench:${a.id}:mcp`).kind, 'task', 'an MCP server is scoped, not built blind');
   assert.equal(c.find((x) => x.key === `ladder:${b.id}:price`).kind, 'decision', 'a price is the founder\'s');
@@ -212,4 +217,30 @@ test('the email section says what starts, what the last run did, and the limits'
   assert.match(text, /pull requests only, never merged; no deploys, reverts, sent email, price changes or spending/);
   assert.match(af.renderFixes({ planned: [], last: null, on: false }), /Automatic corrections are OFF/);
   assert.match(af.renderFixes({ planned: [], last: null, on: true }), /Nothing new to correct today/);
+});
+
+test('closing lines are read from the whole reply, so a long reply does not lose them; bullets and bold are read too', () => {
+  const selected = [{ id: 'F1', key: 'k1', title: 'One', kind: 'pr' }, { id: 'F2', key: 'k2', title: 'Two', kind: 'pr' }, { id: 'F3', key: 'k3', title: 'Three', kind: 'task' }];
+  const long = `${'I looked at the repository and delegated the work to the CTO. '.repeat(60)}\n- **F1:** done — https://github.com/me/alpha/pull/9\n* F2: asked — filed a decision to widen the scope\nF3: blocked — no usage endpoint exists`;
+  assert.ok(long.length > 1500, 'longer than the old cut');
+  const out = af.parseOutcomes(long, selected);
+  assert.deepEqual(out.map((o) => o.status), ['done', 'asked', 'blocked']);
+  assert.equal(out[0].note, 'https://github.com/me/alpha/pull/9');
+  assert.equal(af.parseOutcomes('nothing useful', selected)[0].status, 'unknown');
+});
+
+test('a run that reports nothing still shows what the activity log says it did, and the end of what it said', () => {
+  const last = {
+    date: '2026-10-10',
+    outcomes: [{ id: 'F1', status: 'unknown', title: 'CircadianAPI: X', note: 'the session did not report on this one' }],
+    prs: [],
+    actions: { open_pull_request: { ok: 0, refused: 2 }, check_usage: { ok: 1, refused: 0 } },
+    summary: 'I asked the CTO and it said the path is outside the allowed scope.',
+    usd: 0.127,
+  };
+  const text = af.renderFixes({ planned: [], last, on: true });
+  assert.match(text, /What the session did, from the activity log: open_pull_request 0 done, 2 refused; check_usage 1 done\./);
+  assert.match(text, /It gave no closing line for some corrections\. The end of what it said:\n    \| I asked the CTO/);
+  const none = af.renderFixes({ planned: [], last: { ...last, actions: {}, outcomes: [{ id: 'F1', status: 'done', title: 't', note: 'n' }] }, on: true });
+  assert.match(none, /The activity log shows the session took no action with any tool\./);
 });

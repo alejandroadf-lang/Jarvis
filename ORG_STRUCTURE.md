@@ -1440,6 +1440,14 @@ what the last run did; a second email follows the run with the pull request link
 shows the state. `CONSULTANT_AUTOFIX_DISABLED=true` switches it off from Railway.
 `CONSULTANT_AUTOFIX_PER_DAY` and `CONSULTANT_AUTOFIX_BUDGET_USD` size it.
 
+A correction the repo link's allowed paths would refuse is not started as a pull
+request that fails: a missing `CLAUDE.md`, `.env.example`, `SECURITY.md` or
+dependabot file lives at the repo root or under `.github`, which a link made for
+`src/` does not cover, so the team files one decision asking you to widen the scope
+(`LINK <id> <owner/repo> <paths>`, keeping the paths already allowed). The email
+also shows what the session did according to the activity log (tools used, and how
+many calls were refused), not only what it says it did.
+
 Not included: merging. Every change lands as a pull request that waits for you or
 for CI. Letting a correction merge itself would put unreviewed AI-written changes
 into products that handle health data and customer email, so it is a decision for

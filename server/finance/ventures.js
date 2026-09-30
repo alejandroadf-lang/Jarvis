@@ -438,7 +438,7 @@ function assertDirectCommitsAllowed(venture) {
   }
 }
 
-function isPathAllowed(repo, targetPath) {
+export function isPathAllowed(repo, targetPath) {
   return repo.allowedPaths.some(
     (allowed) => targetPath === allowed || targetPath.startsWith(allowed.replace(/\/?$/, '/'))
   );
