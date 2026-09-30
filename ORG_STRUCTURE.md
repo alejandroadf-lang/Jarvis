@@ -1273,7 +1273,7 @@ today, the next seven days, and what the best sources say that applies. `DIGEST`
 on WhatsApp builds it on demand. A copy lands in the vault under
 `Company/Consultant/`. It costs roughly $0.10 to $0.40 a day with a panel of
 several models (`CONSULTANT_BUDGET_USD`, default $0.75, is a hard ceiling for
-one briefing including the weekly source reading), and `CONSULTANT_DIGEST_DISABLED=true`
+one briefing's review), and `CONSULTANT_DIGEST_DISABLED=true`
 switches it off.
 
 **How far away, without looking at money.** "You are not earning, so you are far
@@ -1310,6 +1310,48 @@ is not an independent panel. The consultant has no action tools: it reads and
 writes an email and a vault note, and cannot send, spend, deploy or change a
 record. The source pages and their claims are text from the outside, kept in
 the vault's quarantine tier and never read into the working agents' context.
+
+**KPIs and maturity.** A table of about twenty KPIs in six groups (revenue and
+growth, sales activity, product and usage, AI economics, autonomy and quality,
+delivery), each with its value, a status (on track, watch, behind, or not
+measured), the threshold that decided it, and the fact it cites. They are the
+numbers a company whose staff are agents and whose cost is inference is watched
+by: recurring revenue and the customers the goal needs at today's price,
+pipeline coverage of the next target, reply rate, activation and return in the
+product, model cost as a share of revenue (the AI equivalent of cost of goods),
+the share of work sessions that produce something, items waiting on the founder
+alone, the agents' eval pass rate, how often the guardrails refuse an action,
+and pull requests merged and CI passing. It also names the company stage
+(pre-revenue building, selling, early revenue, repeatable, scaling) and a KPI
+health percentage over the KPIs that can be measured. The count that cannot be
+measured is printed as a finding of its own. The thresholds are this company's
+own stage rules, printed beside each KPI; they are not industry benchmarks, and
+an outside benchmark appears in the review only where a verified source is
+cited.
+
+**The vibe-coding coach.** The founder builds this company by directing AI
+coding tools, and what goes wrong there is rarely a feature: it is that nothing
+checks it. So each morning the server reviews each repo through the GitHub API
+(the company's own, each venture's linked repo, or `CODE_REVIEW_REPOS`): whether
+a CI workflow runs the tests and passes, how many tests there are per source
+file, whether there are behaviour evals, tracing, a kill switch and spend cap,
+instructions for the coding tool, a settings template, locked dependencies, a
+security policy, automatic updates, a linter; which files are too large to hold
+in one head; and how many commits and merged pull requests landed in a
+fortnight. It reports what is present and what is missing and adds an
+engineering dimension to the scorecard. It reads structure and activity, not
+the logic, and the email says so. The review section then coaches from those
+facts and from a second weekly reading list (official guidance on AI coding
+agents, studies of AI-assisted development, first-hand accounts of what broke in
+AI-built products, writing on evals and observability), verified against the
+pages like the first: what the founder is doing well, what is missing for an
+autonomous AI-agent company, and three habits or prompts for the next coding
+sessions.
+
+Costs: the daily review is about $0.15 to $0.45. Reading the sources costs more
+but runs at most once a week per reading list, under its own ceiling
+(`CONSULTANT_READING_BUDGET_USD`, default $1.00), so it cannot squeeze out the
+daily review or be squeezed by it.
 
 Not built: automatic pricing benchmarks (nothing here can verify a competitor's
 price), and any use of the email as an instruction to the team; the founder

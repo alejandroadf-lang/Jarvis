@@ -38,6 +38,11 @@ after(() => {
 beforeEach(() => {
   for (const k of ENV) delete process.env[k];
   store.writeJson('consultant.json', { lastDate: null, history: [] });
+  store.writeJson('consultant-playbook-vibe.json', {
+    refreshedAt: '2026-10-10T01:00:00.000Z',
+    items: [{ id: 'V1', url: 'https://vibe.example.com/tests', publisher: 'A Lab', title: 'T', retrievedAt: '2026-10-10', claim: 'Tests catch what the agent breaks.', quote: 'agents break things quietly without tests', type: 'first_hand_revenue' }],
+    unread: [],
+  });
   store.writeJson('consultant-playbook.json', {
     refreshedAt: '2026-10-10T01:00:00.000Z',
     items: [{ id: 'P1', url: 'https://good.example.com/a', publisher: 'A Founder', title: 'T', retrievedAt: '2026-10-10', claim: 'Flat pricing worked.', quote: 'charged a flat monthly fee from day one', type: 'first_hand_revenue' }],
@@ -63,15 +68,20 @@ test('the email leads with the review, then the code-computed numbers, facts, so
   const t = sent[0].text;
   assert.match(t, /^# Your AI-company briefing, 2026-10-10\n\n## Verdict\nNo product is live yet \[E1\]/);
   assert.match(t, /Invented \[\?\]/, 'an invented citation is replaced');
-  assert.ok(t.indexOf('## Verdict') < t.indexOf('## The numbers'), 'the review comes first');
-  assert.match(t, /## The numbers \(computed by code/);
-  assert.match(t, /Binding constraint:/);
-  assert.match(t, /## The facts behind them\n\n\[E1\]/);
-  assert.match(t, /## Sources read and verified[\s\S]*- https:\/\/good\.example\.com\/a/);
+  assert.ok(t.indexOf('## Verdict') < t.indexOf('## KPIs and maturity'), 'the review comes first');
+  assert.match(t, /## KPIs and maturity \(computed by code/);
+  assert.match(t, /Company stage: /);
+  assert.match(t, /KPI health: \d+%/);
+  assert.match(t, /not industry benchmarks/);
+  assert.match(t, /## Readiness scorecard \(also computed by code\)[\s\S]*Binding constraint:/);
+  assert.match(t, /## Code review: what is in place and what is missing\n\nThe code was not reviewed/);
+  assert.match(t, /## The facts behind the numbers\n\n\[E1\]/);
+  assert.match(t, /## Sources read and verified[\s\S]*- https:\/\/good\.example\.com\/a[\s\S]*- https:\/\/vibe\.example\.com\/tests/);
   assert.match(t, /Could not be read or verified[\s\S]*blocked\.example\.com\/b: HTTP 403/);
   assert.match(t, /2 models each reviewed the company alone \(Claude, claude-sonnet-5; OpenAI, /);
   assert.match(t, /1 pointed at nothing and were replaced with \[\?\]/);
-  assert.match(t, /Cost of this briefing: \$0\.\d+ .*budget \$0\.75/);
+  assert.match(t, /Cost: \$0\.\d+ for the review \(budget \$0\.75\)/);
+  assert.match(sent[0].subject, /KPI health \d+%/);
   assert.match(t, /not produced by, or endorsed by, any of them/);
 });
 
@@ -126,14 +136,36 @@ test('without email it still writes the vault note; with neither it says it emai
   assert.equal(out.published, true);
   assert.equal(published[0].p, 'Company/Consultant/2026-10-10.md');
   assert.match(published[0].c, /type: consultant-digest/);
-  assert.match(published[0].c, /## The numbers/);
+  assert.match(published[0].c, /## KPIs and maturity/);
+  assert.match(published[0].c, /kpi_health: \d+/);
 });
 
-test('a stale playbook is refreshed first, a fresh one is not', async () => {
-  let refreshed = 0;
-  const run = (o) => digest.runConsultantDigest({ members: panel(), send: async () => {}, publish: async () => true, force: true, refresh: async () => { refreshed += 1; }, ...o });
+test('a stale reading list is refreshed first, per topic, and a fresh one is not', async () => {
+  const topics = [];
+  const run = (o) => digest.runConsultantDigest({ members: panel(), send: async () => {}, publish: async () => true, force: true, refresh: async ({ topic }) => { topics.push(topic); }, ...o });
   await run({ now: new Date('2026-10-12T03:00:00Z') });
-  assert.equal(refreshed, 0, 'two days old is fresh');
+  assert.deepEqual(topics, [], 'two days old is fresh for both');
   await run({ now: new Date('2026-10-30T03:00:00Z') });
-  assert.equal(refreshed, 1, 'three weeks old is not');
+  assert.deepEqual(topics, ['company', 'vibe'], 'three weeks old is not');
+});
+
+test('the code review and the coding sources reach the email, and their citations are valid', async () => {
+  process.env.SMTP_HOST = 'smtp.example.com';
+  process.env.REPORT_EMAIL_TO = 'me@example.com';
+  const sent = [];
+  const engineering = {
+    level: 2.5,
+    facts: ['the company\'s own code (me/jarvis): 200 source files and 20 test files.'],
+    repos: [{ label: 'the company\'s own code', owner: 'me', name: 'jarvis', checklist: [{ key: 'ci', label: 'A CI workflow that runs the tests on every push', essential: true, present: true }, { key: 'evals', label: 'Behaviour evals that would notice an agent getting worse', essential: true, present: false }], bigFiles: [{ path: 'server/index.js', kb: 90 }], activity: { merged14: 6, ci: { green: true, failed: 0, pending: 0, total: 5 } } }],
+  };
+  const reply = (p) => (/independent reviews/.test(p.messages[0].content) ? '## Vibe-coding coach\nAdd evals [E1] and keep tests [V1]. KPI [K1]. Bogus [V9] [K99].' : '## Draft [E1]');
+  await digest.runConsultantDigest({ now: NOW, members: [member('Claude', 'frontier', reply), member('OpenAI', 'assistant', '## Draft [E1]')], refresh: async () => {}, review: async () => engineering, send: async (m) => { sent.push(m); } });
+  const t = sent[0].text;
+  assert.match(t, /Add evals \[E\d+\] and keep tests \[V1\]\. KPI \[K1\]\. Bogus \[\?\] \[\?\]\./);
+  assert.match(t, /2 pointed at nothing/);
+  assert.match(t, /the company's own code \(me\/jarvis\)\n  \[present\] A CI workflow/);
+  assert.match(t, /\[MISSING\] Behaviour evals/);
+  assert.match(t, /\[WATCH\] Very large files: server\/index\.js 90 KB/);
+  assert.match(t, /Engineering and code health/);
+  assert.match(t, /Pull requests merged in 14 days: 6 across 1 repos/);
 });

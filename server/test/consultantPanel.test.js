@@ -114,3 +114,19 @@ test('the digest budget stops further calls, and if nothing can run the whole th
   }
   await assert.rejects(panel.runPanel({ inputs, members: [member('Claude', 'frontier', 'x')], budget: (() => { const b = models.createBudget(1); b.add(2); return b; })() }), /no model produced a review .*budget/);
 });
+
+test('coding-source and KPI citations are valid when they exist, and the draft asks for the coach and KPI sections', async () => {
+  const out = panel.checkCitations('Add tests [V2]. KPI health is low [K3, E1]. Made up [V9] [K40].', { factIds: new Set(['E1']), playbookIds: new Set(['V2', 'K3']) });
+  assert.equal(out.text, 'Add tests [V2]. KPI health is low [K3, E1]. Made up [?] [?].');
+  assert.equal(out.cited, 3);
+  assert.equal(out.unknown, 2);
+
+  const prompt = panel.draftPrompt({ ...inputs, kpiText: '[K1] Recurring revenue: €0 (BEHIND)', vibeText: '[V1] Tests catch what the agent breaks.' });
+  assert.match(prompt, /7\. Vibe-coding coach/);
+  assert.match(prompt, /8\. KPI reading/);
+  assert.match(prompt, /name the specific missing pieces/);
+  assert.match(prompt, /\[K1\] Recurring revenue/);
+  assert.match(prompt, /\[V1\] Tests catch/);
+  assert.match(panel.SYSTEM, /is not an engineer/);
+  assert.match(panel.synthesisPrompt({ drafts: [{ name: 'A', model: 'm', text: 't' }], factsText: 'f', kpiText: '[K1] x', playbookText: 'p', vibeText: '[V1] y', date: 'd' }), /same eight sections/);
+});

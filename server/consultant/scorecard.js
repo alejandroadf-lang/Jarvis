@@ -60,7 +60,7 @@ const one = (n) => Math.round(n * 10) / 10;
  * them (rules pages live there); without them the risk score says so instead of
  * guessing.
  */
-export function buildScorecard({ now = new Date(), notes = null } = {}) {
+export function buildScorecard({ now = new Date(), notes = null, engineering = null } = {}) {
   const facts = [];
   const fact = (dim, text) => {
     const id = `E${facts.length + 1}`;
@@ -194,6 +194,13 @@ export function buildScorecard({ now = new Date(), notes = null } = {}) {
   // 8. Founder leverage (people and leadership): fewer things waiting on one person is better.
   add('founder', 'Founder leverage', waiting === 0 ? 4 : waiting <= 2 ? 3 : waiting <= 5 ? 2 : waiting <= 9 ? 1 : 0, [founderId], 'Clear the decisions, drafts and rule reads that only you can do.');
 
+  // 9. Engineering and code health, when the code was reviewed (engineering.js).
+  // Left out, not zeroed, when it was not: an unread repo is not a bad repo.
+  if (engineering) {
+    const ids = engineering.facts.map((t) => fact('engineering', t));
+    add('engineering', 'Engineering and code health', engineering.level, ids, 'Add what the code review lists as missing, essentials first.');
+  }
+
   const dimensions = dims.map((d) => ({ ...d, level: one(d.level), why: [...new Set(d.why)] }));
   const readiness = one(avg(dimensions.map((d) => d.level)));
   const critical = dimensions.filter((d) => ['product', 'revenue', 'gtm'].includes(d.key)).sort((a, b) => a.level - b.level)[0];
@@ -204,6 +211,8 @@ export function buildScorecard({ now = new Date(), notes = null } = {}) {
     facts,
     dimensions,
     ventures,
+    // The raw numbers the dimensions were scored from, for the KPI table to reuse.
+    signals: { waiting, rulesOpen: rulesOpen.length, sessions: sessions.length, productive, spent7, spent30: econ.spentUsd, revenue30, decisionsPending: decisions.length, drafts },
     readiness,
     stage: LEVELS[Math.min(4, Math.floor(readiness))],
     bindingConstraint: critical ? { key: critical.key, name: critical.name, level: critical.level } : null,
@@ -227,6 +236,13 @@ export function renderScorecard(sc) {
   return lines.join('\n');
 }
 
-export function renderFacts(sc) {
-  return sc.facts.map((f) => `[${f.id}] ${f.text}`).join('\n');
+/** Adds a fact to a card after it was built (the KPI table cites its own). */
+export function addFact(sc, dim, text) {
+  const id = `E${sc.facts.length + 1}`;
+  sc.facts.push({ id, dim, text });
+  return id;
+}
+
+export function renderFacts(sc, { skipDims = [] } = {}) {
+  return sc.facts.filter((f) => !skipDims.includes(f.dim)).map((f) => `[${f.id}] ${f.text}`).join('\n');
 }

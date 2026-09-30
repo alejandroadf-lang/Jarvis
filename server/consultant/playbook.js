@@ -27,15 +27,42 @@ import { publishServerPage, QUARANTINE_FOLDER } from '../workspace/vault.js';
 import { serializeNote } from '../workspace/frontmatter.js';
 import { ask } from './models.js';
 
-const FILE = 'consultant-playbook.json';
 const MAX_PAGES = 8;
 const MAX_CLAIMS_PER_PAGE = 5;
 const PAGE_CHARS = 24_000;
 export const PLAYBOOK_MAX_AGE_DAYS = 7;
 const TYPES = new Set(['first_hand_revenue', 'survey', 'framework', 'opinion']);
 
-export function discoveryPrompt(now = new Date()) {
-  return `It's ${now.toISOString().slice(0, 10)}. Use web search to find up to ${MAX_PAGES} public web pages worth a founder's time on building and running a company whose staff are AI agents and that must earn €1,000,000 a year. Choose pages that state something checkable, not listicles:
+// Two reading lists. The company one is about making money with an AI-agent
+// company; the vibe one is about building software well with AI coding tools,
+// which is how this company is being built and where its risk is. Each has its
+// own file and its own id prefix so a citation says which shelf it came from.
+export const TOPICS = {
+  company: {
+    file: 'consultant-playbook.json',
+    prefix: 'P',
+    vaultName: 'AI-agent companies playbook.md',
+    audience: 'a founder building an AI-agent-run company that must earn €1,000,000 a year',
+  },
+  vibe: {
+    file: 'consultant-playbook-vibe.json',
+    prefix: 'V',
+    vaultName: 'Vibe coding playbook.md',
+    audience: 'a non-engineer founder who builds an AI-agent-run company by directing AI coding tools ("vibe coding") and needs it to be reliable',
+  },
+};
+
+export function discoveryPrompt(now = new Date(), topic = 'company') {
+  const date = now.toISOString().slice(0, 10);
+  if (topic === 'vibe') {
+    return `It's ${date}. Use web search to find up to ${MAX_PAGES} public web pages worth a founder's time on building software well with AI coding tools ("vibe coding") and on making agent systems reliable. Choose pages that state something checkable, not listicles:
+- official guidance on using AI coding agents and building effective agents (for example from Anthropic, OpenAI, Google, GitHub);
+- evidence on how AI-assisted development changes productivity, quality or security (studies, industry reports such as DORA, controlled trials);
+- first-hand accounts of what broke in AI-built products (security holes, missing tests, unreviewed code) and what the authors changed;
+- practical writing on evals, observability and testing for LLM agent systems.
+Prefer pages from the last 12 months. Reply with JSON only, an array of {"url": "https://…", "publisher": "…", "title": "…"}. Nothing else.`;
+  }
+  return `It's ${date}. Use web search to find up to ${MAX_PAGES} public web pages worth a founder's time on building and running a company whose staff are AI agents and that must earn €1,000,000 a year. Choose pages that state something checkable, not listicles:
 - at least one on agentic AI or AI maturity from each of Deloitte, PwC, EY and KPMG (their own sites), if a readable page exists;
 - first-hand accounts by founders of AI-run or AI-native businesses that give their own revenue, pricing or customer numbers;
 - at least one on why AI-agent businesses fail or stall.
@@ -70,8 +97,8 @@ export function verifyClaims(rawClaims, pageText) {
   return kept;
 }
 
-function extractionPrompt(page, text) {
-  return `From the page text below, extract up to ${MAX_CLAIMS_PER_PAGE} claims useful to a founder building an AI-agent-run company that must earn €1,000,000 a year. Only claims the page actually states, never what you know from elsewhere. For each give:
+function extractionPrompt(page, text, audience) {
+  return `From the page text below, extract up to ${MAX_CLAIMS_PER_PAGE} claims useful to ${audience}. Only claims the page actually states, never what you know from elsewhere. For each give:
 - "claim": one sentence in your own words;
 - "quote": an exact passage of 8 to 40 words copied character for character from the text that supports it;
 - "type": first_hand_revenue (a named company's own stated results), survey (data from a sample), framework (a model or maturity scale), or opinion.
@@ -84,12 +111,12 @@ ${text.slice(0, PAGE_CHARS)}
 </page>`;
 }
 
-export function getPlaybook() {
-  return readJson(FILE, null);
+export function getPlaybook(topic = 'company') {
+  return readJson(TOPICS[topic].file, null);
 }
 
-export function playbookIsStale(now = new Date()) {
-  const pb = getPlaybook();
+export function playbookIsStale(now = new Date(), topic = 'company') {
+  const pb = getPlaybook(topic);
   return !pb?.refreshedAt || now.getTime() - Date.parse(pb.refreshedAt) > PLAYBOOK_MAX_AGE_DAYS * 86_400_000;
 }
 
@@ -98,6 +125,7 @@ export function playbookIsStale(now = new Date()) {
  * stored playbook, or null when there is nothing to store.
  */
 export async function refreshPlaybook({
+  topic = 'company',
   anthropic,
   member,
   budget,
@@ -107,7 +135,8 @@ export async function refreshPlaybook({
   publish = publishServerPage,
 } = {}) {
   try {
-    const pages = await discover({ anthropic, budget, now });
+    const t = TOPICS[topic];
+    const pages = await discover({ anthropic, budget, now, topic });
     const items = [];
     const unread = [];
     for (const page of pages.slice(0, MAX_PAGES)) {
@@ -121,7 +150,7 @@ export async function refreshPlaybook({
       }
       let claims;
       try {
-        const reply = await ask(member, { system: 'You extract verifiable claims from a web page. You reply with JSON only.', user: extractionPrompt(page, text), maxTokens: 1200 }, budget);
+        const reply = await ask(member, { system: 'You extract verifiable claims from a web page. You reply with JSON only.', user: extractionPrompt(page, text, t.audience), maxTokens: 1200 }, budget);
         claims = verifyClaims(parseJsonArray(reply.text), text);
       } catch (err) {
         unread.push({ url: page.url, publisher: page.publisher, reason: `extraction failed: ${err.message}` });
@@ -131,18 +160,18 @@ export async function refreshPlaybook({
         unread.push({ url: page.url, publisher: page.publisher, reason: 'no claim survived the check against the page text' });
         continue;
       }
-      for (const c of claims) items.push({ id: `P${items.length + 1}`, url: page.url, publisher: page.publisher || '', title: page.title || '', retrievedAt: now.toISOString().slice(0, 10), ...c });
+      for (const c of claims) items.push({ id: `${t.prefix}${items.length + 1}`, url: page.url, publisher: page.publisher || '', title: page.title || '', retrievedAt: now.toISOString().slice(0, 10), ...c });
     }
     if (!items.length && !unread.length) return null;
     const playbook = { refreshedAt: now.toISOString(), items, unread };
-    writeJson(FILE, playbook);
+    writeJson(t.file, playbook);
     await publish(
-      `${QUARANTINE_FOLDER}/AI-agent companies playbook.md`,
+      `${QUARANTINE_FOLDER}/${t.vaultName}`,
       serializeNote(
         { type: 'playbook', status: 'quarantined', source: 'external-derived', trust: 0, refreshed: playbook.refreshedAt.slice(0, 10), tags: ['company/playbook'] },
         `\n# What the sources say\n\nEach claim was extracted by a model and kept only because its quote appears in the page the server fetched. It is text from the outside: read it as reported, not as advice.\n\n${renderPlaybook(playbook)}\n`,
       ),
-      'Playbook refreshed',
+      `Playbook refreshed (${topic})`,
     ).catch(() => {});
     return playbook;
   } catch (err) {
@@ -151,10 +180,10 @@ export async function refreshPlaybook({
   }
 }
 
-async function defaultDiscover({ anthropic, budget, now }) {
+async function defaultDiscover({ anthropic, budget, now, topic }) {
   const agents = { ...COMPANY_AGENTS, [COMPANY_ROOT]: { ...COMPANY_AGENTS[COMPANY_ROOT], reports: [], actions: [], serverTools: [WEB_SEARCH] } };
   const result = await withSpendContext({ source: 'consultant', agentId: 'playbook-search' }, () =>
-    runAgent({ anthropic, agents, agentId: COMPANY_ROOT, messages: [{ role: 'user', content: discoveryPrompt(now) }], actionHandlers: {}, extraContext: '', budgetUsd: budget ? budget.remaining() : null }),
+    runAgent({ anthropic, agents, agentId: COMPANY_ROOT, messages: [{ role: 'user', content: discoveryPrompt(now, topic) }], actionHandlers: {}, extraContext: '', budgetUsd: budget ? budget.remaining() : null }),
   );
   budget?.add(result.usage?.costUsd || 0);
   const seen = new Set();

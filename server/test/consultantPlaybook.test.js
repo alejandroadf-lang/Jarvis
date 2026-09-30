@@ -122,3 +122,38 @@ test('the search step keeps only https pages, without duplicates', async () => {
   assert.equal(out.items.length, 0);
   assert.equal(out.unread.length, 1);
 });
+
+test('the coding-with-AI shelf is separate: its own file, V ids, and a different reader in mind', async () => {
+  const companyBefore = pb.getPlaybook('company');
+  const prompts = [];
+  const member = {
+    name: 'Claude',
+    tier: 'frontier',
+    create: async (p) => {
+      prompts.push(p.messages[0].content);
+      return { content: [{ type: 'text', text: JSON.stringify([{ claim: 'Tests catch what the agent breaks.', quote: 'agents break things quietly without any tests to say so', type: 'first_hand_revenue' }]) }], usage: { input_tokens: 10, output_tokens: 10 } };
+    },
+  };
+  const body = `<p>${'Notes from a year of shipping with coding agents. '.repeat(10)} We learned that agents break things quietly without any tests to say so, every time.</p>`;
+  const published = [];
+  const out = await pb.refreshPlaybook({
+    topic: 'vibe',
+    member,
+    now: new Date('2026-10-10T03:00:00Z'),
+    discover: async ({ topic }) => {
+      assert.equal(topic, 'vibe');
+      return [{ url: 'https://lab.example.com/agents', publisher: 'A Lab', title: 'Agents and tests' }];
+    },
+    fetchText: async () => body,
+    publish: async (p) => { published.push(p); return true; },
+  });
+  assert.equal(out.items[0].id, 'V1');
+  assert.match(prompts[0], /non-engineer founder who builds an AI-agent-run company by directing AI coding tools/);
+  assert.equal(pb.getPlaybook('vibe').items.length, 1);
+  assert.deepEqual(pb.getPlaybook('company'), companyBefore, 'the company shelf is untouched');
+  assert.notEqual(pb.TOPICS.company.file, pb.TOPICS.vibe.file);
+  assert.match(published[0], /Vibe coding playbook\.md$/);
+  assert.equal(pb.playbookIsStale(new Date('2026-10-11T00:00:00Z'), 'vibe'), false);
+  assert.match(pb.discoveryPrompt(new Date('2026-10-10T00:00:00Z'), 'vibe'), /vibe coding.*Anthropic.*DORA|DORA/s);
+  assert.match(pb.discoveryPrompt(new Date('2026-10-10T00:00:00Z'), 'company'), /Deloitte, PwC, EY and KPMG/);
+});
