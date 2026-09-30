@@ -72,6 +72,7 @@ import { sendDailyReportEmail, sendPitchEmail } from './email.js';
 import { publishDailyReport, publishVenture, readFounderSteering } from './workspace/vault.js';
 import { estimateCostUsd, sumUsage, emptyUsage } from './usage.js';
 import { withSpendContext } from './spend.js';
+import { ensureRoadmap } from './roadmap.js';
 import { isPlanRequired, getPlan } from './dailyPlan.js';
 
 
@@ -570,6 +571,10 @@ export async function runDailyMeeting({ anthropic }) {
   };
 
   saveDailyReport(report);
+
+  // The weekly Road to €1M, written here so a server that missed its day
+  // catches up. Never throws; one CEO call with no fan-out.
+  await ensureRoadmap({ anthropic });
 
   // Into the founder's vault, where the report becomes a linkable note rather
   // than a page in a tab they don't open. Venture names (not just ids) so the

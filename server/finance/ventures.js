@@ -35,6 +35,11 @@ function save(data) {
   writeJson(FILE, data);
 }
 
+// What every venture is working towards, in euros of recurring revenue a year.
+// The founder's number, stated once here so the roadmap, the shared context and
+// the work sessions cannot drift apart on it.
+export const REVENUE_GOAL_EUR = 1_000_000;
+
 // The founder's split of the team across ventures: {ventureId: percent}.
 //
 // There are no per-venture teams: every agent serves every venture, and what

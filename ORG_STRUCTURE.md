@@ -770,6 +770,43 @@ Each skip says what to change ("WORK_SESSIONS_PER_DAY is 0", "RESUME lifts
 it", "LINK a repo, then DEPLOY ON <ventureId>") in the server log. What the
 sessions did is in `AGENTS` and `CAPACITY`, and in the pull requests.
 
+### Every venture, and the road to €1M
+
+The founder's aim is each venture on the way to €1,000,000 a year in recurring
+revenue (`REVENUE_GOAL_EUR`, `finance/ventures.js`), with the team proposing
+what gets it there. Two gaps stopped that: work sessions only reached a venture
+with a repo and writes on, so one without a repo (an idea, or a venture whose
+product is not code yet) was never worked on; and nothing wrote down, per
+venture, where it stood and what would move it.
+
+- **Every active venture gets sessions.** `pickVenture` considers all of them,
+  by how far each is behind the founder's split. A venture with a repo and
+  writes on gets a build session (run by the CTO, ends in a pull request). One
+  without gets a growth session (run by the COO): research the buyer and
+  competitors, sharpen the offer and price, find prospects, draft outreach
+  (drafts reach nobody; the founder releases them), and log what was learned.
+  Both may set an objective when a venture has none (`set_objective` was the
+  CEO's alone; the CTO and COO now share the same definition).
+- **The Road to €1M** (`server/roadmap.js`). Once a week, at the daily
+  meeting, the CEO writes one block per active venture: where it stands
+  (recurring revenue, customers, pipeline, whether anyone uses it), the gap to
+  €1M in customers at the current price, three ranked improvements (product,
+  price and packaging, or channel) each with its evidence and a first step, and
+  what would change the plan. It uses only what is in the shared context and
+  writes "not recorded" instead of inventing a market. It is one call with no
+  fan-out, no actions and no web search (`serverTools` removed), stored in
+  `roadmap.json`, and refreshed when the last is over seven days old, so a
+  server that missed its day catches up.
+- **It is acted on.** The latest roadmap is in the shared company context (not
+  the Studio's), capped at 1,800 characters because it rides on every call, and
+  both session kickoffs say a venture's top improvement is its next piece of
+  work unless a queued task or an objective says otherwise.
+- **`ROADMAP`** on WhatsApp shows the latest, or says when the first comes.
+
+Cost: the roadmap is one CEO call a week (cents). Sessions are unchanged (one a
+day, $1 each at most): with three ventures each gets a session every third
+day or so, by rotation, rather than each getting a daily one.
+
 ### What it costs, and where it goes
 
 Model spend was a number with no cause: `SPEND` said what a day cost, and a

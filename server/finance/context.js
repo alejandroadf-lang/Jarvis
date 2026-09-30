@@ -7,10 +7,11 @@ import { getLedger } from './ledger.js';
 import { usageSummary } from '../ventureUsage.js';
 import { economicsLast30 } from '../spend.js';
 import { buildKnowledgeContext } from '../workspace/knowledge.js';
-import { listVentures, listContacts, listReplies, describePricing, pipelineSummary, listObjectives, getFocus } from './ventures.js';
+import { listVentures, listContacts, listReplies, describePricing, pipelineSummary, listObjectives, getFocus, REVENUE_GOAL_EUR } from './ventures.js';
 import { listFiles } from '../deploy/github.js';
 import { describeDraftsForAgents } from '../outreachDrafts.js';
 import { getLatestWeeklyReflection } from '../weeklyReflections.js';
+import { getLatestRoadmap } from '../roadmapStore.js';
 import { getAgentEarnings, sharePct } from './profitShare.js';
 import { buildOperationsContext } from '../agents/operations.js';
 import { AGENTS } from '../agents/orgChart.js';
@@ -242,6 +243,19 @@ what anyone thinks. Zero is an answer, not missing data:
 ${rows.join('\n')}`;
 }
 
+// The aim, and the team's own latest proposals for reaching it (roadmap.js).
+// In the shared context, not behind a tool, because the improvements only matter
+// if the agent about to pick a piece of work has read them. Capped: it is sent
+// on every call.
+const ROADMAP_CONTEXT_CHARS = 1800;
+
+function buildRoadmapContext() {
+  const aim = `The founder's aim: every venture on the road to €${REVENUE_GOAL_EUR.toLocaleString('en')} a year in recurring revenue, with the team proposing what gets each one there.`;
+  const latest = getLatestRoadmap();
+  if (!latest?.text) return `${aim} No Road to €1M has been written yet; the next daily meeting writes the first.`;
+  return `${aim} The latest Road to €1M (written ${latest.generatedAt.slice(0, 10)}). Unless a queued task or an objective says otherwise, a venture's top improvement here is its next piece of work:\n${latest.text.slice(0, ROADMAP_CONTEXT_CHARS)}`;
+}
+
 export function buildCompanyContext() {
   // The plan goes first when there is one. An agent that reads it last has
   // already decided what it intends to do, and the plan then reads as an
@@ -258,6 +272,7 @@ export function buildCompanyContext() {
     describePlanForAgents(),
     // Objectives before tasks: what we are measured on, then what is queued.
     buildObjectivesContext(),
+    buildRoadmapContext(),
     // Outstanding work comes high up for the same reason the plan does: an
     // agent that reads it after deciding what to do has already duplicated it.
     describeTasksForAgents(),

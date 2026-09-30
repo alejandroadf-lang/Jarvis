@@ -79,7 +79,7 @@ function scripted(responses, seen = []) {
 const text = (t) => ({ stop_reason: 'end_turn', content: [{ type: 'text', text: t }], usage: { input_tokens: 5, output_tokens: 5 } });
 
 test('the kickoff asks for work, not a report, and never for the founder to decide what to work on', () => {
-  const v = venture('Happy Company');
+  const v = ventures.getVenture(venture('Happy Company').id); // re-read: the repo is linked after creation
   const kick = ws.workSessionKickoff(v);
   assert.match(kick, /This is a work session, not a meeting/);
   assert.match(kick, /Its only output is work done/);
@@ -122,10 +122,38 @@ test('with no split every venture is owed an equal share, and one that is untouc
   assert.notEqual(a.id, b.id);
 });
 
-test('a venture without a repo and writes on cannot be worked on, and that is named', () => {
-  venture('Idea only', { writes: false });
+test('every active venture is worked on: one with no repo gets a growth session, and only no venture at all stops it', () => {
   assert.equal(ws.pickVenture(), null);
-  assert.match(ws.skipReason(), /No active venture has a repo linked with writes on: LINK a repo, then DEPLOY ON/);
+  assert.match(ws.skipReason(), /There is no active venture to work on: START <title> \| <one-liner> begins one/);
+
+  const idea = venture('Duty of care', { writes: false });
+  const picked = ws.pickVenture();
+  assert.equal(picked.id, idea.id, 'a venture with nothing to build in is still worked on');
+  assert.equal(ws.sessionKind(picked), 'grow');
+  assert.equal(ws.skipReason(), null);
+
+  const kick = ws.workSessionKickoff(picked);
+  assert.match(kick, /no repo with writes on, so today's work is growing the business, not building code/);
+  assert.match(kick, /draft_customer_email: a draft reaches nobody, the founder releases it/);
+  assert.match(kick, /€1,000,000 a year in recurring revenue/);
+  assert.doesNotMatch(kick, /open_pull_request/);
+
+  // With a repo and writes on it is a build session.
+  const built = ventures.getVenture(venture('Circadian').id);
+  assert.equal(ws.sessionKind(built), 'build');
+  assert.match(ws.workSessionKickoff(built), /open_pull_request/);
+});
+
+test('a growth session is run by the COO and a build session by the CTO, and both can set an objective', async () => {
+  const { AGENTS } = await import('../agents/orgChart.js');
+  for (const lead of ['cto', 'coo']) {
+    assert.ok(AGENTS[lead].actions.some((a) => a.name === 'set_objective'), `${lead} can set an objective`);
+  }
+  const seenAgents = [];
+  const capture = { messages: { create: async (p) => { seenAgents.push(JSON.stringify(p.system)); return text('done'); } } };
+  venture('Duty of care', { writes: false });
+  await ws.runWorkSession({ anthropic: capture });
+  assert.match(seenAgents[0], /COO/, 'a venture with no repo is worked by the COO');
 });
 
 test('the guards each say what to change', () => {
