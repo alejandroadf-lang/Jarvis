@@ -581,7 +581,12 @@ export async function runDailyMeeting({ anthropic }) {
   // note can [[wikilink]] to each one.
   const startedVentures = listVentures().filter((v) => proposedVentureIds.includes(v.id));
   await publishDailyReport({ ...report, proposedVentureNames: startedVentures.map((v) => v.title) });
-  for (const venture of startedVentures) await publishVenture(venture);
+  // Every active venture, not just today's new ones: the lessons and work
+  // session notes link to their venture page, and a link to a page that was
+  // never published points at nothing for every venture that already existed.
+  for (const venture of listVentures().filter((v) => v.status === 'active' || proposedVentureIds.includes(v.id))) {
+    await publishVenture(venture);
+  }
 
   // The morning pitch. Deliberately outside the scope check that skips the
   // Studio on a quiet day: the founder asked for one every morning, and a

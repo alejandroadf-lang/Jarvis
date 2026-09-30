@@ -1131,6 +1131,14 @@ halted; and refused if the text is shaped like a credential, because the
 vault is a git repo and a secret written there is published. `.obsidian/`,
 `.git/` and the trash are never listed or readable.
 
+This holds for every active venture, not one: each work session ends by
+asking the lead to keep a lesson naming its venture and to check `Library/`
+for what you left about it, and the daily meeting publishes a vault page for
+every active venture (not only the ones started that day), so a lesson's
+`[[Venture]]` link always lands somewhere. A lesson is not fenced to its
+venture in the shared context: something learned on one venture is in front of
+the team when it works on the others.
+
 The lessons come back in two places. An index of the recent ones sits in the
 shared context, so the next agent to decide something has already read them,
 and the weekly knowledge page folds them into what the company believes and on

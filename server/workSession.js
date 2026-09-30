@@ -194,7 +194,9 @@ This venture has no repo with writes on, so today's work is growing the business
 4. Write down what you learned and any better improvement than the one on the roadmap, with its evidence (log_venture_note), so the next week's roadmap starts from it.
 5. Do not stop to ask what to work on: pick. Ask the founder only for something only they can do (a credential, a payment, a legal decision), say exactly what, and say what you did in the meantime.
 
-Finish in three lines: what you did, what is queued next, and what you need from the founder, if anything.`;
+Finish in three lines: what you did, what is queued next, and what you need from the founder, if anything.
+
+Before you finish: if this session taught you something the team should know when it works on any venture (a thing that failed, a price or channel that worked, a fact that contradicted an assumption), keep it with write_lesson, naming this venture. Look first in Library/ (list_vault_notes) for anything the founder left about it.`;
   }
 
   return `${opening}
@@ -205,7 +207,9 @@ Finish in three lines: what you did, what is queued next, and what you need from
 4. Research, drafting and pipeline work count too: ask the Health Researcher, the Privacy Officer or the Pilot Manager when the task needs them.
 5. Do not stop to ask what to work on: pick. Ask the founder only for something only they can do (a credential, a payment, a legal decision), say exactly what, and say what you did in the meantime.
 
-Finish in three lines: what you did, what is queued next, and what you need from the founder, if anything.`;
+Finish in three lines: what you did, what is queued next, and what you need from the founder, if anything.
+
+Before you finish: if this session taught you something the team should know when it works on any venture (a thing that failed, a price or channel that worked, a fact that contradicted an assumption), keep it with write_lesson, naming this venture. Look first in Library/ (list_vault_notes) for anything the founder left about it.`;
 }
 
 /**
