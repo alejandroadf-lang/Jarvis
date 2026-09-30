@@ -191,3 +191,36 @@ test('log_revenue is still not wired into the leadership sync — it resolves as
   const ledger = (await import('../finance/ledger.js')).getLedger();
   assert.equal(ledger.transactions.some((t) => t.description === 'made up revenue'), false);
 });
+
+test('every active venture gets its vault page each day, not only the ones started today', async () => {
+  const saved = { t: process.env.GITHUB_TOKEN, o: process.env.WORKSPACE_REPO_OWNER, n: process.env.WORKSPACE_REPO_NAME };
+  process.env.GITHUB_TOKEN = 'test-token';
+  process.env.WORKSPACE_REPO_OWNER = 'alex';
+  process.env.WORKSPACE_REPO_NAME = 'brain';
+  const originalFetch = global.fetch;
+  const written = [];
+  global.fetch = async (url, options) => {
+    if (options?.method === 'PUT') {
+      written.push(decodeURIComponent(String(url).split('/contents/')[1]));
+      return { ok: true, json: async () => ({ commit: { sha: 's', html_url: 'u' } }) };
+    }
+    return { ok: false, status: 404, text: async () => '' };
+  };
+  const anthropic = { messages: { create: async () => textResponse('Nothing notable.') } };
+
+  try {
+    makeActiveVenture({ title: 'Older Venture One' });
+    makeActiveVenture({ title: 'Older Venture Two' });
+    await dailyMeeting.runDailyMeeting({ anthropic });
+    // Nothing was proposed today, so before this only the report was written and
+    // every [[link]] in a lesson or session note pointed at a page never made.
+    assert.ok(written.some((p) => p === 'Company/Ventures/Older Venture One.md'), written.join('\n'));
+    assert.ok(written.some((p) => p === 'Company/Ventures/Older Venture Two.md'));
+  } finally {
+    global.fetch = originalFetch;
+    for (const [k, v] of [['GITHUB_TOKEN', saved.t], ['WORKSPACE_REPO_OWNER', saved.o], ['WORKSPACE_REPO_NAME', saved.n]]) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+});

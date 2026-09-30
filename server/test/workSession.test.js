@@ -142,6 +142,13 @@ test('every active venture is worked on: one with no repo gets a growth session,
   const built = ventures.getVenture(venture('Circadian').id);
   assert.equal(ws.sessionKind(built), 'build');
   assert.match(ws.workSessionKickoff(built), /open_pull_request/);
+
+  // Both kinds end by keeping what was learned and checking Library/, or the
+  // vault tools exist and no session ever reaches for them.
+  for (const kick2 of [ws.workSessionKickoff(picked), ws.workSessionKickoff(built)]) {
+    assert.match(kick2, /write_lesson, naming this venture/);
+    assert.match(kick2, /Library\/ \(list_vault_notes\)/);
+  }
 });
 
 test('a growth session is run by the COO and a build session by the CTO, and both can set an objective', async () => {

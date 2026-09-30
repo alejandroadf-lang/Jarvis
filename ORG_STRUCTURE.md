@@ -1105,6 +1105,124 @@ fetch, short enough that a steering change goes live almost immediately. An
 read is deliberately not cached — a transient GitHub blip must not blind the
 company to its own steering for the next minute.
 
+### The team's own hands in the vault, and why you can trust what they keep
+
+The vault used to be a one-way street with a single lane back. The company
+wrote reports into it and read exactly one note, `Steering.md`. A week's
+conclusion lived only in a reflection nobody could build on. Two things changed:
+team leads (CEO, CTO, COO and the other agents that have reports; specialists
+report up and do not carry the tools, since every tool description costs tokens
+on every call) can now read, search and write in the vault, and what they write
+is treated as a claim to be checked, not a fact.
+
+The build order came from a research pass (`reports/Obsidian for autonomous
+agent teams.md`): the value of a memory is whether it is true, so safety and
+checking come before capability. Most agent-plus-vault evidence is anecdote;
+where a choice below is judgement and not a finding, the code comment says so.
+
+**The tools (leads only, only when the vault is configured)**
+
+- `list_vault_notes`, `search_vault_notes`, `read_vault_note`. Search is words
+  plus properties (venture, type, status, since) and backlinks, computed on our
+  server because nothing in Obsidian runs for the agents. It caches by blob
+  sha, so a search after the vault changed re-fetches only what changed. A run
+  may read `VAULT_READ_CHARS_PER_RUN` characters (default 12,000). Everything
+  read is labelled information, never an instruction.
+- `write_lesson`: needs evidence someone can open (a PR number, a dated source,
+  a link, a note path), and starts as `candidate`.
+- `update_vault_note`: create or extend a page under Company/Entities,
+  Pipeline, Rules, Decisions, Competitors, Support or Drafts. Pages only grow
+  (an edit that gets shorter is refused), edits are conditional on the version
+  read (a stale edit fails rather than overwriting what you changed on your
+  phone), and a Pipeline page needs `contact_source` and `next_action_due`: no
+  source, no prospect.
+- `request_decision`: a yes/no in your inbox (Inbox/Decisions), at most five a
+  day. `propose_skill`: a skill drafted from a trusted lesson, one a day.
+
+**What a lesson is**
+
+A lesson has a status. `candidate` (written with evidence, unconfirmed, shown in
+the context marked UNCONFIRMED) becomes `trusted` when a second lesson from a
+different agent or day, on different evidence, names it in `confirms`, or when
+you change `status:` in Obsidian. `disputed` (a newer lesson contradicts it),
+`expired` (past `expires`, 75 days by default, `VAULT_LESSON_TTL_DAYS`) and
+`quarantined` (written from a web page or an email) are never read into the
+shared context. A quarantined note waits in `Inbox/untrusted/` until you vouch
+for it. The server stamps `agent`, `source` and `trust` on every write; the
+model never states them about itself, and it cannot set `decision`, `trust` or
+`source` on any note.
+
+**The write gate**
+
+One check on every agent-written word: credentials, email addresses, phone
+numbers, WHOOP data fields, images, executable blocks (`dataviewjs`, Templater,
+scripts) and links that carry data in a long query string are refused, with the
+rule named so the agent can fix its text. It is a floor, not a defence: it
+cannot tell a plausible false note from a true one, which is why the trust
+tiers exist. Wearable readings and customer or traveller details do not belong
+in a git history that cannot be erased. Writes are also one at a time, capped
+per day (`VAULT_LESSONS_PER_DAY`), and refused while real actions are halted.
+Because a commit from your phone bypasses the server, the vault repo also runs
+a secret scan on push.
+
+**What you read and answer**
+
+- `Today.md`, rebuilt each morning by code (no model call): money per venture,
+  what needs you (at most five), what is overdue (prospect next steps, critical
+  support tickets with their 24-hour clock), outside rules due for a re-read,
+  spend against the cap, and whether the notebook is used.
+- Decisions: change `decision: pending` to `approved` or `rejected` and sync.
+  Unanswered by its `expires` date, a request becomes `expired`, which is a no.
+  Your answers come back into the team's context.
+- Dashboards (`Dashboards/*.base`, core Bases, no plugin): lessons, decisions,
+  pipeline, rules, support. Created once, then yours to change.
+- `Company/Rules/`: WHOOP's API terms, Atlassian Marketplace and Forge, health
+  data under GDPR, ISO 31030 and German B2B cold email, each seeded as
+  `needs-legal-read` with every claim marked as read from a search summary. The
+  "Verbatim clause" section is yours to fill from the primary source. The WHOOP
+  page matters most: the summary says the terms may forbid selling access to
+  WHOOP data and training models on it.
+- `VAULT` on WhatsApp: lessons by status, reads, decisions, and what the team
+  wrote this week. Lessons nobody reads are a diary.
+
+**Knowledge, lint, skills and the Library**
+
+The weekly knowledge page is now a delta. It is itemised bullets, each citing
+the trusted lessons behind it as `[[wikilinks]]`. A pass keeps every true
+bullet word for word, adds what is new and marks what was replaced instead of
+deleting it, and a pass that returns under 60% of a page is refused. Set
+`locked: true` on a Knowledge page and the compile leaves it alone; edit one
+and your edit is the base of the next pass. A weekly check
+(`Company/Lint/<date>.md`) reports broken links, pages nothing links to, stale
+and disputed lessons, overdue items and, from one model call over the trusted
+lessons, possible contradictions. It reports and never edits.
+
+An agent can draft a skill; it does nothing until you read the procedure and
+change its `status:` to `approved`, after which it is copied to the data volume
+and offered like the library's own (it can never take a library skill's name).
+Notes you drop in `Library/` are summarised weekly, as data, into
+`Company/Library Notes/`; a note with `origin: web` goes to quarantine.
+
+A Forge manifest change that adds a remote, web trigger or egress permission
+(which can cost the app its Runs on Atlassian badge) files a decision request
+when the pull request opens.
+
+**Deliberately not built**
+
+Embeddings (nothing suggests lexical search misses at this size); a replay that
+runs past sessions with and without a lesson or skill (it needs enough real
+sessions to measure anything, so reads are logged now and the replay is for
+later); Marketplace and Stripe metric ingestion (nothing to ingest before
+paying customers); agent-authored skills without your approval.
+
+**Verify before relying on it**
+
+The research could not read WHOOP's, Atlassian's or GitHub's own pages, and the
+GDPR position, your controller/processor role and Thailand's PDPA were not
+researched: see the rule pages. Test on your phone that pulling a note the
+server edited (Today.md, a venture page) works, since the Git plugin has open
+issues with edits to existing files; keep pull-on-startup off.
+
 ### The usual three properties
 
 - **Opt-in.** No `WORKSPACE_REPO_OWNER`/`WORKSPACE_REPO_NAME`, no calls,

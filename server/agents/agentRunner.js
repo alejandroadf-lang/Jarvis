@@ -42,6 +42,7 @@ import {
 import { recordFallback } from '../degradation.js';
 import { recordContribution } from '../finance/profitShare.js';
 import { skillsFor, getSkill, describeSkillsForAgent } from '../skills/registry.js';
+import { notebookToolsFor, runNotebookTool, NOTEBOOK_TOOL_NAMES } from '../workspace/notebook.js';
 import { mcpRequestFields, describeMcpForAgent } from './mcp.js';
 import { isOpenRouterConfigured, createCompletion, openRouterFallbackModel } from './openrouter.js';
 import {
@@ -593,7 +594,7 @@ function buildTools(agents, agent) {
   // a tool that always answers "not configured" is a round spent learning so.
   const xSearchTools = agent.xSearch && isGrokConfigured() ? [X_SEARCH_TOOL] : [];
 
-  return [...delegationTools, ...actionTools, ...skillTools, ...xSearchTools, ...mcpTools, ...serverTools];
+  return [...delegationTools, ...actionTools, ...skillTools, ...notebookToolsFor(agent), ...xSearchTools, ...mcpTools, ...serverTools];
 }
 
 /**
@@ -824,6 +825,13 @@ export async function runAgent({
         resultText = skill
           ? skill.body
           : `No skill called "${toolUse.input?.name}" is available to you. Work from what you know rather than guessing at another name.`;
+      } else if (NOTEBOOK_TOOL_NAMES.has(toolUse.name) && notebookToolsFor(agent).length) {
+        // Like load_skill, handled here so every caller (meeting, work
+        // session, chat) has it without wiring. Unlike it, one tool writes,
+        // so the scoping lives in the tool itself (workspace/notebook.js).
+        const noteStarted = Date.now();
+        resultText = await runNotebookTool(toolUse.name, toolUse.input || {}, { agentId: agent.id, usage });
+        recordActivity({ agentId: agent.id, kind: 'action', tool: toolUse.name, ok: !/^(Not saved|Not read|Could not)/.test(resultText), ventureId: toolUse.input?.ventureId || null, ms: Date.now() - noteStarted });
       } else if (toolUse.name === 'x_search' && agent.xSearch) {
         // Read-only like load_skill, so no scope governs it, but it is billed:
         // checked against the daily cap first, and metered into it after.

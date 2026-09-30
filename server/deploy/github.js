@@ -81,8 +81,32 @@ export async function readFile({ owner, repo, branch, path }) {
   }
 }
 
-export async function commitFile({ owner, repo, branch, path, content, message }) {
-  const sha = await getExistingFileSha({ owner, repo, branch, path });
+/**
+ * A file's text and its blob sha, or null when it isn't there. The sha is what
+ * lets a later write say "only if it is still this version": an edit built on a
+ * note the founder changed on their phone in the meantime fails instead of
+ * silently discarding their change.
+ */
+export async function readFileMeta({ owner, repo, branch, path }) {
+  try {
+    const file = await githubRequest(`/repos/${owner}/${repo}/contents/${encodeURI(path)}?ref=${branch}`);
+    if (!file?.content && file?.content !== '') return null;
+    return { text: Buffer.from(file.content || '', 'base64').toString('utf8'), sha: file.sha || null };
+  } catch (err) {
+    if (err.status === 404) return null;
+    throw err;
+  }
+}
+
+/**
+ * `expectedSha` makes the write conditional: a sha means "replace exactly this
+ * version", null means "create, and fail if the file exists". Left undefined,
+ * it keeps the older behaviour of replacing whatever is there, which is right
+ * for the notes the server owns outright (reports, roadmap) and wrong for
+ * anything a person also edits.
+ */
+export async function commitFile({ owner, repo, branch, path, content, message, expectedSha }) {
+  const sha = expectedSha !== undefined ? expectedSha : await getExistingFileSha({ owner, repo, branch, path });
   const result = await githubRequest(`/repos/${owner}/${repo}/contents/${encodeURI(path)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -127,7 +151,7 @@ export async function listFiles({ owner, repo, branch, limit = 300 }) {
     const data = await githubRequest(`/repos/${owner}/${repo}/git/trees/${ref}?recursive=1`);
     const blobs = (data?.tree || [])
       .filter((entry) => entry?.type === 'blob' && entry.path)
-      .map((entry) => ({ path: String(entry.path), bytes: Number(entry.size) || 0 }))
+      .map((entry) => ({ path: String(entry.path), bytes: Number(entry.size) || 0, sha: entry.sha || null }))
       .sort((a, b) => a.path.localeCompare(b.path));
 
     return {
