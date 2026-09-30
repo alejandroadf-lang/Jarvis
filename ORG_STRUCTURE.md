@@ -1267,10 +1267,13 @@ as absence and everything else still throws.
 
 ## The consultant: a daily briefing on how ready this company is
 
-Every morning, after the daily meeting, one email arrives: how ready the company
+Every morning at 08:00 Bangkok time, on its own schedule (it does not wait for the
+daily meeting and still comes if the meeting is switched off), one email arrives: how ready the company
 is to earn its first million, what is working, what is weak, the one thing to do
-today, the next seven days, and what the best sources say that applies. `DIGEST`
-on WhatsApp builds it on demand. A copy lands in the vault under
+today, the next seven days, and what the best sources say that applies. Nothing
+has to be asked for. If the server starts after 08:00 and today's has not gone out
+(a deploy at noon), it is sent shortly after boot. `DIGEST` on WhatsApp builds
+another on demand. A copy lands in the vault under
 `Company/Consultant/`. It costs roughly $0.10 to $0.40 a day with a panel of
 several models (`CONSULTANT_BUDGET_USD`, default $0.75, is a hard ceiling for
 one briefing's review), and `CONSULTANT_DIGEST_DISABLED=true`

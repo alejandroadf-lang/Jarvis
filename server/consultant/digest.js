@@ -108,11 +108,24 @@ function subjectLine({ date, scorecard, kpis }) {
   return `Your AI-company briefing ${date}: readiness ${scorecard.readiness}/4, KPI health ${Math.round(kpis.health * 100)}%${next ? `, next rung: ${next}` : ''}`;
 }
 
+// The briefing has two callers that can meet at 8:00 (its own schedule and the
+// tail of the daily meeting) plus the founder's DIGEST. A second call while one is
+// running gets the first one's result instead of building and sending twice.
+let inFlight = null;
+
 /**
  * Builds and delivers one briefing. Never throws. Resolves to
  * { sent, reason?, emailed, published, usd }.
  */
-export async function runConsultantDigest({
+export function runConsultantDigest(options = {}) {
+  if (inFlight) return inFlight;
+  inFlight = buildAndSend(options).finally(() => {
+    inFlight = null;
+  });
+  return inFlight;
+}
+
+async function buildAndSend({
   anthropic,
   force = false,
   now = new Date(),
