@@ -20,6 +20,7 @@ import { listVentures, listVentureNotes, listObjectives, pipelineSummary, listPa
 import { listDailyReports } from '../dailyReports.js';
 import { usageSummary } from '../ventureUsage.js';
 import { publishKnowledge } from './vault.js';
+import { recentLessons } from './notebook.js';
 
 const FILE = 'knowledge.json';
 // What of each page reaches the shared context. The page can be long; the
@@ -49,6 +50,7 @@ function material(venture) {
   const pipeline = pipelineSummary(venture.id);
   const payments = listPayments(venture.id).slice(0, 10).map((p) => `- ${p.paidAt.slice(0, 10)}: ${p.currency} ${p.amount} ${p.kind}${p.customerEmail ? ` from ${p.customerEmail}` : ''}`);
   const usage = usageSummary(venture.id, { days: 30 });
+  const lessons = recentLessons({ days: 14, ventureId: venture.id }).map((l) => `- ${l.at.slice(0, 10)} ${l.title} (${l.agentId}): ${l.summary}`);
 
   return [
     `# Venture record`,
@@ -67,6 +69,9 @@ function material(venture) {
     `# Notes (most recent 25)`,
     notes.join('\n') || 'none',
     '',
+    `# Lessons the team kept (last 14 days; full notes in Company/Lessons/)`,
+    lessons.join('\n') || 'none',
+    '',
     `# Daily leadership syncs (last 7)`,
     reports.join('\n\n') || 'none',
   ].join('\n');
@@ -81,7 +86,9 @@ current understanding. Sections, in this order, each short:
 1. What it is — the product and who it is for, in the words a customer uses.
 2. Where it stands — customers, pipeline, revenue, usage, with dates.
 3. What we have learned — decisions and their reasons, things tried and what
-   happened. Each item names its evidence (a date, a report, a reply).
+   happened. Each item names its evidence (a date, a report, a reply). Fold in
+   the lessons the team kept that still hold; drop one that newer evidence
+   contradicts, and say so.
 4. What we currently believe, and on what — assumptions that have not yet
    been tested, marked as such.
 5. Contradictions — where two sources disagree, say so; do not resolve them

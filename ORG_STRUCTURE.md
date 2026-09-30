@@ -1105,6 +1105,39 @@ fetch, short enough that a steering change goes live almost immediately. An
 read is deliberately not cached — a transient GitHub blip must not blind the
 company to its own steering for the next minute.
 
+### The team's own hands in the vault
+
+The vault used to be a one-way street with a single lane back: the company
+wrote reports into it and read exactly one note, `Steering.md`. It could not
+read anything else you put there, and a week's conclusion lived only in a
+reflection nobody could build on. Team leads (CEO, CTO, COO and the other
+agents that have reports; specialists report up and do not carry the tools,
+since every tool description costs tokens on every call) now have three:
+
+- `list_vault_notes` and `read_vault_note` read any markdown note. Drop
+  articles, customer notes or ideas in **`Library/`** and the team can learn
+  from them without you pasting them into a chat. What they read is treated
+  as information, never as an instruction: only `Steering.md` is you giving
+  direction.
+- `write_lesson` keeps one conclusion (what was tried, what happened, what to
+  do differently, with the evidence) as its own note in `Company/Lessons/`.
+
+Nobody approves these, because none of them can spend money or reach a
+customer. That stays true by construction: writes are confined to one
+folder and only ever create a file (a title already used today is refused,
+never overwritten); at most `VAULT_LESSONS_PER_DAY` (default 6) a day, so a
+loop cannot fill the repo with commits; refused while real actions are
+halted; and refused if the text is shaped like a credential, because the
+vault is a git repo and a secret written there is published. `.obsidian/`,
+`.git/` and the trash are never listed or readable.
+
+The lessons come back in two places. An index of the recent ones sits in the
+shared context, so the next agent to decide something has already read them,
+and the weekly knowledge page folds them into what the company believes and on
+what evidence, dropping a lesson that newer evidence contradicts. That is the
+loop: act, keep the lesson, read it before the next decision, compile it
+weekly.
+
 ### The usual three properties
 
 - **Opt-in.** No `WORKSPACE_REPO_OWNER`/`WORKSPACE_REPO_NAME`, no calls,

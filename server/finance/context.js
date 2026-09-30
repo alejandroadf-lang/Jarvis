@@ -7,6 +7,7 @@ import { getLedger } from './ledger.js';
 import { usageSummary } from '../ventureUsage.js';
 import { economicsLast30 } from '../spend.js';
 import { buildKnowledgeContext } from '../workspace/knowledge.js';
+import { buildLessonsContext } from '../workspace/notebook.js';
 import { listVentures, listContacts, listReplies, describePricing, pipelineSummary, listObjectives, getFocus, REVENUE_GOAL_EUR } from './ventures.js';
 import { listFiles } from '../deploy/github.js';
 import { describeDraftsForAgents } from '../outreachDrafts.js';
@@ -303,6 +304,8 @@ export function buildCompanyContext() {
     // The compiled pages before the raw notes: what we concluded, then what
     // we observed lately.
     buildKnowledgeContext(),
+    // Then what the team itself kept: an index, so the cost is a few lines.
+    buildLessonsContext(),
     buildVentureNotesContext(),
     buildOutreachContext(),
     // Last of the business facts and deliberately not buried: the only place

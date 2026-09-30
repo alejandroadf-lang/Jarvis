@@ -40,7 +40,13 @@ const FOLDERS = {
   roadmap: 'Company/Roadmap',
   // What each work session did, one note per venture per day.
   sessions: 'Company/Work Sessions',
+  // What the team itself concluded, one note each, written by the agent that
+  // learned it (workspace/notebook.js). Separate from Knowledge/, which is
+  // rewritten weekly from these and everything else.
+  lessons: 'Company/Lessons',
 };
+
+export const LESSONS_FOLDER = FOLDERS.lessons;
 
 // The one file the founder writes and the company reads. Sitting at the top
 // of the vault rather than inside Company/ because it belongs to them, not
@@ -178,6 +184,25 @@ export function formatWorkSession(entry, venture) {
   ].join('\n') + '\n';
 }
 
+/** One lesson an agent chose to keep, with the venture it concerns as a wikilink. */
+export function formatLesson({ title, lesson, agentId, ventureTitle, at }) {
+  const day = (at || new Date().toISOString()).slice(0, 10);
+  return [
+    frontmatter({
+      type: 'lesson',
+      date: day,
+      agent: agentId,
+      venture: ventureTitle,
+      tags: ['company/lesson'],
+    }),
+    `# ${noteName(title)}`,
+    '',
+    ventureTitle ? `Venture: [[${noteName(ventureTitle)}]]` : '',
+    ventureTitle ? '' : '',
+    lesson,
+  ].join('\n').replace(/\n{3,}/g, '\n\n') + '\n';
+}
+
 export function formatVenture(venture) {
   const milestones = (venture.milestones || [])
     .map((m) => `- [${m.status === 'done' ? 'x' : ' '}] ${m.title}${m.status === 'missed' ? ' — **missed**' : ''}`)
@@ -267,6 +292,10 @@ export function publishWorkSession(entry, venture) {
     formatWorkSession(entry, venture),
     `Work session — ${venture?.title || 'venture'}, ${day}`
   );
+}
+
+export function publishLesson(path, content, title) {
+  return publish(path, content, `Lesson — ${noteName(title)}`);
 }
 
 export function publishKnowledge(venture, markdown) {
