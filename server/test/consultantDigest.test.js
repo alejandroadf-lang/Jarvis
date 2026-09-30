@@ -37,6 +37,7 @@ after(() => {
 
 beforeEach(() => {
   for (const k of ENV) delete process.env[k];
+  store.writeJson('consultant-benchmark.json', { refreshedAt: '2026-10-10T01:00:00.000Z', ventures: [] });
   store.writeJson('consultant.json', { lastDate: null, history: [] });
   store.writeJson('consultant-playbook-vibe.json', {
     refreshedAt: '2026-10-10T01:00:00.000Z',
@@ -168,4 +169,37 @@ test('the code review and the coding sources reach the email, and their citation
   assert.match(t, /\[WATCH\] Very large files: server\/index\.js 90 KB/);
   assert.match(t, /Engineering and code health/);
   assert.match(t, /Pull requests merged in 14 days: 6 across 1 repos/);
+});
+
+test('the benchmark and the practice review reach the email, the KPIs and the citations', async () => {
+  process.env.SMTP_HOST = 'smtp.example.com';
+  process.env.REPORT_EMAIL_TO = 'me@example.com';
+  const okProbe = (url, over = {}) => ({ url, ok: true, ms: 100, https: true, hsts: false, securityHeaders: [], hasLlmsTxt: false, hasOpenApi: false, hasDocs: true, hasChangelog: false, latestRelease: null, releases90: 0, hasStatusPage: false, compliance: [], mentionsMcp: false, mentionsSdk: false, mentionsAi: false, mentionsWebhooks: false, ...over });
+  const { scoreProbe } = await import('../consultant/siteProbe.js');
+  const own = okProbe('https://digest.example.com');
+  const rival = okProbe('https://rival.example.com', { hasOpenApi: true, hasLlmsTxt: true, mentionsMcp: true, hsts: true });
+  store.writeJson('consultant-benchmark.json', {
+    refreshedAt: '2026-10-10T01:00:00.000Z',
+    ventures: [{ id: 'v1', title: 'Digest Co', own: { url: own.url, probe: own, scores: scoreProbe(own) }, competitors: [{ name: 'Rival', url: rival.url, source: 'search', probe: rival, scores: scoreProbe(rival) }], rank: { quality: { rank: 2, of: 2, own: 2, best: 4 }, innovation: { rank: 2, of: 2, own: 0, best: 5 } } }],
+  });
+  const practice = {
+    repos: [], overall: 1.5, measured: 2, total: 8, facts: ['the company\'s own code: 6 merged pull requests in 30 days (1 touched tests, 0 reviewed).'],
+    areas: [{ key: 'tests', name: 'Tests travel with the code', level: 1, display: '17% of 6 pull requests touched a test', rule: 'share of merged pull requests that touch a test', trend: -1, since: '2026-09-26' }],
+    actions: [{ id: 'A1', area: 'tests', areaName: 'Tests travel with the code', level: 1, effort: 'S', action: 'Write the failing test first', prompt: 'Before changing anything, write a test that fails.', target: 'at least half of merged pull requests touch a test' }],
+  };
+  const sent = [];
+  const reply = (p) => (/independent reviews/.test(p.messages[0].content) ? '## Plan\nStart with A1 [A1] because tests are weak [K1]. Rival has an OpenAPI file [E1]. Invented [A7].' : '## Draft [E1]');
+  await digest.runConsultantDigest({ now: NOW, members: [member('Claude', 'frontier', reply), member('OpenAI', 'assistant', '## Draft [E1]')], refresh: async () => {}, practiceReview: async () => practice, send: async (m) => { sent.push(m); } });
+  const t = sent[0].text;
+  assert.match(t, /## Technology against competitors \(public signals/);
+  assert.match(t, /Digest Co \(you\)\s+quality \d+\/10\s+innovation \d+\/10/);
+  assert.match(t, /Rank on quality: 2 of 2/);
+  assert.match(t, /## Your building practice: KPIs, trend and the actions that would lift them/);
+  assert.match(t, /↓ down 1 since 2026-09-26/);
+  assert.match(t, /A1  \[Tests travel with the code, effort S\]  Write the failing test first/);
+  assert.match(t, /first prompt: Before changing anything, write a test that fails\./);
+  assert.match(t, /Technology quality against competitors \(Digest Co\): 2\/10, rank 2 of 2 \(best 4\/10\)/);
+  assert.match(t, /Practice: Tests travel with the code: level 1\/4/);
+  assert.match(t, /Start with A1 \[A1\] because tests are weak \[K\d+\]\./);
+  assert.match(t, /Invented \[\?\]\./, 'an action id that does not exist is caught');
 });

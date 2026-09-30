@@ -28,9 +28,12 @@ import { isEmailConfigured, sendConsultantDigestEmail } from '../email.js';
 import { loadNotes } from '../workspace/vaultIndex.js';
 import { isWorkspaceConfigured, publishServerPage, readFounderSteering } from '../workspace/vault.js';
 import { serializeNote } from '../workspace/frontmatter.js';
-import { buildScorecard, renderScorecard, renderFacts } from './scorecard.js';
+import { buildScorecard, renderScorecard, renderFacts, addFact } from './scorecard.js';
 import { buildKpis, renderKpis, kpiFactsText } from './kpis.js';
-import { reviewCode, renderCodeReview } from './engineering.js';
+import { reviewCode, renderCodeReview, repoTargets } from './engineering.js';
+import { reviewPractice, renderPractice, actionsText } from './practice.js';
+import { refreshBenchmark, getBenchmark, benchmarkIsStale, benchmarkFacts, renderBenchmark } from './competitors.js';
+import { isGithubConfigured } from '../deploy/github.js';
 import { refreshPlaybook, getPlaybook, playbookIsStale, renderPlaybook } from './playbook.js';
 import { runPanel } from './panel.js';
 import { createBudget, panelMembers } from './models.js';
@@ -57,10 +60,12 @@ export function lastDigest() {
 }
 
 /** The email, assembled: the model's review first, then everything a person needs to check it. Pure. */
-export function composeDigest({ date, review, scorecard, kpis, engineering, playbook, vibe, panel, budgetUsd, readingUsd = 0 }) {
+export function composeDigest({ date, review, scorecard, kpis, engineering, benchmark, practice, playbook, vibe, panel, budgetUsd, readingUsd = 0 }) {
   const parts = [];
   parts.push(`# Your AI-company briefing, ${date}`, '', review.trim(), '', '---');
   parts.push('', "## KPIs and maturity (computed by code from the company's records, not written by any model)", '', renderKpis(kpis));
+  parts.push('', '## Technology against competitors (public signals, measured the same way for everyone)', '', renderBenchmark(benchmark));
+  parts.push('', '## Your building practice: KPIs, trend and the actions that would lift them', '', renderPractice(practice));
   parts.push('', '## Readiness scorecard (also computed by code)', '', renderScorecard(scorecard));
   parts.push('', '## Code review: what is in place and what is missing', '', renderCodeReview(engineering));
   parts.push('', '## The facts behind the numbers', '', renderFacts(scorecard));
@@ -109,6 +114,8 @@ export async function runConsultantDigest({
   members = panelMembers({ anthropic }),
   refresh = refreshPlaybook,
   review = reviewCode,
+  practiceReview = (o) => (isGithubConfigured() ? reviewPractice(o) : null),
+  benchmarkRefresh = refreshBenchmark,
   send = sendConsultantDigestEmail,
   publish = publishServerPage,
 } = {}) {
@@ -136,8 +143,22 @@ export async function runConsultantDigest({
       console.error('Consultant: the code review failed:', err.message);
       return null;
     });
+    // The founder's building habits, from pull requests and commits; null when
+    // GitHub is not configured.
+    const practice = await Promise.resolve(practiceReview({ targets: repoTargets(), engineering, now })).catch((err) => {
+      console.error('Consultant: the practice review failed:', err.message);
+      return null;
+    });
+
+    // The weekly look at competitors' public surfaces, under the reading budget.
+    if (benchmarkIsStale(now)) await benchmarkRefresh({ anthropic, budget: reading, now, notes: notes || [] });
+    const benchmark = getBenchmark();
+
     const scorecard = buildScorecard({ now, notes, engineering });
-    const kpis = buildKpis(scorecard, { now, engineering });
+    // Their findings become citable facts before the KPI table cites them.
+    for (const text of benchmarkFacts(benchmark)) addFact(scorecard, 'benchmark', text);
+    for (const text of practice?.facts || []) addFact(scorecard, 'practice', text);
+    const kpis = buildKpis(scorecard, { now, engineering, benchmark, practice });
 
     // Read the sources first if the last reading is over a week old, so today's
     // review rests on this week's pages. A failure leaves the previous reading.
@@ -160,14 +181,15 @@ export async function runConsultantDigest({
       kpiText: kpiFactsText(kpis),
       playbookText: renderPlaybook(playbook),
       vibeText: vibe?.items?.length ? renderPlaybook(vibe) : '',
+      actionsText: actionsText(practice),
       brief,
       factIds: scorecard.facts.map((f) => f.id),
       // Everything that is not an E fact and may be cited: sources and KPIs.
-      playbookIds: [...(playbook?.items || []).map((i) => i.id), ...(vibe?.items || []).map((i) => i.id), ...kpis.kpis.map((k) => k.id)],
+      playbookIds: [...(playbook?.items || []).map((i) => i.id), ...(vibe?.items || []).map((i) => i.id), ...kpis.kpis.map((k) => k.id), ...(practice?.actions || []).map((a) => a.id)],
     };
     const panel = await runPanel({ anthropic, budget, inputs, members });
 
-    const text = composeDigest({ date, review: panel.text, scorecard, kpis, engineering, playbook, vibe, panel, budgetUsd: budget.limit, readingUsd: reading.spent });
+    const text = composeDigest({ date, review: panel.text, scorecard, kpis, engineering, benchmark, practice, playbook, vibe, panel, budgetUsd: budget.limit, readingUsd: reading.spent });
     const subject = subjectLine({ date, scorecard, kpis });
 
     let emailed = false;

@@ -1348,8 +1348,59 @@ pages like the first: what the founder is doing well, what is missing for an
 autonomous AI-agent company, and three habits or prompts for the next coding
 sessions.
 
+**Technology against competitors.** Your technology cannot be compared with a
+competitor's from the inside, because their code is not yours to read. What can
+be measured identically for both is what a visitor or an AI agent can see. Once
+a week, for every venture with a live URL (`URL <id> https://…` sets it), the
+server finds the venture's closest competitors and probes them and you with the
+same fixed checks: whether the site answers over https and how fast, the
+security headers, public documentation, a machine-readable API description
+(OpenAPI), a status page, a dated changelog and how many entries it has in 90
+days, an SDK, the compliance frameworks it names, and, for products that other
+people's AI agents will use, an `llms.txt`, an MCP server, documented webhooks
+and integrations. Two rubrics, each out of ten and printed in full in the email,
+score them: technology quality and technology innovation. You get a rank against
+each competitor and the list of what the best one has that you were not seen to
+have. It is a comparison of observable signals: it says nothing about whose code
+is better, and a signal marked missing was not found on the pages probed, not
+proven absent.
+
+Who counts as a competitor is a judgement. Yours wins: a note in
+`Company/Competitors/` with `type: competitor-list`, the venture's title in
+`venture:`, and the URLs as bullets under a `## Track` heading. Where there is
+none, a search proposes up to four per venture, and the email says their
+relevance is unverified. Every URL still has to be public https and is fetched
+with the same address and redirect checks as everything else that fetches a URL
+from outside.
+
+```
+---
+type: competitor-list
+venture: Circadian
+---
+## Track
+- https://www.timeshifter.com
+- https://www.stopjetlag.com
+```
+
+**Your coding practice, and a plan to improve it.** From your pull requests and
+commits themselves (each merged pull request is read once and cached), eight
+areas are scored 0 to 4 against thresholds printed in the email: small changes
+that are easy to review; tests that travel with the code; CI passing before a
+merge; a second look before merge (a review bot counts); little rework straight
+after (fixes and reverts); how fast an idea reaches main; the coding tool's
+instructions file kept alive; and a net under the agents and the repo (evals,
+tracing, a kill switch and spend cap, locked and updated dependencies). They are
+habits visible in the record, not talent, and not whether the logic is right; the
+email says so. A snapshot is kept weekly, so each area shows whether it moved
+since about two weeks ago. The weakest areas produce candidate actions from a
+fixed catalogue in `consultant/practice.js`, each with a first prompt to give the
+coding tool and the number that says it worked; the review turns them into a
+30/60/90-day plan using only those actions (anything added is marked as
+judgement), and the next briefing shows whether the numbers moved.
+
 Costs: the daily review is about $0.15 to $0.45. Reading the sources costs more
-but runs at most once a week per reading list, under its own ceiling
+but runs at most once a week per reading list (and once a week for the competitor search), under its own ceiling
 (`CONSULTANT_READING_BUDGET_USD`, default $1.00), so it cannot squeeze out the
 daily review or be squeezed by it.
 

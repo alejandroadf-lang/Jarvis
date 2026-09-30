@@ -79,27 +79,39 @@ function checkUrl(raw) {
   return u;
 }
 
-/** Fetches a public https page as text, or throws with the reason it would not. */
-export async function safeFetchText(url, { fetchImpl = fetch, lookup = (h) => dns.lookup(h, { all: true }) } = {}) {
+/**
+ * Fetches a public https page, following at most three redirects and checking
+ * every hop. Resolves to { status, text, headers, ms, url }. By default anything
+ * but a 2xx text page throws with the reason; `tolerant` returns a 4xx or 5xx (or
+ * a non-text body) as data instead, for probes that ask whether a path exists.
+ */
+export async function safeFetchPage(url, { fetchImpl = fetch, lookup = (h) => dns.lookup(h, { all: true }), tolerant = false } = {}) {
   let current = url;
+  const started = Date.now();
   for (let hop = 0; hop <= MAX_HOPS; hop++) {
     const u = checkUrl(current);
     const addresses = await lookup(u.hostname);
     if (!addresses.length || !addresses.every((a) => isPublicAddress(a.address))) throw new Error('the host does not resolve to a public address');
-    const res = await fetchImpl(u.href, { redirect: 'manual', signal: AbortSignal.timeout(TIMEOUT_MS), headers: { 'User-Agent': 'jarvis-rule-watch', Accept: 'text/html,text/plain' } });
+    const res = await fetchImpl(u.href, { redirect: 'manual', signal: AbortSignal.timeout(TIMEOUT_MS), headers: { 'User-Agent': 'jarvis-rule-watch', Accept: 'text/html,text/plain,application/json' } });
     if (res.status >= 300 && res.status < 400) {
       const next = res.headers.get('location');
       if (!next) throw new Error(`redirect ${res.status} with no location`);
       current = new URL(next, u.href).href;
       continue;
     }
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const type = String(res.headers.get('content-type') || '');
-    if (!/(text\/|json|xml)/i.test(type)) throw new Error(`not a text page (${type || 'no content type'})`);
-    const text = await res.text();
-    return text.length > MAX_BYTES ? text.slice(0, MAX_BYTES) : text;
+    if (!res.ok && !tolerant) throw new Error(`HTTP ${res.status}`);
+    const textual = /(text\/|json|xml)/i.test(type);
+    if (res.ok && !textual && !tolerant) throw new Error(`not a text page (${type || 'no content type'})`);
+    const text = res.ok && textual ? await res.text() : '';
+    return { status: res.status, text: text.length > MAX_BYTES ? text.slice(0, MAX_BYTES) : text, headers: res.headers, contentType: type, ms: Date.now() - started, url: u.href };
   }
   throw new Error('too many redirects');
+}
+
+/** Fetches a public https page as text, or throws with the reason it would not. */
+export async function safeFetchText(url, opts = {}) {
+  return (await safeFetchPage(url, opts)).text;
 }
 
 const ENTITIES = { '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'", '&nbsp;': ' ' };

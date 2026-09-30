@@ -116,17 +116,22 @@ test('the digest budget stops further calls, and if nothing can run the whole th
 });
 
 test('coding-source and KPI citations are valid when they exist, and the draft asks for the coach and KPI sections', async () => {
-  const out = panel.checkCitations('Add tests [V2]. KPI health is low [K3, E1]. Made up [V9] [K40].', { factIds: new Set(['E1']), playbookIds: new Set(['V2', 'K3']) });
-  assert.equal(out.text, 'Add tests [V2]. KPI health is low [K3, E1]. Made up [?] [?].');
-  assert.equal(out.cited, 3);
-  assert.equal(out.unknown, 2);
+  const out = panel.checkCitations('Add tests [V2]. KPI health is low [K3, E1]. Do this first [A1]. Made up [V9] [K40] [A9].', { factIds: new Set(['E1']), playbookIds: new Set(['V2', 'K3', 'A1']) });
+  assert.equal(out.text, 'Add tests [V2]. KPI health is low [K3, E1]. Do this first [A1]. Made up [?] [?] [?].');
+  assert.equal(out.cited, 4);
+  assert.equal(out.unknown, 3);
 
-  const prompt = panel.draftPrompt({ ...inputs, kpiText: '[K1] Recurring revenue: €0 (BEHIND)', vibeText: '[V1] Tests catch what the agent breaks.' });
+  const prompt = panel.draftPrompt({ ...inputs, kpiText: '[K1] Recurring revenue: €0 (BEHIND)', vibeText: '[V1] Tests catch what the agent breaks.', actionsText: '[A1] (Small changes) Ask for one change at a time.' });
+  assert.match(prompt, /\[A1\] \(Small changes\)/);
   assert.match(prompt, /7\. Vibe-coding coach/);
   assert.match(prompt, /8\. KPI reading/);
+  assert.match(prompt, /9\. Technology against competitors/);
+  assert.match(prompt, /public, observable signals only/);
+  assert.match(prompt, /10\. Your coding-practice improvement plan, 30\/60\/90 days/);
+  assert.match(prompt, /Use only the listed actions; anything you add is marked \(judgement\)/);
   assert.match(prompt, /name the specific missing pieces/);
   assert.match(prompt, /\[K1\] Recurring revenue/);
   assert.match(prompt, /\[V1\] Tests catch/);
   assert.match(panel.SYSTEM, /is not an engineer/);
-  assert.match(panel.synthesisPrompt({ drafts: [{ name: 'A', model: 'm', text: 't' }], factsText: 'f', kpiText: '[K1] x', playbookText: 'p', vibeText: '[V1] y', date: 'd' }), /same eight sections/);
+  assert.match(panel.synthesisPrompt({ drafts: [{ name: 'A', model: 'm', text: 't' }], factsText: 'f', kpiText: '[K1] x', playbookText: 'p', vibeText: '[V1] y', date: 'd' }), /same ten sections/);
 });

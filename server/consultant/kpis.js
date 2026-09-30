@@ -26,6 +26,8 @@ import { agentPerformance } from '../activityLog.js';
 import { dailyCapUsd, spendByDay } from '../spend.js';
 import { lessonMetrics } from '../workspace/lessons.js';
 import { addFact } from './scorecard.js';
+import { benchmarkKpis } from './competitors.js';
+import { practiceKpis } from './practice.js';
 
 const DAY = 86_400_000;
 export const MRR_GOAL = REVENUE_GOAL_EUR / 12;
@@ -40,7 +42,7 @@ const rate = (top, bottom) => (bottom > 0 ? top / bottom : null);
  * Builds the table. Adds a fact to the card for each KPI, so each cites its own
  * evidence. `engineering` is the code review, when there was one.
  */
-export function buildKpis(sc, { now = new Date(), engineering = null } = {}) {
+export function buildKpis(sc, { now = new Date(), engineering = null, benchmark = null, practice = null } = {}) {
   const raw = listVentures().filter((v) => v.status === 'active');
   const list = [];
   const add = ({ group, name, display, status, rule }) => {
@@ -229,6 +231,10 @@ export function buildKpis(sc, { now = new Date(), engineering = null } = {}) {
       rule: 'on track at 85% or more',
     });
   }
+
+  // --- Technology against competitors, and the founder's building practice --
+  for (const row of benchmarkKpis(benchmark)) add({ group: 'Technology against competitors', ...row });
+  for (const row of practiceKpis(practice)) add({ group: 'Building practice', ...row });
 
   const measured = list.filter((k) => k.status !== 'unmeasured');
   const health = measured.length ? measured.reduce((n, k) => n + WEIGHT[k.status], 0) / measured.length : 0;

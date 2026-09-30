@@ -22,7 +22,7 @@ import { listVentures } from '../finance/ventures.js';
 
 const DAY = 86_400_000;
 const SOURCE = /\.(?:[cm]?[jt]sx?|py|go|rb|java|rs|php)$/i;
-const TEST = /(?:^|\/)(?:tests?|__tests__|specs?)\/|\.(?:test|spec)\.[cm]?[jt]sx?$|(?:^|\/)test_[^/]*\.py$|_test\.(?:go|py)$/i;
+export const TEST = /(?:^|\/)(?:tests?|__tests__|specs?)\/|\.(?:test|spec)\.[cm]?[jt]sx?$|(?:^|\/)test_[^/]*\.py$|_test\.(?:go|py)$/i;
 const BIG_FILE_BYTES = 60_000; // roughly 1,500 lines
 
 // What an AI-agent company needs around its code, and how to see it in a file tree.
