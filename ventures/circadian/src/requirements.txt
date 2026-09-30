@@ -1,10 +1,10 @@
-fastapi==0.115.0
-pydantic==2.9.2
-uvicorn[standard]==0.30.6
+fastapi==0.141.1
+pydantic==2.13.5
+uvicorn[standard]==0.54.0
 # zoneinfo needs the tz database; slim images do not ship it.
 tzdata==2025.2
 # Web push reminders (py-vapid, http-ece and cryptography come with it).
-pywebpush==2.0.3
+pywebpush==2.5.0
 # WHOOP calls (whoop.py). Already installed with pywebpush; named here because
 # whoop.py imports it directly.
 requests>=2.31,<3
