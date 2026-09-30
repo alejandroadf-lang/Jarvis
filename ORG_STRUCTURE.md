@@ -1265,6 +1265,56 @@ failure, which made "this file doesn't exist yet" — a normal state — look
 identical to "the token is wrong". It now carries `.status`, so a 404 reads
 as absence and everything else still throws.
 
+## The consultant: a daily briefing on how ready this company is
+
+Every morning, after the daily meeting, one email arrives: how ready the company
+is to earn its first million, what is working, what is weak, the one thing to do
+today, the next seven days, and what the best sources say that applies. `DIGEST`
+on WhatsApp builds it on demand. A copy lands in the vault under
+`Company/Consultant/`. It costs roughly $0.10 to $0.40 a day with a panel of
+several models (`CONSULTANT_BUDGET_USD`, default $0.75, is a hard ceiling for
+one briefing including the weekly source reading), and `CONSULTANT_DIGEST_DISABLED=true`
+switches it off.
+
+**How far away, without looking at money.** "You are not earning, so you are far
+away" is true on day one and helps nobody. What decides whether the money can
+come is whether each thing it depends on exists, so the briefing scores that:
+
+- Eight dimensions, each 0 to 4 (initial, emerging, defined, managed,
+  optimised): product and technology, revenue engine, go-to-market machinery,
+  operations and autonomy, data and learning, risk and governance, financial
+  discipline, founder leverage. The layout follows the AI-readiness reviews the
+  large consultancies publish; it is not produced by, or endorsed by, any of
+  them.
+- A ladder per venture from "a price is set" through "a working product",
+  "people are using it", "ten buyers identified", "first conversations", "first
+  paying customer", "three paying customers", "€10,000 a month" to "€1M a year",
+  with the first rung not yet reached and the fact that shows it.
+- The binding constraint: the lowest of product, revenue and go-to-market,
+  because raising anything else first is polishing.
+
+**Why it can be trusted more than a model's opinion.** The numbers are computed
+by code from the company's own records and printed beside the facts behind them
+(`E1`, `E2`…); no model can change them. What the sources say is read by the
+server itself: once a week a search finds pages (including the four big
+consultancies' own material on agentic AI, first-hand founder accounts with
+their own numbers, and accounts of what fails), the server fetches each one,
+and a model extracts claims each with a verbatim quote that code keeps only if
+it is really in the page's text. Pages that could not be read (a script-only
+site, a PDF, a block) are listed as unread, never replaced by what a model
+remembers. Then every model family you have a key for reviews the facts alone,
+one merges them and lists where they disagreed, and code checks every citation:
+one that points at nothing becomes `[?]` and is counted in the email. If only
+Anthropic is configured, the email says the review was written by one model and
+is not an independent panel. The consultant has no action tools: it reads and
+writes an email and a vault note, and cannot send, spend, deploy or change a
+record. The source pages and their claims are text from the outside, kept in
+the vault's quarantine tier and never read into the working agents' context.
+
+Not built: automatic pricing benchmarks (nothing here can verify a competitor's
+price), and any use of the email as an instruction to the team; the founder
+turns a recommendation into work by saying so (or in `Steering.md`).
+
 ## Ideas a company without payroll can actually win
 
 The studio's ambition bar asked whether an idea was *big*. It never asked the

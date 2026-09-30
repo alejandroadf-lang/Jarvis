@@ -26,6 +26,7 @@ import { listSearches, searchBalance } from '../searchLog.js';
 import { haltRealActions, resumeRealActions } from '../killSwitch.js';
 import { getSpendSummary, spendBreakdown } from '../spend.js';
 import { buildVaultReport } from '../workspace/founderPages.js';
+import { lastDigest } from '../consultant/digest.js';
 import {
   listVentures,
   getVenture,
@@ -79,6 +80,7 @@ const COMMANDS = [
   { kind: 'resume', re: /^(resume|unhalt|go\s+live)$/i },
   { kind: 'spend', re: /^(spend|cost|budget)$/i },
   { kind: 'vault', re: /^(vault|notebook)$/i },
+  { kind: 'digest', re: /^(digest|briefing|consultant|coach)$/i },
   { kind: 'integrations', re: /^(integrations|connections|health)$/i },
   { kind: 'pitch', re: /^(pitch|pitch now|pitch of the day)$/i },
   { kind: 'issues', re: /^(issues|procedures|desk)$/i },
@@ -471,6 +473,7 @@ READY [ventureId] — what is actually stopping the team, and what opens it
 BUILD [ventureId] — what the team is building right now
 SPEND — today's model spend against the cap
 VAULT — is the team's notebook being used: lessons, reads, decisions
+DIGEST — build the consultant's briefing now and email it (also sent each morning)
 INTEGRATIONS — what's actually connected
 MODELS [search] — live OpenRouter models and their prices
 MODE [ECO|NORMAL|MAX] — switch between cheap models and Claude to save tokens
@@ -550,6 +553,13 @@ export async function runFounderCommand(command, deps = {}) {
 
     case 'vault':
       return buildVaultReport();
+
+    case 'digest': {
+      if (!deps.startDigest) return 'The consultant briefing is not available on this build.';
+      const last = lastDigest();
+      deps.startDigest();
+      return `Building the briefing now: it reads the company's records and this week's sources and asks several models, which takes a minute or two. I'll message you when it has gone out to your email${last ? ` (the last one was ${last.date}, readiness ${last.readiness}/4)` : ''}.`;
+    }
 
     case 'spend': {
       const { spentUsd, capUsd, date, overCap, cache } = getSpendSummary();

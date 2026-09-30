@@ -68,8 +68,8 @@ import {
   studioGate,
 } from './actionHandlers.js';
 import { todayKey, saveDailyReport, getLatestDailyReport } from './dailyReports.js';
-import { sendDailyReportEmail, sendPitchEmail } from './email.js';
-import { publishDailyReport, publishVenture, readFounderSteering } from './workspace/vault.js';
+import { sendDailyReportEmail, sendPitchEmail, isEmailConfigured } from './email.js';
+import { publishDailyReport, publishVenture, readFounderSteering, isWorkspaceConfigured } from './workspace/vault.js';
 import { refreshFounderPages } from './workspace/founderPages.js';
 import { estimateCostUsd, sumUsage, emptyUsage } from './usage.js';
 import { withSpendContext } from './spend.js';
@@ -591,6 +591,15 @@ export async function runDailyMeeting({ anthropic }) {
   // Today.md, the decision inbox, the index, dashboards and the rules register.
   // After the report because the report is the real work; never throws.
   await refreshFounderPages().catch((err) => console.error('Founder pages failed:', err.message));
+
+  // The consultant's briefing: one email on how ready the company is and what
+  // to do today. Only when there is somewhere to deliver it (an email address or
+  // the vault), and never a reason for the meeting to fail. Loaded on demand
+  // because it reads most of the company, and this module is read by most of it.
+  if (isEmailConfigured() || isWorkspaceConfigured()) {
+    const { runConsultantDigest } = await import('./consultant/digest.js');
+    await runConsultantDigest({ anthropic }).catch((err) => console.error('Consultant briefing failed:', err.message));
+  }
 
   // The morning pitch. Deliberately outside the scope check that skips the
   // Studio on a quiet day: the founder asked for one every morning, and a

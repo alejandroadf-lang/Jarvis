@@ -330,6 +330,22 @@ export function createWhatsAppInbound({ anthropic, runCompanyTurn, drainDeepDive
               .catch((err) => sendWhatsAppMessage(message.from, `The fact check could not finish — ${err.message}`))
               .catch((sendErr) => console.error('Could not deliver the fact check:', sendErr));
           },
+          // Started, not awaited, like the eval: a briefing reads sources and asks
+          // several models, and the webhook would time out first.
+          startDigest: () => {
+            import('../consultant/digest.js')
+              .then(({ runConsultantDigest }) => runConsultantDigest({ anthropic, force: true }))
+              .then((r) =>
+                sendWhatsAppMessage(
+                  message.from,
+                  r.sent
+                    ? `Briefing built (readiness ${r.readiness}/4, $${r.usd.toFixed(2)}). ${r.emailed ? 'It is in your email' : 'Email is not configured (SMTP_HOST and REPORT_EMAIL_TO)'}${r.published ? ' and in the vault under Company/Consultant.' : '.'}`
+                    : `No briefing: ${r.reason}.`,
+                ),
+              )
+              .catch((err) => sendWhatsAppMessage(message.from, `The briefing could not finish: ${err.message}`))
+              .catch((sendErr) => console.error('Could not deliver the briefing notice:', sendErr));
+          },
           startEval: (scenarioId) => {
             runEval({ scenarioId })
               .then(({ summary }) => sendWhatsAppMessage(message.from, `Eval finished.\n\n${summary}`))

@@ -267,6 +267,13 @@ export async function sendPitchEmail({ subject, text }) {
   return sendEmail(subject, text); // to the founder, like every other alert here
 }
 
+// The consultant's daily briefing. Its own email, never folded into the daily
+// report: the report says what happened; this says how ready the company is
+// and what to do about it, and it is long enough to be read on its own.
+export async function sendConsultantDigestEmail({ subject, text }) {
+  return sendEmail(subject, text);
+}
+
 // A real person answered. That is the single most important thing that can
 // happen in this company's day, and before inbox.js existed it was invisible
 // — the founder was relaying replies by hand into WhatsApp.
