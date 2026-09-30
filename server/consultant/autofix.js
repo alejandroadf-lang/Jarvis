@@ -29,7 +29,7 @@ import { readJson, writeJson } from '../store.js';
 import { runAgent } from '../agents/agentRunner.js';
 import { AGENTS as COMPANY_AGENTS, ROOT_AGENT_ID as COMPANY_ROOT } from '../agents/orgChart.js';
 import { buildCompanyContext } from '../finance/context.js';
-import { listVentures } from '../finance/ventures.js';
+import { listVentures, isPathAllowed } from '../finance/ventures.js';
 import { withSpendContext, getSpendToday, dailyCapUsd } from '../spend.js';
 import { getKillSwitch } from '../killSwitch.js';
 import { listActivity } from '../activityLog.js';
@@ -110,6 +110,11 @@ const REPO_FIXES = {
   updates: 'Add a .github/dependabot.yml so dependency updates arrive as pull requests.',
 };
 
+// Where each of those files lives. A repo link only lets the team write inside its
+// allowed paths, and these sit at the repo root or under .github, which a link
+// made for "src/" does not cover; a pull request for them would be refused.
+const REPO_FIX_PATHS = { agentDocs: 'CLAUDE.md', envTemplate: '.env.example', security: 'SECURITY.md', updates: '.github/dependabot.yml', ci: '.github/workflows/ci.yml' };
+
 const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 30);
 
 /**
@@ -150,8 +155,20 @@ export function buildCandidates({ scorecard, benchmark, engineering, ventures = 
     }
     const repo = engineering?.repos?.find((r) => !r.error && byId[v.id]?.repo && r.owner.toLowerCase() === byId[v.id].repo.owner.toLowerCase() && r.name.toLowerCase() === byId[v.id].repo.name.toLowerCase());
     if (repo) {
+      const link = byId[v.id].repo;
+      const outside = [];
       for (const c of repo.checklist.filter((c) => !c.present && REPO_FIXES[c.key])) {
+        const target = REPO_FIX_PATHS[c.key];
+        if (target && !isPathAllowed(link, target)) {
+          outside.push(target);
+          continue;
+        }
         push(v, `repo:${v.id}:${c.key}`, 'pr', `${v.title}'s repo is missing: ${c.label}`, REPO_FIXES[c.key], `the code review found this missing in ${repo.owner}/${repo.name}`);
+      }
+      // One request for all of them, instead of pull requests the scope would refuse.
+      if (outside.length) {
+        const paths = [...new Set(outside)];
+        push(v, `decision:${v.id}:paths:${paths.join('+')}`, 'decision', `${v.title}: the team may not write ${paths.join(', ')} in ${repo.owner}/${repo.name}`, `The code review found ${paths.join(', ')} missing in ${repo.owner}/${repo.name}, but this venture's repo link only allows ${link.allowedPaths.join(', ') || 'no paths'}, so a pull request for them would be refused. File a decision request asking the founder to widen the scope by sending LINK ${v.id} ${repo.owner}/${repo.name} ${[...link.allowedPaths, ...paths].join(' ')} (keeping every path already allowed), and say what each file would contain.`, `the code review found these missing in ${repo.owner}/${repo.name}, outside the allowed paths`);
       }
     }
   }
@@ -189,7 +206,8 @@ Finish with exactly one line per correction, in this form: "F1: done — <the pu
 /** Reads the closing lines into an outcome per correction. Pure. */
 export function parseOutcomes(text, selected) {
   const found = {};
-  for (const m of String(text || '').matchAll(/^\s*F(\d+)\s*[:.\-]\s*(done|asked|blocked)\b\s*[—:\-–]*\s*(.*)$/gim)) found[`F${m[1]}`] = { status: m[2].toLowerCase(), note: m[3].trim().slice(0, 300) };
+  // Bullets and bold around the id are how models format a list: "- **F1:** done — …".
+  for (const m of String(text || '').matchAll(/^[\s>*•\-]*\**F(\d+)\**\s*[:.\-]\s*\**\s*(done|asked|blocked)\b\**\s*[—:\-–]*\s*(.*)$/gim)) found[`F${m[1]}`] = { status: m[2].toLowerCase(), note: m[3].replace(/\*+/g, '').trim().slice(0, 300) };
   return selected.map((c) => ({ id: c.id, key: c.key, title: c.title, kind: c.kind, ...(found[c.id] || { status: 'unknown', note: 'the session did not report on this one' }) }));
 }
 
@@ -223,8 +241,12 @@ export async function runAutofix({ anthropic, selected, now = new Date(), force 
         budgetUsd: autofixBudgetUsd(),
       }),
     );
-    record.summary = String(result?.text ?? result ?? '').slice(0, 1500);
-    record.outcomes = parseOutcomes(record.summary, selected);
+    // The closing lines are the last thing the session writes, so they are read from
+    // the whole reply and only then is it cut for storage, keeping the END: cutting
+    // first, as this once did, threw away exactly the lines that report the outcome.
+    const text = String(result?.text ?? result ?? '');
+    record.outcomes = parseOutcomes(text, selected);
+    record.summary = text.length > 1500 ? `…${text.slice(-1500)}` : text;
     record.usd = result?.usage?.costUsd || 0;
   } catch (err) {
     record.error = String(err?.message || err).slice(0, 300);
@@ -267,6 +289,10 @@ export function renderFixes({ planned = [], last = null, on = true }) {
     for (const o of last.outcomes) lines.push(`  ${o.id}  ${o.status.toUpperCase()}  ${o.title}${o.note ? ` — ${o.note}` : ''}`);
     if (last.prs.length) lines.push('  Pull requests opened (never merged; you or CI decide):', ...last.prs.map((p) => `    - ${p.venture}: ${p.title} ${p.url}`));
     if (last.error) lines.push(`  The session failed: ${last.error}`);
+    // What actually happened, from the activity log rather than from the session's own account.
+    const used = Object.entries(last.actions || {});
+    lines.push(used.length ? `  What the session did, from the activity log: ${used.map(([t, n]) => `${t} ${n.ok} done${n.refused ? `, ${n.refused} refused` : ''}`).join('; ')}.` : '  The activity log shows the session took no action with any tool.');
+    if (last.outcomes.some((o) => o.status === 'unknown') && last.summary) lines.push('  It gave no closing line for some corrections. The end of what it said:', ...String(last.summary).slice(-600).split('\n').map((l) => `    | ${l}`));
     lines.push(`  Cost: $${(last.usd || 0).toFixed(3)}.`, '');
   } else if (on) {
     lines.push('No correction has run yet.', '');
