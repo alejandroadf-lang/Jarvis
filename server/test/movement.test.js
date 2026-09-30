@@ -123,14 +123,29 @@ test('a failing CI run counts as movement — and the timestamp field is started
   assert.match(movement.describeMovement({ since: HOUR_AGO }).lines.join('\n'), /failing CI run/);
 });
 
-test('finished and queued tasks count as movement', () => {
+test('only a failed task is movement; the team queueing and finishing its own work is not', () => {
+  // The work sessions queue and finish tasks all day. Counting that made every
+  // morning a full 26-agent sync plus a Studio pass, because the team worked.
   const queued = tasks.enqueueTask({ ventureId: 'v_1', title: 'Write the engine', queuedBy: 'cto' });
   tasks.startTask(queued.id);
   tasks.completeTask(queued.id, 'done');
+  assert.equal(movement.describeMovement({ since: HOUR_AGO }).moved, false, 'routine work is not news');
 
+  const bad = tasks.enqueueTask({ ventureId: 'v_1', title: 'Write the tests', queuedBy: 'cto' });
+  // A task is only FAILED once its attempts are used up; before that it is retried.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    tasks.startTask(bad.id);
+    tasks.failTask(bad.id, 'no such file');
+  }
   const lines = movement.describeMovement({ since: HOUR_AGO }).lines.join('\n');
-  assert.match(lines, /1 task completed/);
-  assert.match(lines, /1 new task queued/);
+  assert.match(lines, /1 task failed/);
+  assert.doesNotMatch(lines, /completed|queued/);
+});
+
+test('venture notes are not movement either', () => {
+  const v = makeVenture();
+  ventures.recordVentureNote(v.id, { note: 'checked the pricing page', agentId: 'cto' });
+  assert.doesNotMatch(movement.describeMovement({ since: Date.now() - 1000 }).lines.join('\n'), /note/);
 });
 
 test('a ledger entry counts as movement — and its timestamp field is createdAt', () => {
@@ -156,14 +171,16 @@ test('a plan waiting on the founder forces the full sync', () => {
   assert.deepEqual(scope.movement.lines, []);
 });
 
-test('an approved plan forces the full sync, because the team is cleared to work', () => {
+test('an approved plan no longer forces the full sync', () => {
+  // It did ("the team is cleared to work"), and an approved plan lasts until it
+  // is replaced, so every day was a full sync. The work sessions do the work.
   const v = makeVenture();
   plan.submitPlan({ summary: 's', items: [{ ventureId: v.id, action: 'deploy_code', intent: 'i' }] });
   plan.approvePlan();
 
   const scope = movement.planSyncScope({ since: Date.now() });
-  assert.equal(scope.full, true);
-  assert.match(scope.reason, /cleared to work/);
+  assert.equal(scope.full, false);
+  assert.match(scope.reason, /nothing has moved/);
 });
 
 // The guard against the obvious failure of this whole change: a company that

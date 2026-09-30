@@ -13,6 +13,7 @@
 
 import { describeLatestEvalForReflection } from './evalRuns.js';
 import { runAgent } from './agents/agentRunner.js';
+import { withSpendContext } from './spend.js';
 import { AGENTS as COMPANY_AGENTS, ROOT_AGENT_ID as COMPANY_ROOT } from './agents/orgChart.js';
 import { buildBusinessContext } from './finance/context.js';
 import { listVentures } from './finance/ventures.js';
@@ -100,14 +101,14 @@ export async function runWeeklyReflection({ anthropic }) {
     text = 'No daily reports were generated this week — nothing to reflect on yet.';
   } else {
     try {
-      const result = await runAgent({
+      const result = await withSpendContext({ source: 'weekly' }, () => runAgent({
         anthropic,
         agents: COMPANY_AGENTS,
         agentId: COMPANY_ROOT,
         messages: [{ role: 'user', content: buildReflectionKickoff(weekEnding, weekReports) }],
         actionHandlers: {}, // read-only analysis — see file header
         extraContext: buildBusinessContext(),
-      });
+      }));
       text = result.text;
       trace = result.trace;
       usage = result.usage;

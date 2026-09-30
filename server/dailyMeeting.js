@@ -65,11 +65,13 @@ import {
   handleCheckService,
   handleLogVentureNote,
   handleListApprovedRepos,
+  studioGate,
 } from './actionHandlers.js';
 import { todayKey, saveDailyReport, getLatestDailyReport } from './dailyReports.js';
 import { sendDailyReportEmail, sendPitchEmail } from './email.js';
 import { publishDailyReport, publishVenture, readFounderSteering } from './workspace/vault.js';
 import { estimateCostUsd, sumUsage, emptyUsage } from './usage.js';
+import { withSpendContext } from './spend.js';
 import { isPlanRequired, getPlan } from './dailyPlan.js';
 
 
@@ -138,8 +140,10 @@ the sync wasn't paying attention.`;
  */
 function quietKickoff(date, scope) {
   return `It's ${date}. This is the morning sync, and it is deliberately a short
-one: nothing has moved since the last one — no commits, no customer emails, no
-tasks finished or failed, no ledger entries, and no plan waiting on the founder.
+one: nothing outside the team has moved since the last one — no commits, no
+customer emails, no failed tasks or CI runs, no ledger entries, and no plan
+waiting on the founder. The team's own routine work goes on between meetings
+and is not news.
 
 You have no reports available to you this morning, on purpose. Asking four
 departments to describe a day in which nothing happened costs real money and
@@ -422,12 +426,12 @@ quick daily check-in, not a full brainstorming session.`;
  * directly; the email is sent regardless.
  */
 export async function runPitchNow({ anthropic }) {
-  const { pitch, note } = await generatePitch({
+  const { pitch, note } = await withSpendContext({ source: 'pitch' }, () => generatePitch({
     anthropic,
     runAgent,
     agents: STUDIO_AGENTS,
     agentId: STUDIO_ROOT,
-  });
+  }));
   const email = formatPitchEmail(pitch || {}, { note });
   let sent = false;
   if (pitch || note) {
@@ -466,7 +470,7 @@ export async function runDailyMeeting({ anthropic }) {
   let leadership;
   let leadershipFailed = false;
   try {
-    leadership = await runAgent({
+    leadership = await withSpendContext({ source: 'meeting' }, () => runAgent({
       anthropic,
       // On a quiet morning the CEO's reports are removed, so the fan-out is
       // structurally impossible rather than merely discouraged — see
@@ -485,7 +489,7 @@ export async function runDailyMeeting({ anthropic }) {
       // to the agents that build. See buildRepoManifests for the week that
       // paid for this.
       perAgentContext: (agentId) => buildPerAgentContext(agentId, { repoManifests }),
-    });
+    }));
   } catch (err) {
     leadershipFailed = true;
     leadership = { text: `(Leadership sync failed: ${err.message})`, trace: [], usage: emptyUsage() };
@@ -495,6 +499,16 @@ export async function runDailyMeeting({ anthropic }) {
   if (leadershipFailed) {
     studio = {
       text: "(Skipped: today's leadership sync failed, so there's nothing fresh to review.)",
+      trace: [],
+      usage: emptyUsage(),
+    };
+  } else if (studioGate()) {
+    // Every proposal it could make is refused while this gate is closed (see
+    // handleProposeVenture), so the pass was a full day of six agents and web
+    // searches spent producing ideas the next line of code throws away. The
+    // gate opens when recurring revenue clears the bar or STUDIO_MIN_MRR_USD=0.
+    studio = {
+      text: '(Skipped: the Studio is paused while the company has an active venture and recurring revenue is under the bar, so nothing it proposed could be started.)',
       trace: [],
       usage: emptyUsage(),
     };
@@ -510,7 +524,7 @@ export async function runDailyMeeting({ anthropic }) {
     };
   } else {
     try {
-      studio = await runAgent({
+      studio = await withSpendContext({ source: 'studio' }, () => runAgent({
         anthropic,
         agents: STUDIO_AGENTS,
         agentId: STUDIO_ROOT,
@@ -518,7 +532,7 @@ export async function runDailyMeeting({ anthropic }) {
         actionHandlers: studioActionHandlers(),
         extraContext: [buildStudioContext(), steering].filter(Boolean).join('\n\n'),
         perAgentContext: buildPerAgentContext,
-      });
+      }));
     } catch (err) {
       studio = { text: `(Venture Studio ideation pass failed: ${err.message})`, trace: [], usage: emptyUsage() };
     }

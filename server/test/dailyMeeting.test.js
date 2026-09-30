@@ -103,13 +103,15 @@ test('deploy_code actually fires during the unattended leadership sync for a ven
       textResponse('Deployed the homepage update.'),
       textResponse('CTO: engineering shipped a real update today.'),
       textResponse('Leadership sync complete: nothing else notable.'),
-      textResponse('Nothing clears the bar for a new venture today.'),
     ]);
 
     const report = await dailyMeeting.runDailyMeeting({ anthropic });
 
     assert.equal(report.leadership.reply, 'Leadership sync complete: nothing else notable.');
-    assert.equal(report.studio.reply, 'Nothing clears the bar for a new venture today.');
+    // An active venture and no recurring revenue: the studio gate is closed, so
+    // the Studio pass, which could only propose what the gate then refuses, is
+    // not paid for. It used to run, and answer "nothing clears the bar", daily.
+    assert.match(report.studio.reply, /^\(Skipped: the Studio is paused/);
 
     const updated = ventures.getVenture(v.id);
     assert.equal(updated.deployments.length, 1);

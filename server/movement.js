@@ -75,11 +75,6 @@ export function describeMovement({ since } = {}) {
       lines.push(`${venture.title}: ${redRuns.length} failing CI run${redRuns.length === 1 ? '' : 's'}`);
     }
 
-    const notes = (venture.notes || []).filter((n) => after(n.at, from));
-    if (notes.length) {
-      lines.push(`${venture.title}: ${notes.length} new venture note${notes.length === 1 ? '' : 's'}`);
-    }
-
     if (after(venture.createdAt, from)) lines.push(`${venture.title}: started since the last sync`);
     if (venture.status === 'killed' && after(venture.killedAt, from)) {
       lines.push(`${venture.title}: killed since the last sync`);
@@ -87,13 +82,15 @@ export function describeMovement({ since } = {}) {
   }
 
   const tasks = listTasks({ limit: 200 });
-  const finished = tasks.filter((t) => after(t.finishedAt, from));
-  const done = finished.filter((t) => t.status === 'done');
-  const failed = finished.filter((t) => t.status === 'failed');
-  if (done.length) lines.push(`${done.length} task${done.length === 1 ? '' : 's'} completed`);
+  // Only a failure is movement. The team queueing and finishing its own tasks
+  // and writing venture notes is what the work sessions do all day; counting
+  // it made every morning "wide" (26 agents and a Studio pass, the company's
+  // two largest line items) precisely because the team was working. A wide
+  // sync is for what the team did not do itself: commits and emails that
+  // reached the world, failures, a service down, money, a venture born or
+  // killed.
+  const failed = tasks.filter((t) => after(t.finishedAt, from) && t.status === 'failed');
   if (failed.length) lines.push(`${failed.length} task${failed.length === 1 ? '' : 's'} failed`);
-  const queued = tasks.filter((t) => after(t.queuedAt, from));
-  if (queued.length) lines.push(`${queued.length} new task${queued.length === 1 ? '' : 's'} queued`);
 
   const money = (getLedger().transactions || []).filter((t) => after(t.createdAt, from));
   if (money.length) lines.push(`${money.length} ledger entr${money.length === 1 ? 'y' : 'ies'} recorded`);
@@ -135,9 +132,9 @@ export function planSyncScope({ since } = {}) {
   if (plan?.status === PLAN_STATUS.PENDING) {
     return { full: true, reason: 'a plan is waiting on the founder', movement };
   }
-  if (plan?.status === PLAN_STATUS.APPROVED) {
-    return { full: true, reason: 'an approved plan is live, so the team is cleared to work', movement };
-  }
+  // An approved plan used to force a wide sync too ("the team is cleared to
+  // work"). It no longer does: the work sessions do the work now, and an
+  // approved plan lasts until it is replaced, so this made every day wide.
 
   if (movement.daysSince === null || movement.daysSince >= FULL_SYNC_MAX_GAP_DAYS) {
     return {
