@@ -521,10 +521,10 @@ export async function getIntegrationStatus() {
       configured: isWorkspaceConfigured(),
       ok: null,
       detail: isWorkspaceConfigured()
-        ? `Reports, reflections and venture notes publish to ${workspaceConfig().owner}/${workspaceConfig().repo} (${workspaceConfig().branch}).`
+        ? `Daily reports, weekly reflections, venture pages, knowledge pages, the Road to €1M and work-session logs publish to ${workspaceConfig().owner}/${workspaceConfig().repo} (${workspaceConfig().branch}); Steering.md in it is read back into every agent's context.`
         : process.env.WORKSPACE_REPO_OWNER || process.env.WORKSPACE_REPO_NAME
           ? 'Half-configured — needs WORKSPACE_REPO_OWNER, WORKSPACE_REPO_NAME and a GITHUB_TOKEN.'
-          : 'Not set — the company keeps its written output in this app only.',
+          : 'Not set — the company keeps its written output in this app only. Set WORKSPACE_REPO_OWNER and WORKSPACE_REPO_NAME to a GitHub repo your GITHUB_TOKEN can write to, and open it as an Obsidian vault.',
     },
     github: {
       configured: isGithubConfigured(),

@@ -17,6 +17,10 @@ import {
   formatWeeklyReflection,
   formatVenture,
   publishDailyReport,
+  publishRoadmap,
+  publishWorkSession,
+  formatRoadmap,
+  formatWorkSession,
   readFounderSteering,
   invalidateSteeringCache,
   FOUNDER_NOTE_PATH,
@@ -280,4 +284,44 @@ test('invalidating the cache makes the next read hit GitHub again', async () => 
   invalidateSteeringCache();
   await readFounderSteering();
   assert.equal(fetches, 2);
+});
+
+// The roadmap and the work sessions are what the founder reads to see whether
+// the team is going anywhere, so they are notes like the rest: dated, with
+// properties, and linked to the venture they are about.
+test('the Road to €1M is a dated note with properties', () => {
+  const md = formatRoadmap({ generatedAt: '2026-09-30T01:00:00.000Z', text: '## Circadian\nTop improvement: price.' });
+  assert.match(md, /^---\ntype: roadmap\nwritten: 2026-09-30\ntags: \[company\/roadmap\]\n---\n/);
+  assert.match(md, /# Road to €1M — 2026-09-30/);
+  assert.match(md, /Top improvement: price\./);
+});
+
+test('a work session links to its venture and says whether it produced anything', () => {
+  const venture = { title: 'Widget Co: Reports' };
+  const done = formatWorkSession({ at: '2026-09-30T05:00:00.000Z', work: 3, productive: true, summary: 'Opened a pull request.' }, venture);
+  assert.match(done, /type: work-session/);
+  assert.match(done, /work_done: 3/);
+  assert.match(done, /productive: true/);
+  assert.match(done, /Venture: \[\[Widget Co Reports\]\]/, 'the link survives the filename rules');
+  assert.match(done, /Opened a pull request\./);
+
+  const failed = formatWorkSession({ at: '2026-09-30T05:00:00.000Z', work: 0, productive: false, error: 'provider down' }, venture);
+  assert.match(failed, /\*\*Did not finish:\*\* provider down/);
+});
+
+test('both are committed to their own folders, and stay inert with no workspace', async () => {
+  const puts = [];
+  global.fetch = async (url, options) => {
+    if (!options || options.method !== 'PUT') return { ok: false, status: 404, text: async () => '' };
+    puts.push(url);
+    return { ok: true, json: async () => ({ commit: { sha: 's', html_url: 'u' } }) };
+  };
+  assert.equal(await publishRoadmap({ generatedAt: '2026-09-30T01:00:00.000Z', text: 'x' }), false, 'nothing configured, nothing sent');
+  assert.equal(puts.length, 0);
+
+  configure();
+  assert.equal(await publishRoadmap({ generatedAt: '2026-09-30T01:00:00.000Z', text: 'x' }), true);
+  assert.equal(await publishWorkSession({ at: '2026-09-30T05:00:00.000Z', work: 1, productive: true, summary: 's' }, { title: 'Happy Company' }), true);
+  assert.match(puts[0], /contents\/Company\/Roadmap\/2026-09-30\.md/);
+  assert.match(puts[1], /contents\/Company\/Work%20Sessions\/2026-09-30%20Happy%20Company\.md/);
 });

@@ -35,6 +35,11 @@ const FOLDERS = {
   // Compiled understanding, one page per venture, rewritten weekly. See
   // workspace/knowledge.js — this is the wiki layer over the reports above.
   knowledge: 'Company/Knowledge',
+  // One note a week per the Road to €1M (roadmap.js), so the notes are a history
+  // of what the team proposed and the founder can see whether it followed up.
+  roadmap: 'Company/Roadmap',
+  // What each work session did, one note per venture per day.
+  sessions: 'Company/Work Sessions',
 };
 
 // The one file the founder writes and the company reads. Sitting at the top
@@ -140,6 +145,39 @@ export function formatWeeklyReflection(reflection) {
   ].join('\n') + '\n';
 }
 
+export function formatRoadmap(roadmap) {
+  return [
+    frontmatter({
+      type: 'roadmap',
+      written: (roadmap.generatedAt || '').slice(0, 10),
+      tags: ['company/roadmap'],
+    }),
+    `# Road to €1M — ${(roadmap.generatedAt || '').slice(0, 10)}`,
+    '',
+    roadmap.text || '_(empty)_',
+  ].join('\n') + '\n';
+}
+
+/** What one work session did, with a wikilink to the venture it worked on. */
+export function formatWorkSession(entry, venture) {
+  const title = venture?.title || 'Unknown venture';
+  return [
+    frontmatter({
+      type: 'work-session',
+      date: (entry.at || '').slice(0, 10),
+      venture: title,
+      work_done: entry.work ?? 0,
+      productive: Boolean(entry.productive),
+      tags: ['company/session'],
+    }),
+    `# Work session — ${title}, ${(entry.at || '').slice(0, 10)}`,
+    '',
+    `Venture: [[${noteName(title)}]]`,
+    '',
+    entry.error ? `**Did not finish:** ${entry.error}` : entry.summary || '_(no summary)_',
+  ].join('\n') + '\n';
+}
+
 export function formatVenture(venture) {
   const milestones = (venture.milestones || [])
     .map((m) => `- [${m.status === 'done' ? 'x' : ' '}] ${m.title}${m.status === 'missed' ? ' — **missed**' : ''}`)
@@ -214,6 +252,20 @@ export function publishWeeklyReflection(reflection) {
     `${FOLDERS.reflections}/${reflection.weekEnding}.md`,
     formatWeeklyReflection(reflection),
     `Weekly reflection — week ending ${reflection.weekEnding}`
+  );
+}
+
+export function publishRoadmap(roadmap) {
+  const day = (roadmap.generatedAt || new Date().toISOString()).slice(0, 10);
+  return publish(`${FOLDERS.roadmap}/${day}.md`, formatRoadmap(roadmap), `Road to €1M — ${day}`);
+}
+
+export function publishWorkSession(entry, venture) {
+  const day = (entry.at || new Date().toISOString()).slice(0, 10);
+  return publish(
+    `${FOLDERS.sessions}/${day} ${noteName(venture?.title)}.md`,
+    formatWorkSession(entry, venture),
+    `Work session — ${venture?.title || 'venture'}, ${day}`
   );
 }
 

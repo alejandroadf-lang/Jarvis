@@ -20,6 +20,7 @@ import { buildCompanyContext } from './finance/context.js';
 import { listVentures, REVENUE_GOAL_EUR } from './finance/ventures.js';
 import { withSpendContext } from './spend.js';
 import { getLatestRoadmap, saveRoadmap } from './roadmapStore.js';
+import { publishRoadmap } from './workspace/vault.js';
 
 export const ROADMAP_MAX_AGE_DAYS = 7;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -62,7 +63,11 @@ export async function runRoadmap({ anthropic }) {
       extraContext: buildCompanyContext(),
     }),
   );
-  return saveRoadmap({ text: result.text, costUsd: result.usage?.costUsd || 0 });
+  const saved = saveRoadmap({ text: result.text, costUsd: result.usage?.costUsd || 0 });
+  // Into the founder's vault as a dated note. Fail-quiet and inert when no
+  // workspace is set (see publish in workspace/vault.js).
+  await publishRoadmap(saved);
+  return saved;
 }
 
 /**
