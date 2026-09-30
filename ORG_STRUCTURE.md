@@ -1215,6 +1215,19 @@ addresses, localhost, ports or credentials; every resolved address and every
 redirect is checked). The first look at a page is a baseline, not an alert, and
 a page that fails three times in a row is reported once.
 
+Circadian's own usage numbers come back too. The app already sends anonymous
+events to PostHog (`ventures/circadian/src/analytics.py`); it never read them
+back, so the team planned the product with no view of whether anyone used it.
+With `POSTHOG_PERSONAL_API_KEY` (a personal key with the Query Read permission,
+not the `phc_` key the app sends with), `POSTHOG_PROJECT_ID` and, for an EU
+project, `POSTHOG_APP_HOST`, set on the Jarvis service, the daily refresh runs
+two small queries and keeps the answer: devices that opened the app, made a
+plan, turned reminders on, connected WHOOP, and came back, this week against
+last. It appears on `Today.md` and as one line in the team's context. Counts
+only, no person, IP address or trip. The request shape was confirmed from
+search results and not from PostHog's own page (it was blocked), so the first
+live run is the check; a refused key logs which key is wanted.
+
 A Forge manifest change that adds a remote, web trigger or egress permission
 (which can cost the app its Runs on Atlassian badge) files a decision request
 when the pull request opens.

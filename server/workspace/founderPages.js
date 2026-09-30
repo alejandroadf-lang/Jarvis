@@ -34,6 +34,7 @@ import { readFileMeta } from '../deploy/github.js';
 import { seedRulesRegister } from './rulesRegister.js';
 import { syncApprovedSkills } from './skillProposals.js';
 import { watchRules } from './ruleWatch.js';
+import { refreshPosthog, latestUsageLine } from '../posthogReadback.js';
 
 const DECISIONS_FILE = 'decisions.json';
 const TODAY_CHARS = 1500;
@@ -148,6 +149,10 @@ export function buildToday({ notes = [], decisions = [], now = new Date() } = {}
   const risks = rulesDue(notes, today);
   if (risks.length) lines.push('## Rules to re-read', ...risks.slice(0, 4).map((x) => `- ${x}`), '');
 
+  // After what needs the founder: if the page is ever cut to fit, this goes first.
+  const usage = latestUsageLine();
+  if (usage) lines.push('## Use', usage.replace(/^Circadian in the last 7 days \(PostHog, arrows against the week before\): /, 'Circadian, 7 days: '), '');
+
   const m = lessonMetrics();
   lines.push(`Notebook: ${m.trusted} trusted, ${m.candidate} unconfirmed, ${m.disputed} disputed lessons; ${m.totalReads} reads, ${m.neverRead} never read.`);
   return lines.join('\n').slice(0, TODAY_CHARS);
@@ -223,6 +228,9 @@ export async function refreshFounderPages({ now = new Date(), seedRules = seedRu
     await syncLessons();
     // Skills the founder approved since yesterday become available today.
     await syncApprovedSkills().catch((err) => console.error('Skill sync failed:', err.message));
+    // Circadian's usage numbers, read back before Today is written so today's
+    // page carries them. Does nothing unless the PostHog read keys are set.
+    await refreshPosthog();
     let notes = await loadNotes({});
     // A rule's source page changing is the earliest warning the company gets
     // about the terms it lives under; checked before Today is written, so a
