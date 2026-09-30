@@ -13,7 +13,7 @@ let tmpDir;
 let digest;
 let store;
 let ventures;
-const ENV = ['SMTP_HOST', 'REPORT_EMAIL_TO', 'CONSULTANT_DIGEST_DISABLED', 'CONSULTANT_BUDGET_USD', 'WORKSPACE_REPO_OWNER', 'WORKSPACE_REPO_NAME', 'GITHUB_TOKEN'];
+const ENV = ['SMTP_HOST', 'REPORT_EMAIL_TO', 'CONSULTANT_AUTOFIX_DISABLED', 'CONSULTANT_DIGEST_DISABLED', 'CONSULTANT_BUDGET_USD', 'WORKSPACE_REPO_OWNER', 'WORKSPACE_REPO_NAME', 'GITHUB_TOKEN'];
 const saved = {};
 
 before(async () => {
@@ -37,6 +37,9 @@ after(() => {
 
 beforeEach(() => {
   for (const k of ENV) delete process.env[k];
+  // The digest tests are about the email; corrections have their own tests below.
+  process.env.CONSULTANT_AUTOFIX_DISABLED = 'true';
+  store.writeJson('consultant-fixes.json', { enabled: true, lastRunDate: null, runs: [], attempts: {} });
   store.writeJson('consultant-benchmark.json', { refreshedAt: '2026-10-10T01:00:00.000Z', ventures: [] });
   store.writeJson('consultant.json', { lastDate: null, history: [] });
   store.writeJson('consultant-playbook-vibe.json', {
@@ -202,4 +205,54 @@ test('the benchmark and the practice review reach the email, the KPIs and the ci
   assert.match(t, /Practice: Tests travel with the code: level 1\/4/);
   assert.match(t, /Start with A1 \[A1\] because tests are weak \[K\d+\]\./);
   assert.match(t, /Invented \[\?\]\./, 'an action id that does not exist is caught');
+});
+
+test('corrections are listed in the email, start after it has gone, are reported in a second email, and never fail the briefing', async () => {
+  process.env.SMTP_HOST = 'smtp.example.com';
+  process.env.REPORT_EMAIL_TO = 'me@example.com';
+  delete process.env.CONSULTANT_AUTOFIX_DISABLED;
+  const order = [];
+  const sent = [];
+  const record = { ran: true, date: '2026-10-10', outcomes: [{ id: 'F1', status: 'done', title: 'Digest Co: A price is set', note: 'a decision is in the inbox' }], prs: [{ venture: 'Digest Co', title: 'Add llms.txt', url: 'https://github.com/me/x/pull/3' }], usd: 0.31 };
+  const out = await digest.runConsultantDigest({
+    now: NOW,
+    members: panel(),
+    refresh: async () => {},
+    send: async (m) => { order.push('email'); sent.push(m); },
+    autofix: async ({ selected }) => { order.push(`autofix:${selected.map((s) => s.id).join(',')}`); return record; },
+  });
+  assert.ok(order[0] === 'email' && order[1].startsWith('autofix:F1'), 'the briefing goes out first, then the corrections start');
+  const [briefing, followUp] = sent;
+  assert.match(briefing.text, /## Corrections the team starts on its own, without asking you/);
+  assert.match(briefing.text, /Starting now, after this email/);
+  assert.match(briefing.text, /F1  \[(decision|task|pr|draft)\]/);
+  assert.match(briefing.text, /pull requests only, never merged/);
+  assert.match(followUp.subject, /^Corrections started 2026-10-10: 1 done, 0 asked, 1 pull requests/);
+  assert.match(followUp.text, /Pull requests opened \(never merged; you or CI decide\)[\s\S]*Add llms\.txt https:\/\/github\.com\/me\/x\/pull\/3/);
+  assert.ok(out.usd >= 0.31);
+  assert.equal(out.corrections.ran, true);
+
+  // A session that throws does not fail the briefing.
+  store.writeJson('consultant.json', { lastDate: null, history: [] });
+  store.writeJson('consultant-fixes.json', { enabled: true, lastRunDate: null, runs: [record], attempts: {} });
+  const errors = [];
+  const saved = console.error;
+  console.error = (...a) => errors.push(a.join(' '));
+  const sent2 = [];
+  const again = await digest.runConsultantDigest({ now: new Date('2026-10-11T03:00:00Z'), members: panel(), refresh: async () => {}, send: async (m) => { sent2.push(m); }, autofix: async () => { throw new Error('the session crashed'); } });
+  console.error = saved;
+  assert.equal(again.sent, true);
+  assert.equal(again.corrections.ran, false);
+  assert.match(sent2[0].text, /What the last run \(2026-10-10\) did:[\s\S]*F1  DONE  Digest Co: A price is set/, 'yesterday\'s outcome is in today\'s briefing');
+  assert.equal(sent2.length, 1, 'no second email when nothing ran');
+});
+
+test('with corrections switched off the email says nothing is being started', async () => {
+  process.env.SMTP_HOST = 'smtp.example.com';
+  process.env.REPORT_EMAIL_TO = 'me@example.com';
+  const sent = [];
+  let called = false;
+  await digest.runConsultantDigest({ now: NOW, members: panel(), refresh: async () => {}, send: async (m) => { sent.push(m); }, autofix: async () => { called = true; return { ran: true, outcomes: [], prs: [] }; } });
+  assert.match(sent[0].text, /Automatic corrections are OFF \(AUTOFIX ON turns them on\), so nothing below is being started\./);
+  assert.equal(called, false);
 });

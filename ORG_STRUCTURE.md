@@ -1399,6 +1399,50 @@ coding tool and the number that says it worked; the review turns them into a
 30/60/90-day plan using only those actions (anything added is marked as
 judgement), and the next briefing shows whether the numbers moved.
 
+**Automatic corrections.** The briefing does not stop at advice. Once it has
+gone out, the team starts correcting what it found, without asking you first: up
+to three corrections a day, in one bounded session. Because that is a real grant
+of autonomy, the bounds are the design and they are enforced in code, not in the
+prompt.
+
+What it may start: pull requests in repos already linked to a venture (within
+that repo's allowed paths and its review-only setting, never merged: you or CI
+decide); the durable task queue, objectives, pipeline records that carry a source
+link, notes; draft emails (a draft reaches nobody until you release it); and a
+decision request in your inbox for anything that needs you (a price, a service to
+sign up for, a credential, a repo to link). What it cannot do, because those
+tools are not in the set the session is given (an allowlist, so a tool added to
+the unattended cycle later is not added here): commit to a main branch, deploy,
+revert, send an email, create a payment link, change a price, spend money, change
+a setting or a credential, or change this company's own platform code, where the
+guardrails themselves live and where a change stays a human's. The kill switch,
+the daily spend cap and each repo's review-only setting apply as they always do.
+
+What it corrects is chosen by code, from the scorecard's next rung on each
+venture, the gaps a competitor has over you on the benchmark (no llms.txt, no
+OpenAPI file, no security headers, no docs or changelog), and what the code review
+found missing in a venture's own repo (CLAUDE.md, tests, CI, .env.example,
+SECURITY.md, dependency updates). The instructions come from our own rubric
+labels, so nothing from a competitor's page can put an instruction in. A venture
+with no linked repo gets a request to link one, not a pull request.
+
+Each correction is recorded with its outcome, read from what actually happened
+(the pull requests that exist, the actions that succeeded or were refused), not
+only from what the session says; one that fails or reports nothing is recorded as
+blocked or unknown, never as done. It is not retried for a week and is given up on
+after three tries and left for you. The briefing lists what is about to start and
+what the last run did; a second email follows the run with the pull request links.
+
+`AUTOFIX OFF` from WhatsApp stops it, `AUTOFIX ON` restarts it, and `AUTOFIX`
+shows the state. `CONSULTANT_AUTOFIX_DISABLED=true` switches it off from Railway.
+`CONSULTANT_AUTOFIX_PER_DAY` and `CONSULTANT_AUTOFIX_BUDGET_USD` size it.
+
+Not included: merging. Every change lands as a pull request that waits for you or
+for CI. Letting a correction merge itself would put unreviewed AI-written changes
+into products that handle health data and customer email, so it is a decision for
+you to take on purpose, for a narrow class (say tests and docs only, with CI
+green), not a default.
+
 Costs: the daily review is about $0.15 to $0.45. Reading the sources costs more
 but runs at most once a week per reading list (and once a week for the competitor search), under its own ceiling
 (`CONSULTANT_READING_BUDGET_USD`, default $1.00), so it cannot squeeze out the

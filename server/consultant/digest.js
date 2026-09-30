@@ -34,6 +34,7 @@ import { reviewCode, renderCodeReview, repoTargets } from './engineering.js';
 import { reviewPractice, renderPractice, actionsText } from './practice.js';
 import { refreshBenchmark, getBenchmark, benchmarkIsStale, benchmarkFacts, renderBenchmark } from './competitors.js';
 import { isGithubConfigured } from '../deploy/github.js';
+import { autofixOn, buildCandidates, selectCandidates, runAutofix, lastFixRun, renderFixes } from './autofix.js';
 import { refreshPlaybook, getPlaybook, playbookIsStale, renderPlaybook } from './playbook.js';
 import { runPanel } from './panel.js';
 import { createBudget, panelMembers } from './models.js';
@@ -60,12 +61,13 @@ export function lastDigest() {
 }
 
 /** The email, assembled: the model's review first, then everything a person needs to check it. Pure. */
-export function composeDigest({ date, review, scorecard, kpis, engineering, benchmark, practice, playbook, vibe, panel, budgetUsd, readingUsd = 0 }) {
+export function composeDigest({ date, review, scorecard, kpis, engineering, benchmark, practice, fixes, playbook, vibe, panel, budgetUsd, readingUsd = 0 }) {
   const parts = [];
   parts.push(`# Your AI-company briefing, ${date}`, '', review.trim(), '', '---');
   parts.push('', "## KPIs and maturity (computed by code from the company's records, not written by any model)", '', renderKpis(kpis));
   parts.push('', '## Technology against competitors (public signals, measured the same way for everyone)', '', renderBenchmark(benchmark));
   parts.push('', '## Your building practice: KPIs, trend and the actions that would lift them', '', renderPractice(practice));
+  parts.push('', '## Corrections the team starts on its own, without asking you', '', renderFixes(fixes || { planned: [], last: null, on: false }));
   parts.push('', '## Readiness scorecard (also computed by code)', '', renderScorecard(scorecard));
   parts.push('', '## Code review: what is in place and what is missing', '', renderCodeReview(engineering));
   parts.push('', '## The facts behind the numbers', '', renderFacts(scorecard));
@@ -116,6 +118,7 @@ export async function runConsultantDigest({
   review = reviewCode,
   practiceReview = (o) => (isGithubConfigured() ? reviewPractice(o) : null),
   benchmarkRefresh = refreshBenchmark,
+  autofix = runAutofix,
   send = sendConsultantDigestEmail,
   publish = publishServerPage,
 } = {}) {
@@ -160,6 +163,16 @@ export async function runConsultantDigest({
     for (const text of practice?.facts || []) addFact(scorecard, 'practice', text);
     const kpis = buildKpis(scorecard, { now, engineering, benchmark, practice });
 
+    // What will be corrected on its own after this email, and what the last
+    // run did. Chosen by code from the findings above; the models are told about
+    // both so the review does not recommend what is already under way.
+    const fixesOn = autofixOn();
+    const planned = fixesOn ? selectCandidates(buildCandidates({ scorecard, benchmark, engineering }), { now }) : [];
+    const lastFixes = lastFixRun();
+    if (lastFixes) addFact(scorecard, 'fixes', `Automatic corrections on ${lastFixes.date}: ${lastFixes.outcomes.map((o) => `${o.title} ${o.status}`).join('; ') || 'none'}; ${lastFixes.prs.length} pull requests opened.`);
+    if (planned.length) addFact(scorecard, 'fixes', `Automatic corrections starting after this briefing: ${planned.map((c) => c.title).join('; ')}.`);
+    const fixes = { planned, last: lastFixes, on: fixesOn };
+
     // Read the sources first if the last reading is over a week old, so today's
     // review rests on this week's pages. A failure leaves the previous reading.
     for (const topic of ['company', 'vibe']) {
@@ -189,7 +202,7 @@ export async function runConsultantDigest({
     };
     const panel = await runPanel({ anthropic, budget, inputs, members });
 
-    const text = composeDigest({ date, review: panel.text, scorecard, kpis, engineering, benchmark, practice, playbook, vibe, panel, budgetUsd: budget.limit, readingUsd: reading.spent });
+    const text = composeDigest({ date, review: panel.text, scorecard, kpis, engineering, benchmark, practice, fixes, playbook, vibe, panel, budgetUsd: budget.limit, readingUsd: reading.spent });
     const subject = subjectLine({ date, scorecard, kpis });
 
     let emailed = false;
@@ -212,10 +225,24 @@ export async function runConsultantDigest({
       );
     }
 
+    // The corrections start only now that the briefing has gone out, so a slow
+    // session never delays it; never a reason for the briefing to fail.
+    let corrections = null;
+    if (planned.length) {
+      corrections = await autofix({ anthropic, selected: planned, now }).catch((err) => ({ ran: false, reason: err.message }));
+      if (corrections?.ran) {
+        const report = `# Corrections started, ${date}\n\n${renderFixes({ planned: [], last: corrections, on: true })}`;
+        if (isEmailConfigured()) {
+          await send({ subject: `Corrections started ${date}: ${corrections.outcomes.filter((o) => o.status === 'done').length} done, ${corrections.outcomes.filter((o) => o.status === 'asked').length} asked, ${corrections.prs.length} pull requests`, text: report }).catch((err) => console.error('Consultant: the corrections email did not send:', err.message));
+        }
+        if (isWorkspaceConfigured()) await publish(`Company/Consultant/${date} corrections.md`, serializeNote({ type: 'consultant-corrections', date, tags: ['company/consultant'] }, `\n${report}\n`), `Corrections — ${date}`).catch(() => {});
+      }
+    }
+
     state.lastDate = date;
     state.history = [...state.history, { date, readiness: scorecard.readiness, kpiHealth: kpis.health, usd: panel.usd + reading.spent, models: panel.members.filter((m) => m.ok).length, emailed, published, unknownCitations: panel.unknown }].slice(-HISTORY);
     writeJson(FILE, state);
-    return { sent: true, emailed, published, usd: panel.usd + reading.spent, readiness: scorecard.readiness, kpiHealth: kpis.health, subject, text };
+    return { sent: true, emailed, published, usd: panel.usd + reading.spent + (corrections?.usd || 0), readiness: scorecard.readiness, kpiHealth: kpis.health, subject, text, corrections };
   } catch (err) {
     console.error('Consultant digest failed:', err.message);
     return { sent: false, reason: err.message };
