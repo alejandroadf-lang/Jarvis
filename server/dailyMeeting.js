@@ -148,11 +148,13 @@ produces four paragraphs of nothing. Answer yourself, in your own voice.
 Two or three lines, no headings:
 
 1. Confirm the company is quiet, and for how long.
-2. Name the single thing most worth doing about that — which is a real
-   question, not a formality. A quiet week is information: either the team is
-   blocked on something the founder has not given them, or the work queued up
-   is not work anyone actually wants done.
-3. If you are blocked on the founder, say exactly what you need. One line.
+2. Name the single thing most worth doing about that, and start it: a quiet
+   week is information, and "waiting to be told" is not an answer. If an
+   active venture has no open objective, set one now with set_objective; the
+   work sessions later today take it from there, queueing and building the
+   next step without anyone asking.
+3. If you are blocked on the founder, say exactly what you need and what the
+   team will do meanwhile. One line.
 
 Do not invent activity. Do not produce a full Daily Company Report — there is
 nothing to report. "Quiet since Tuesday; we are blocked on X" is the complete
@@ -329,13 +331,15 @@ export const BARRED_UNATTENDED = new Map([
 function leadershipKickoff(date) {
   return `It's ${date}. Time for today's daily leadership sync.
 
-This is an internal status meeting, not a real-world event: don't call
-log_revenue, log_expense, report_milestone_progress, or kill_venture here —
-those are only for when the founder reports something that actually
-happened, and nobody is reporting anything today. Just gather information
-and make recommendations for the founder to act on afterward.
+This meeting exists to start the day's work, not to hand the founder a list.
+Don't call log_revenue, log_expense, report_milestone_progress, or
+kill_venture here — those are only for when the founder reports something
+that actually happened, and nobody is reporting anything today. Everything
+else is yours to decide and do, and nobody will tell you what to work on: the
+founder's standing direction and each venture's objective are the brief.
 
-The exceptions are deploy_code and send_customer_email: for any venture
+The exceptions to "no real actions" are open_pull_request, deploy_code and
+send_customer_email: open_pull_request needs no plan, and for any venture
 where the founder has already linked a repo or set up an outreach scope
 and enabled it, those tools work exactly the same here as they would in a
 live conversation — that's what enabling them means. Use them only for
@@ -351,13 +355,28 @@ a process worth fixing. Push back on vague answers ("things are fine") —
 you want one real, specific data point per department, not a status-report
 platitude.
 
-Once you've heard from everyone, synthesize it into a single Daily Company
-Report with these sections, in this order:
+Once you've heard from everyone, decide the day's work, without asking. For
+each active venture: if it has no open objective, set one now (set_objective:
+one measurable target and a date, taken from its one-liner and the founder's
+standing direction); split the team's effort as the founder's split says, if
+one is set; and have the lead who owns the next step queue it (queue_work) or
+do it (open_pull_request, draft_customer_email, research). Work sessions
+later today pick up whatever is queued. A venture nobody touched needs a
+reason, and "waiting for the founder" is only a reason when it names one
+specific thing only the founder can do.
+
+Then synthesize it into a single Daily Company Report with these sections,
+in this order:
 
 ## Department Status
 ## Opportunities Identified
 ## Risks & Blockers
-## Recommended Actions for the Founder
+## Work Started Today
+## Decisions Only the Founder Can Make
+
+The last section holds at most three items, each with what the team will do
+by default if no answer comes, and the team goes ahead with that default
+inside the scope it has been granted. Leave it empty rather than pad it.
 
 Be concrete and concise — this should read like a real daily standup
 summary a founder could skim in two minutes, not an essay.${planningInstruction()}`;

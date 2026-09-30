@@ -726,6 +726,48 @@ against the split, and recommends a nudge when a venture is 25 points or
 more off (on at least five actions), or a split when two or more ventures
 are active and none is set.
 
+### Agents that do not wait: work sessions
+
+The company used to meet once a day and wait the other twenty-three hours.
+The meeting was framed as "an internal status meeting ... make
+recommendations for the founder to act on afterward", its report ended in
+"Recommended Actions for the Founder", and the plan it submitted waited for an
+`APPROVE`. Work began when the founder sent a message: a console with agents
+behind it, which is not what the company was for.
+
+Two changes (`server/workSession.js`, `server/dailyMeeting.js`):
+
+- **The meeting starts work.** Its brief says nobody will tell the team what
+  to work on: each venture gets an objective if it has none (`set_objective`),
+  effort follows the FOCUS split, and the lead who owns the next step queues
+  it or does it. The report ends in "Work Started Today" and "Decisions Only
+  the Founder Can Make" (at most three, each with the default the team goes
+  ahead with inside its granted scope), not a list of recommendations. A quiet
+  morning sets an objective instead of waiting to be told.
+- **Work sessions run between meetings.** `WORK_SESSIONS_PER_DAY` (default 2,
+  at most 5, 0 turns them off) unattended sessions run 4 hours apart after the
+  08:00 meeting. Each picks the venture the founder's split is furthest behind
+  on (equal shares when no split is set, so an untouched venture comes first),
+  and the CTO takes the next queued task, or derives one from the objective and
+  queues it, builds it through the Engineering Lead or the Forge Engineer, and
+  proposes it as a pull request. The only output is work done; nobody reads a
+  report from it.
+
+Nothing is widened. A session runs with the daily meeting's own handlers, so
+the approved plan still gates direct commits, the caps and the outreach
+allowlist still apply, and `log_revenue`, `kill_venture` and `link_venture_repo`
+stay barred. Pull requests need no plan, so a venture set to `REVIEW ON` moves
+every day with no approval and lands nothing until the founder merges. Cost is
+bounded three ways: the per-day count, the daily spend cap checked before each
+session, and a backoff: two sessions in a row that produced no work stop the
+loop until the next daily meeting, so a stuck team does not retry the same
+wall on the budget. A session counts as work only if a tool that changes
+something succeeded (`WORK_TOOLS`); reading a file does not.
+
+Each skip says what to change ("WORK_SESSIONS_PER_DAY is 0", "RESUME lifts
+it", "LINK a repo, then DEPLOY ON <ventureId>") in the server log. What the
+sessions did is in `AGENTS` and `CAPACITY`, and in the pull requests.
+
 ## Four roles for Happy Company
 
 Happy Company (`ventures/happycompany`) is a Jira and Confluence app that
