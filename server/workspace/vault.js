@@ -24,6 +24,7 @@
 //     who halts real actions reasonably expects these writes to stop too.
 
 import { commitFile, readFile, isGithubConfigured } from '../deploy/github.js';
+import { serializeNote } from './frontmatter.js';
 import { getKillSwitch } from '../killSwitch.js';
 
 // Where each kind of note lands. Folder names read as an Obsidian vault
@@ -47,6 +48,39 @@ const FOLDERS = {
 };
 
 export const LESSONS_FOLDER = FOLDERS.lessons;
+export const QUARANTINE_FOLDER = 'Inbox/untrusted';
+export const DECISIONS_FOLDER = 'Inbox/Decisions';
+export const SKILL_PROPOSALS_FOLDER = 'Inbox/Skill Proposals';
+
+// Where an agent may create or extend a note with update_vault_note. Everything
+// else is either written by the server from its own records (reports, roadmap,
+// sessions, knowledge, Today), the founder's (Steering.md, Library/,
+// Dashboards/) or app machinery (.obsidian). Inbox/ is deliberately not here:
+// decisions and skill proposals are created by their own tools, because a note
+// whose `decision` field an agent could edit is an approval an agent can give
+// itself.
+export const AGENT_ZONES = [
+  'Company/Entities/',
+  'Company/Pipeline/',
+  'Company/Rules/',
+  'Company/Decisions/',
+  'Company/Competitors/',
+  'Company/Support/',
+  'Company/Drafts/',
+];
+
+export function agentWritablePath(path) {
+  const p = String(path || '');
+  return AGENT_ZONES.some((z) => p.startsWith(z)) && /\.md$/i.test(p) && !p.split('/').some((part) => part === '..' || part === '.');
+}
+
+/**
+ * The fields the server stamps on every agent write, so who wrote a note and how
+ * far to trust it is never something the model says about itself.
+ */
+export function stampFields({ agentId, trust, source = 'agent', derivedFrom }) {
+  return { source, agent: agentId, trust, derived_from: derivedFrom };
+}
 
 // The one file the founder writes and the company reads. Sitting at the top
 // of the vault rather than inside Company/ because it belongs to them, not
@@ -185,22 +219,18 @@ export function formatWorkSession(entry, venture) {
 }
 
 /** One lesson an agent chose to keep, with the venture it concerns as a wikilink. */
-export function formatLesson({ title, lesson, agentId, ventureTitle, at }) {
-  const day = (at || new Date().toISOString()).slice(0, 10);
-  return [
-    frontmatter({
-      type: 'lesson',
-      date: day,
-      agent: agentId,
-      venture: ventureTitle,
-      tags: ['company/lesson'],
-    }),
+export function formatLesson({ title, lesson, ventureTitle, fields }) {
+  const body = [
     `# ${noteName(title)}`,
     '',
     ventureTitle ? `Venture: [[${noteName(ventureTitle)}]]` : '',
     ventureTitle ? '' : '',
     lesson,
-  ].join('\n').replace(/\n{3,}/g, '\n\n') + '\n';
+  ].join('\n').replace(/\n{3,}/g, '\n\n');
+  return serializeNote(
+    { type: 'lesson', venture: ventureTitle, ...fields, tags: ['company/lesson'] },
+    `\n${body}\n`,
+  );
 }
 
 export function formatVenture(venture) {
@@ -247,7 +277,7 @@ export function formatVenture(venture) {
  * Commits one note. Returns false rather than throwing on any failure —
  * every caller is a cycle that has already done its real work.
  */
-async function publish(path, content, message) {
+async function publish(path, content, message, { expectedSha } = {}) {
   if (!isWorkspaceConfigured()) return false;
   if (getKillSwitch().halted) {
     console.error('Workspace: skipping publish, real actions are halted.');
@@ -256,7 +286,7 @@ async function publish(path, content, message) {
 
   const { owner, repo, branch } = workspaceConfig();
   try {
-    await commitFile({ owner, repo, branch, path, content, message });
+    await commitFile({ owner, repo, branch, path, content, message, expectedSha });
     return true;
   } catch (err) {
     console.error(`Workspace: failed to publish ${path}:`, err.message);
@@ -294,9 +324,40 @@ export function publishWorkSession(entry, venture) {
   );
 }
 
-export function publishLesson(path, content, title) {
-  return publish(path, content, `Lesson — ${noteName(title)}`);
+// One write at a time. The Contents API rejects a commit made while another to
+// the same branch is landing, so two leads writing in the same second would
+// have one of them fail for no reason the agent could act on.
+let writeChain = Promise.resolve();
+function serial(fn) {
+  const run = writeChain.then(fn, fn);
+  writeChain = run.catch(() => {});
+  return run;
 }
+
+/**
+ * A conditional write for notes a person also edits. `expectedSha` is the
+ * version the change was built on: null means "create, fail if it exists". A
+ * stale sha is refused by GitHub, so an agent's edit can never overwrite what
+ * the founder changed on their phone in between. Resolves to { ok, reason }.
+ */
+export function writeVaultNote({ path, content, message, expectedSha }) {
+  return serial(async () => {
+    if (!isWorkspaceConfigured()) return { ok: false, reason: 'the vault is not configured (WORKSPACE_REPO_OWNER and WORKSPACE_REPO_NAME)' };
+    if (getKillSwitch().halted) return { ok: false, reason: 'real actions are halted' };
+    const { owner, repo, branch } = workspaceConfig();
+    try {
+      await commitFile({ owner, repo, branch, path, content, message, expectedSha });
+      return { ok: true };
+    } catch (err) {
+      if (err.status === 409 || err.status === 422) {
+        return { ok: false, reason: 'the note changed (or already exists) since it was read; read it again and retry' };
+      }
+      return { ok: false, reason: err.message };
+    }
+  });
+}
+
+export { serializeNote };
 
 export function publishKnowledge(venture, markdown) {
   return publish(

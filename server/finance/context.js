@@ -7,7 +7,7 @@ import { getLedger } from './ledger.js';
 import { usageSummary } from '../ventureUsage.js';
 import { economicsLast30 } from '../spend.js';
 import { buildKnowledgeContext } from '../workspace/knowledge.js';
-import { buildLessonsContext } from '../workspace/notebook.js';
+import { buildLessonsContext } from '../workspace/lessons.js';
 import { listVentures, listContacts, listReplies, describePricing, pipelineSummary, listObjectives, getFocus, REVENUE_GOAL_EUR } from './ventures.js';
 import { listFiles } from '../deploy/github.js';
 import { describeDraftsForAgents } from '../outreachDrafts.js';
@@ -304,13 +304,16 @@ export function buildCompanyContext() {
     // The compiled pages before the raw notes: what we concluded, then what
     // we observed lately.
     buildKnowledgeContext(),
-    // Then what the team itself kept: an index, so the cost is a few lines.
-    buildLessonsContext(),
     buildVentureNotesContext(),
     buildOutreachContext(),
     // Last of the business facts and deliberately not buried: the only place
     // this app says whether the product is used, as opposed to shipped.
     buildUsageContext(),
+    // Last, on purpose: it changes every time a lead keeps a lesson, and a
+    // change anywhere in a prompt invalidates the cached prefix after it. Put
+    // last, a new lesson costs only its own tokens; put in the middle it would
+    // make every later block a cache miss.
+    buildLessonsContext(),
   ]
     .filter((part) => part && part.trim())
     .join('\n\n');

@@ -830,8 +830,8 @@ export async function runAgent({
         // session, chat) has it without wiring. Unlike it, one tool writes,
         // so the scoping lives in the tool itself (workspace/notebook.js).
         const noteStarted = Date.now();
-        resultText = await runNotebookTool(toolUse.name, toolUse.input || {}, { agentId: agent.id });
-        recordActivity({ agentId: agent.id, kind: 'action', tool: toolUse.name, ok: !/^(Not saved|Could not)/.test(resultText), ventureId: toolUse.input?.ventureId || null, ms: Date.now() - noteStarted });
+        resultText = await runNotebookTool(toolUse.name, toolUse.input || {}, { agentId: agent.id, usage });
+        recordActivity({ agentId: agent.id, kind: 'action', tool: toolUse.name, ok: !/^(Not saved|Not read|Could not)/.test(resultText), ventureId: toolUse.input?.ventureId || null, ms: Date.now() - noteStarted });
       } else if (toolUse.name === 'x_search' && agent.xSearch) {
         // Read-only like load_skill, so no scope governs it, but it is billed:
         // checked against the daily cap first, and metered into it after.

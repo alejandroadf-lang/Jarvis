@@ -20,7 +20,7 @@ import { listVentures, listVentureNotes, listObjectives, pipelineSummary, listPa
 import { listDailyReports } from '../dailyReports.js';
 import { usageSummary } from '../ventureUsage.js';
 import { publishKnowledge } from './vault.js';
-import { recentLessons } from './notebook.js';
+import { recentLessons } from './lessons.js';
 
 const FILE = 'knowledge.json';
 // What of each page reaches the shared context. The page can be long; the
