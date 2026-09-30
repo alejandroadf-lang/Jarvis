@@ -52,7 +52,10 @@ const textOf = (res) => (res?.content || []).filter((b) => b.type === 'text').ma
  */
 export function panelMembers({ anthropic } = {}) {
   const members = [
-    { name: 'Claude', tier: DEFAULT_TIER, create: (p) => anthropic.messages.create({ model: p.model, system: p.system, messages: p.messages, max_tokens: p.maxTokens }) },
+    // retryEmpty: a Claude model can spend the whole token allowance thinking and
+    // return no text at all (stop_reason max_tokens); ask() then tries once more
+    // with thinking off and more room, which a written review does not need.
+    { name: 'Claude', tier: DEFAULT_TIER, retryEmpty: true, create: (p) => anthropic.messages.create({ model: p.model, system: p.system, messages: p.messages, max_tokens: p.maxTokens, ...(p.thinkingOff ? { thinking: { type: 'disabled' } } : {}) }) },
   ];
   const add = (name, tier, configured, create) => configured() && members.push({ name, tier, create: (p) => create({ model: p.model, system: p.system, messages: p.messages, maxTokens: p.maxTokens }) });
   add('OpenAI', OPENAI_TIER, isOpenAIConfigured, openai);
@@ -66,19 +69,30 @@ export function panelMembers({ anthropic } = {}) {
 /**
  * One completion from one member: checked against the daily cap first,
  * metered into it after, and added to the digest's budget. Resolves to
- * { text, usd, model }.
+ * { text, usd, model, stopReason }. An empty text is returned, not thrown, so
+ * the caller can still count what the call cost.
  */
 export async function ask(member, { system, user, maxTokens = 1800 }, budget) {
   budget?.assertRoom();
   assertUnderDailyCap();
   const spec = MODELS[member.tier];
   const model = spec.model;
-  const res = await withSpendContext({ source: 'consultant', agentId: member.name }, () =>
-    member.create({ model, system, messages: [{ role: 'user', content: user }], maxTokens }),
-  );
-  const t = tokens(res?.usage);
-  const usd = priceUsage(t, spec);
-  recordSpend(usd, { cacheWriteTokens: t.cacheWriteTokens, cacheReadTokens: t.cacheReadTokens });
-  budget?.add(usd);
-  return { text: textOf(res), usd, model };
+  const call = async (extra = {}) => {
+    const res = await withSpendContext({ source: 'consultant', agentId: member.name }, () =>
+      member.create({ model, system, messages: [{ role: 'user', content: user }], maxTokens, ...extra }),
+    );
+    const t = tokens(res?.usage);
+    const usd = priceUsage(t, spec);
+    recordSpend(usd, { cacheWriteTokens: t.cacheWriteTokens, cacheReadTokens: t.cacheReadTokens });
+    budget?.add(usd);
+    return { text: textOf(res), usd, stopReason: res?.stop_reason || null };
+  };
+  let out = await call();
+  if (!out.text && out.stopReason === 'max_tokens' && member.retryEmpty) {
+    budget?.assertRoom();
+    assertUnderDailyCap();
+    const again = await call({ maxTokens: maxTokens * 2, thinkingOff: true });
+    out = { ...again, usd: out.usd + again.usd };
+  }
+  return { ...out, model };
 }

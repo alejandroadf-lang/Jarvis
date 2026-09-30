@@ -1267,10 +1267,13 @@ as absence and everything else still throws.
 
 ## The consultant: a daily briefing on how ready this company is
 
-Every morning, after the daily meeting, one email arrives: how ready the company
+Every morning at 08:00 Bangkok time, on its own schedule (it does not wait for the
+daily meeting and still comes if the meeting is switched off), one email arrives: how ready the company
 is to earn its first million, what is working, what is weak, the one thing to do
-today, the next seven days, and what the best sources say that applies. `DIGEST`
-on WhatsApp builds it on demand. A copy lands in the vault under
+today, the next seven days, and what the best sources say that applies. Nothing
+has to be asked for. If the server starts after 08:00 and today's has not gone out
+(a deploy at noon), it is sent shortly after boot. `DIGEST` on WhatsApp builds
+another on demand. A copy lands in the vault under
 `Company/Consultant/`. It costs roughly $0.10 to $0.40 a day with a panel of
 several models (`CONSULTANT_BUDGET_USD`, default $0.75, is a hard ceiling for
 one briefing's review), and `CONSULTANT_DIGEST_DISABLED=true`
@@ -1457,6 +1460,10 @@ section 11 of the review. Nothing in it is a model's opinion of itself:
   model: changing one changes what a briefing costs, and the spend meter needs the
   new model's price set beside it (the INPUT and OUTPUT price variables in
   `server/.env.example`), so the advice says both.
+- *What the panel actually did.* A model that did not answer (no balance, over its
+  quota, a rejected key, an empty reply) becomes an improvement naming the fix its
+  own error points at, and its cost is still counted. A Claude call that spends its
+  whole allowance thinking is retried once with thinking off.
 - *A technology reading list* (cited as [T#]): once a week, pages from the last
   sixty days on new models, agent tooling and protocols, data sources, security
   and regulation, read and quote-checked by the server like the other two lists.

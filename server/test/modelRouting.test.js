@@ -338,3 +338,25 @@ test('a nonsense price falls back instead of metering at NaN', async () => {
     else process.env.OPENROUTER_OUTPUT_PRICE_PER_MTOK = saved;
   }
 });
+
+test('the Claude model and its prices come from Railway variables when set, and default to what they were', () => {
+  const keys = ['ANTHROPIC_MODEL', 'ANTHROPIC_INPUT_PRICE_PER_MTOK', 'ANTHROPIC_OUTPUT_PRICE_PER_MTOK'];
+  const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+  try {
+    for (const k of keys) delete process.env[k];
+    assert.equal(MODELS[DEFAULT_TIER].model, 'claude-sonnet-5');
+    assert.equal(MODELS[DEFAULT_TIER].inputPricePerMTok, 2);
+    assert.equal(MODELS[DEFAULT_TIER].outputPricePerMTok, 10);
+    process.env.ANTHROPIC_MODEL = ' claude-sonnet-5-5 ';
+    process.env.ANTHROPIC_INPUT_PRICE_PER_MTOK = '4';
+    process.env.ANTHROPIC_OUTPUT_PRICE_PER_MTOK = '20';
+    assert.equal(MODELS[DEFAULT_TIER].model, 'claude-sonnet-5-5');
+    assert.equal(MODELS[DEFAULT_TIER].inputPricePerMTok, 4);
+    assert.equal(MODELS[DEFAULT_TIER].outputPricePerMTok, 20);
+  } finally {
+    for (const k of keys) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  }
+});

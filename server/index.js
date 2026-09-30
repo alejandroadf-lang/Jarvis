@@ -67,6 +67,7 @@ import {
 import { listDailyReports, getDailyReport, getLatestDailyReport } from './dailyReports.js';
 import { startDailyMeetingScheduler, runDailyMeetingNow, isDailyMeetingRunning } from './scheduler.js';
 import { startWorkSessionScheduler } from './workSession.js';
+import { startConsultantScheduler } from './consultant/schedule.js';
 import { studioActionHandlers } from './dailyMeeting.js';
 import { getKillSwitch, haltRealActions, resumeRealActions } from './killSwitch.js';
 import { getSpendSummary } from './spend.js';
@@ -1320,6 +1321,7 @@ httpServer.listen(PORT, () => {
   warnIfEphemeral();
   warnIfUnprotected();
   startDailyMeetingScheduler({ anthropic });
+  startConsultantScheduler({ anthropic });
   startWorkSessionScheduler({ anthropic });
   startWeeklyReflectionScheduler({ anthropic });
   startInboxWatcher({ anthropic });

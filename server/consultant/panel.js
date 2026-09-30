@@ -134,7 +134,10 @@ export async function runPanel({ anthropic, budget, inputs, members = panelMembe
       drafts.push(r.value);
       report.push({ name: members[i].name, model: r.value.model, ok: true, usd: r.value.usd });
     } else {
-      report.push({ name: members[i].name, ok: false, error: r.status === 'rejected' ? r.reason.message : 'an empty answer' });
+      // An empty answer still cost what it cost, and says why it was empty.
+      report.push(r.status === 'rejected'
+        ? { name: members[i].name, ok: false, error: r.reason.message }
+        : { name: members[i].name, ok: false, error: `an empty answer${r.value.stopReason ? ` (stopped: ${r.value.stopReason})` : ''}`, usd: r.value.usd });
     }
   });
   if (!drafts.length) throw new Error(`no model produced a review (${report.map((r) => `${r.name}: ${r.error}`).join('; ')})`);
@@ -147,7 +150,9 @@ export async function runPanel({ anthropic, budget, inputs, members = panelMembe
     try {
       const merged = await ask(members[0], { system: SYSTEM, user: synthesisPrompt({ drafts, factsText: inputs.factsText, kpiText: inputs.kpiText, playbookText: inputs.playbookText, vibeText: inputs.vibeText, techText: inputs.techText, improvementsText: inputs.improvementsText, actionsText: inputs.actionsText, date: inputs.date }), maxTokens: 4600 }, budget);
       if (merged.text) text = merged.text;
-      report.push({ name: `${members[0].name} (merge)`, model: merged.model, ok: true, usd: merged.usd });
+      report.push(merged.text
+        ? { name: `${members[0].name} (merge)`, model: merged.model, ok: true, usd: merged.usd }
+        : { name: `${members[0].name} (merge)`, ok: false, error: `an empty answer${merged.stopReason ? ` (stopped: ${merged.stopReason})` : ''}, so the strongest single draft stands`, usd: merged.usd });
     } catch (err) {
       report.push({ name: `${members[0].name} (merge)`, ok: false, error: err.message });
     }

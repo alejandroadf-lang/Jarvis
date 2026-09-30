@@ -66,7 +66,8 @@ export function briefingHealth({ history = [], today = {} } = {}) {
   facts.push(`Briefing record: ${history.length} briefing${history.length === 1 ? '' : 's'} sent so far${avgUsd !== null ? `, averaging $${avgUsd.toFixed(2)} each over the last ${withCost.length}` : ''}.`);
   if (unmeasured !== null && kpiTotal) facts.push(`Briefing coverage: ${unmeasured} of ${kpiTotal} KPIs could not be measured today, so the briefing cannot steer by them.`);
   if (citedTotal + unknownTotal > 0) facts.push(`Briefing accuracy: over the last ${recent.length} briefings ${unknownTotal} of ${citedTotal + unknownTotal} citations pointed at nothing and were replaced.`);
-  if (today.singleModel !== undefined) facts.push(`Briefing panel: ${today.singleModel ? 'one model wrote today\'s review, so it was not an independent panel' : `${today.drafters} models reviewed independently today`}.`);
+  // Asked, not answered: which of them answered is only known after the panel runs.
+  if (today.singleModel !== undefined) facts.push(`Briefing panel: ${today.singleModel ? 'only one model is configured, so the review will not be an independent panel' : `${today.drafters} models were asked to review today`}.`);
   const sources = today.sources || {};
   const shelves = Object.entries(sources).map(([name, s]) => `${name}: ${s.read} read, ${s.unread} unreadable`);
   if (shelves.length) facts.push(`Briefing reading: ${shelves.join('; ')}.`);
@@ -85,6 +86,7 @@ export function improvementCandidates({ health, today = {}, scout = null, feedba
   const add = (text) => out.push({ id: `B${out.length + 1}`, text });
 
   if (today.singleModel) add('Add a second and third model so the panel is real: set OPENAI_API_KEY, GEMINI_API_KEY or XAI_API_KEY on the Jarvis service in Railway. One model reviewing a company is wrong in its own consistent way.');
+  // (Which models actually answered is only known after the panel runs; panelImprovements adds that.)
 
   for (const r of scout?.results || []) {
     if (r.error) continue;
@@ -120,6 +122,32 @@ export function improvementCandidates({ health, today = {}, scout = null, feedba
 
   if ((health?.recentCount ?? 0) < 3) add('Fewer than three briefings exist, so trends (readiness, KPI health, cost) are not meaningful yet. Judge the briefing on the sources and citations, not the trend, for now.');
 
+  return out;
+}
+
+const KEY_OF = { Claude: 'ANTHROPIC_API_KEY', OpenAI: 'OPENAI_API_KEY', Gemini: 'GEMINI_API_KEY', Grok: 'XAI_API_KEY', DeepSeek: 'DEEPSEEK_API_KEY', 'Hermes (OpenRouter)': 'OPENROUTER_API_KEY' };
+
+/**
+ * Improvements that can only be known after the panel has run: which model did
+ * not answer and what its own error says to do about it. Ids continue after the
+ * earlier candidates. The models cannot cite these (they wrote before they
+ * existed); they are printed for the founder. Pure.
+ */
+export function panelImprovements(members, startAt = 0) {
+  const out = [];
+  const add = (text) => out.push({ id: `B${startAt + out.length + 1}`, text });
+  const answered = members.filter((m) => m.ok && !/merge/.test(m.name));
+  for (const m of members.filter((x) => !x.ok && !/merge/.test(x.name))) {
+    const key = KEY_OF[m.name] || 'its API key';
+    const err = String(m.error || '');
+    // Quota first: a quota error also says "billing details", which is not a balance problem.
+    if (/\b429\b|quota|rate.?limit/i.test(err)) add(`${m.name} is over its quota or rate limit. Check the plan and billing at the provider (a free tier often allows only a few requests a day), or remove ${key}.`);
+    else if (/\b402\b|insufficient|credit|balance/i.test(err)) add(`${m.name} refused the request because the account has no balance or credit. Add funds at the provider, or remove ${key} from Railway so the panel is not waiting on it.`);
+    else if (/\b40[13]\b|invalid|unauthori[sz]ed|api key/i.test(err)) add(`${m.name} rejected its key. Check ${key} in Railway: it may be mistyped, revoked or for another project.`);
+    else if (/empty answer/i.test(err)) add(`${m.name} returned no text (${err}). If this repeats, set CONSULTANT_BUDGET_USD higher or tell the team; the review fell back to the models that did answer.`);
+    else add(`${m.name} did not answer (${err.replace(/\s+/g, ' ').slice(0, 120)}). Check ${key} and the provider's status page.`);
+  }
+  if (answered.length === 1) add(`Only ${answered[0].name} wrote today's review, so it was not an independent panel and nothing was merged. Fix the models above to get a real panel.`);
   return out;
 }
 
