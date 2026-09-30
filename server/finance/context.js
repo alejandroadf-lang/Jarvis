@@ -25,9 +25,31 @@ function describeMilestones(venture) {
   return venture.milestones.map((m, i) => `[${i}] ${m.title} (${m.status})`).join('; ');
 }
 
+// What a venture may do to the world, in the context every agent reads.
+//
+// The context used to give a venture's milestones and nothing about its repo,
+// its write rights or its review mode, so the CEO could not see that Happy
+// Company was already linked and asked the founder to link it, and told a
+// review-only venture to "commit" what it may only propose. Both read as the
+// team waiting on the founder for something already done. Short, because it
+// rides on every call.
+function describeAccess(venture) {
+  const repo = venture.repo;
+  if (!repo) {
+    return 'no repo linked, so this venture gets research, pricing, prospects and outreach drafts rather than code (the founder links a repo with LINK when there is code to build)';
+  }
+  const paths = (repo.allowedPaths || []).join(', ') || 'no paths';
+  const writes = repo.enabled ? 'writes on' : 'writes OFF (the founder turns them on with DEPLOY ON)';
+  const how = repo.reviewOnly
+    ? 'every change goes out as a pull request the founder merges; direct commits are refused, so use open_pull_request'
+    : 'pull requests need no plan; a direct commit needs an approved plan';
+  const service = venture.service?.origin ? `; live at ${venture.service.origin}` : '';
+  return `repo ${repo.owner}/${repo.name}@${repo.branch}, allowed paths ${paths}, ${writes}; ${how}${service}`;
+}
+
 function describeActiveVenture(venture) {
   const edge = venture.agentNativeEdge ? `\n    agent-native edge: ${venture.agentNativeEdge}` : '';
-  return `"${venture.title}" [id: ${venture.id}] — milestones: ${describeMilestones(venture)}${edge}`;
+  return `"${venture.title}" [id: ${venture.id}] — milestones: ${describeMilestones(venture)}${edge}\n    access: ${describeAccess(venture)}`;
 }
 
 // Deliberately not a treasury. This company has no seed capital and no

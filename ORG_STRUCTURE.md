@@ -802,6 +802,14 @@ venture, where it stood and what would move it.
   both session kickoffs say a venture's top improvement is its next piece of
   work unless a queued task or an objective says otherwise.
 - **`ROADMAP`** on WhatsApp shows the latest, or says when the first comes.
+- **Every agent sees what each venture may do.** The shared context said a
+  venture's milestones and nothing about its repo, write rights or review mode,
+  so the CEO asked the founder to link a repo `VENTURES` showed was already
+  linked, and told a review-only venture to "commit". Each active venture now
+  carries an `access:` line: the repo, branch and allowed paths, whether writes
+  are on, whether changes go out as pull requests, and the live URL; or, with no
+  repo, what it gets instead of code. It is the ground truth the team was
+  guessing at, and it rides on every call, so it is one short line.
 
 Cost: the roadmap is one CEO call a week (cents). Sessions are unchanged (one a
 day, $1 each at most): with three ventures each gets a session every third
