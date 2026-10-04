@@ -54,8 +54,11 @@ export function panelMembers({ anthropic } = {}) {
   const members = [
     // retryEmpty: a Claude model can spend the whole token allowance thinking and
     // return no text at all (stop_reason max_tokens); ask() then tries once more
-    // with thinking off and more room, which a written review does not need.
-    { name: 'Claude', tier: DEFAULT_TIER, retryEmpty: true, create: (p) => anthropic.messages.create({ model: p.model, system: p.system, messages: p.messages, max_tokens: p.maxTokens, ...(p.thinkingOff ? { thinking: { type: 'disabled' } } : {}) }) },
+    // with more room. It does not turn thinking off to make room: newer Claude
+    // models refuse `thinking: {type: "disabled"}` with a 400, which is what the
+    // first version of this retry sent, and the briefing lost Claude's answer to it
+    // every morning. A larger ceiling costs nothing unless it is used.
+    { name: 'Claude', tier: DEFAULT_TIER, retryEmpty: true, create: (p) => anthropic.messages.create({ model: p.model, system: p.system, messages: p.messages, max_tokens: p.maxTokens }) },
   ];
   const add = (name, tier, configured, create) => configured() && members.push({ name, tier, create: (p) => create({ model: p.model, system: p.system, messages: p.messages, maxTokens: p.maxTokens }) });
   add('OpenAI', OPENAI_TIER, isOpenAIConfigured, openai);
@@ -79,7 +82,7 @@ export async function ask(member, { system, user, maxTokens = 1800 }, budget) {
   const model = spec.model;
   const call = async (extra = {}) => {
     const res = await withSpendContext({ source: 'consultant', agentId: member.name }, () =>
-      member.create({ model, system, messages: [{ role: 'user', content: user }], maxTokens, ...extra }),
+      member.create({ model, system, messages: [{ role: 'user', content: user }], ...extra }),
     );
     const t = tokens(res?.usage);
     const usd = priceUsage(t, spec);
@@ -87,12 +90,21 @@ export async function ask(member, { system, user, maxTokens = 1800 }, budget) {
     budget?.add(usd);
     return { text: textOf(res), usd, stopReason: res?.stop_reason || null };
   };
-  let out = await call();
+  // Thinking shares the ceiling with the answer, so a Claude member starts with
+  // room for both; the retry triples what was asked, within what a non-streaming
+  // request allows.
+  const first = member.retryEmpty ? Math.max(maxTokens, 8000) : maxTokens;
+  let out = await call({ maxTokens: first });
   if (!out.text && out.stopReason === 'max_tokens' && member.retryEmpty) {
-    budget?.assertRoom();
-    assertUnderDailyCap();
-    const again = await call({ maxTokens: maxTokens * 2, thinkingOff: true });
-    out = { ...again, usd: out.usd + again.usd };
+    try {
+      budget?.assertRoom();
+      assertUnderDailyCap();
+      const again = await call({ maxTokens: Math.min(first * 2, 16_000) });
+      out = { ...again, usd: out.usd + again.usd };
+    } catch (err) {
+      // The first call was paid for and is already in the budget; report it, and why the retry did not happen.
+      out = { ...out, retryError: String(err?.message || err).slice(0, 200) };
+    }
   }
   return { ...out, model };
 }

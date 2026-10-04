@@ -137,7 +137,7 @@ export async function runPanel({ anthropic, budget, inputs, members = panelMembe
       // An empty answer still cost what it cost, and says why it was empty.
       report.push(r.status === 'rejected'
         ? { name: members[i].name, ok: false, error: r.reason.message }
-        : { name: members[i].name, ok: false, error: `an empty answer${r.value.stopReason ? ` (stopped: ${r.value.stopReason})` : ''}`, usd: r.value.usd });
+        : { name: members[i].name, ok: false, error: `an empty answer${r.value.stopReason ? ` (stopped: ${r.value.stopReason}${r.value.retryError ? `; the retry failed: ${r.value.retryError}` : ''})` : ''}`, usd: r.value.usd });
     }
   });
   if (!drafts.length) throw new Error(`no model produced a review (${report.map((r) => `${r.name}: ${r.error}`).join('; ')})`);
