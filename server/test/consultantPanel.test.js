@@ -136,24 +136,50 @@ test('coding-source and KPI citations are valid when they exist, and the draft a
   assert.match(panel.synthesisPrompt({ drafts: [{ name: 'A', model: 'm', text: 't' }], factsText: 'f', kpiText: '[K1] x', playbookText: 'p', vibeText: '[V1] y', date: 'd' }), /same eleven sections/);
 });
 
-test('a Claude call that spends its allowance before writing is retried once with thinking off, and both calls are paid for', async () => {
+test('a Claude call that spends its allowance before writing is retried once with more room, never with thinking switched off, and both calls are paid for', async () => {
   const calls = [];
   const claude = {
     name: 'Claude', tier: 'frontier', retryEmpty: true,
     create: async (p) => {
       calls.push(p);
-      return p.thinkingOff
+      return calls.length === 2
         ? { content: [{ type: 'text', text: 'Written [E1]' }], usage: { input_tokens: 1000, output_tokens: 500 }, stop_reason: 'end_turn' }
-        : { content: [{ type: 'thinking', thinking: '…' }], usage: { input_tokens: 1000, output_tokens: 3400 }, stop_reason: 'max_tokens' };
+        : { content: [{ type: 'thinking', thinking: '…' }], usage: { input_tokens: 1000, output_tokens: 8000 }, stop_reason: 'max_tokens' };
     },
   };
   const budget = models.createBudget(5);
   const out = await models.ask(claude, { system: 's', user: 'u', maxTokens: 3000 }, budget);
   assert.equal(out.text, 'Written [E1]');
   assert.equal(calls.length, 2);
-  assert.equal(calls[1].maxTokens, 6000);
-  assert.equal(calls[1].thinkingOff, true);
+  assert.equal(calls[0].maxTokens, 8000, 'thinking and the answer share the ceiling, so Claude starts with room for both');
+  assert.equal(calls[1].maxTokens, 16000);
+  assert.ok(calls.every((c) => !('thinking' in c) && !c.thinkingOff), 'newer Claude models answer a thinking-disabled request with a 400');
   assert.ok(budget.spent > 0 && Math.abs(budget.spent - out.usd) < 1e-9, 'the empty call is in the total');
+});
+
+test('if the retry itself is refused, the paid first call is still reported with why, and the review carries on without Claude', async () => {
+  let n = 0;
+  const claude = {
+    name: 'Claude', tier: 'frontier', retryEmpty: true,
+    create: async () => {
+      n += 1;
+      if (n === 2) throw new Error('400 invalid_request_error: a setting this model does not accept');
+      return { content: [{ type: 'thinking', thinking: '…' }], usage: { input_tokens: 1000, output_tokens: 8000 }, stop_reason: 'max_tokens' };
+    },
+  };
+  const budget = models.createBudget(5);
+  const direct = await models.ask(claude, { system: 's', user: 'u', maxTokens: 3000 }, budget);
+  assert.equal(direct.text, '');
+  assert.match(direct.retryError, /400 invalid_request_error/);
+  assert.ok(direct.usd > 0 && Math.abs(budget.spent - direct.usd) < 1e-9);
+
+  n = 0;
+  const out = await panel.runPanel({ inputs, members: [claude, member('OpenAI', 'assistant', 'Only one [E1]')], budget: models.createBudget(5) });
+  const bad = out.members.find((m) => m.name === 'Claude');
+  assert.equal(bad.ok, false);
+  assert.match(bad.error, /an empty answer \(stopped: max_tokens; the retry failed: 400 invalid_request_error/);
+  assert.ok(bad.usd > 0, 'what the failed attempt cost is not dropped from the email');
+  assert.equal(out.members.find((m) => m.name === 'OpenAI').ok, true);
 });
 
 test('an empty answer is reported with why it stopped, and what it cost is still counted', async () => {
