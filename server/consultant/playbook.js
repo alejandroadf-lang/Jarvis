@@ -20,6 +20,7 @@ import { readJson, writeJson } from '../store.js';
 import { runAgent } from '../agents/agentRunner.js';
 import { AGENTS as COMPANY_AGENTS, ROOT_AGENT_ID as COMPANY_ROOT } from '../agents/orgChart.js';
 import { WEB_SEARCH } from '../agents/serverTools.js';
+import { webSearchAvailable } from '../agents/models.js';
 import { withSpendContext } from '../spend.js';
 import { safeFetchText, extractLines } from '../workspace/ruleWatch.js';
 import { checkVaultText } from '../workspace/writeGate.js';
@@ -151,6 +152,9 @@ export async function refreshPlaybook({
   publish = publishServerPage,
 } = {}) {
   try {
+    // No model to extract claims with (none allowed or configured): leave the last
+    // reading in place rather than store a week of "extraction failed".
+    if (!member) return null;
     const t = TOPICS[topic];
     // The founder's own pages come first: what they chose to be read is read,
     // and each still passes the same public-https fetch and quote check.
@@ -202,6 +206,10 @@ export async function refreshPlaybook({
 }
 
 async function defaultDiscover({ anthropic, budget, now, topic }) {
+  // Discovery is a web search. A model without one would return URLs it remembers
+  // or makes up; they would fail the fetch and the quote check, but only after
+  // paying to try. Skip it: pages the founder listed (extraPages) are still read.
+  if (!webSearchAvailable()) return [];
   const agents = { ...COMPANY_AGENTS, [COMPANY_ROOT]: { ...COMPANY_AGENTS[COMPANY_ROOT], reports: [], actions: [], serverTools: [WEB_SEARCH] } };
   const result = await withSpendContext({ source: 'consultant', agentId: 'playbook-search' }, () =>
     runAgent({ anthropic, agents, agentId: COMPANY_ROOT, messages: [{ role: 'user', content: discoveryPrompt(now, topic) }], actionHandlers: {}, extraContext: '', budgetUsd: budget ? budget.remaining() : null }),
@@ -220,3 +228,6 @@ export function renderPlaybook(pb, { limit = 40 } = {}) {
   const unread = (pb.unread || []).map((u) => `- ${u.url}: ${u.reason}`);
   return `${lines.join('\n')}${unread.length ? `\n\nCould not be read or verified:\n${unread.join('\n')}` : ''}`;
 }
+
+/** For tests: the default discovery step, without a refresh around it. */
+export const __discoverForTest = (args) => defaultDiscover(args);

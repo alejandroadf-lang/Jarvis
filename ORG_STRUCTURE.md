@@ -1265,6 +1265,43 @@ failure, which made "this file doesn't exist yet" — a normal state — look
 identical to "the token is wrong". It now carries `.status`, so a 404 reads
 as absence and everything else still throws.
 
+## Free models by default
+
+The company runs on free models unless you say otherwise, and pays for the rest
+only when you decide that makes sense. One switch decides it:
+
+- **What counts as free.** A model whose provider's input and output price
+  variables are both 0. You declare a free-tier Gemini key with
+  `GEMINI_INPUT_PRICE_PER_MTOK=0` and `GEMINI_OUTPUT_PRICE_PER_MTOK=0`, and an
+  OpenRouter free model with `OPENROUTER_MODEL=...:free` and both OpenRouter
+  price variables 0. The spend meter then reads $0 for it, which is also what
+  keeps it honest.
+- **The switch.** `PAID MODELS ON`, `PAID MODELS OFF` and `PAID MODELS` (status)
+  from WhatsApp. They are parsed by code and cost no model tokens. Your answer is
+  kept in the data directory and wins over the `PAID_MODELS` variable, which is
+  only the default (unset means off). `SPEND` shows the position.
+- **What happens when it is off.** A paid model is replaced by the first free one
+  that has a key. If there is none, the call is refused by name, and the message
+  says which variables to set; it is not treated as an outage, so the fallback
+  chain does not quietly use another paid account instead. The fallback chain
+  skips paid providers, and the briefing's panel lists only free models.
+- **What free models cannot do.** Eight research agents are built around Claude's
+  web search, which only Claude has. Without it they run without search and are
+  told so, so they say what they could not check instead of answering from
+  memory. The weekly search for new sources and for competitors is skipped
+  rather than handed to a model that would invent them: last week's competitors
+  stay, and pages you list in a `briefing-sources` note are still read.
+- **If no model can write the briefing's review,** the email still goes out with
+  everything computed by code and says why. Before, it did not go out at all.
+- **Privacy.** Free tiers often log what they receive and may train on it. Keep
+  personal and health data, WHOOP data especially, out of anything routed
+  through one. Check the provider's current terms before relying on this.
+- **`/api/chat`** calls Claude directly, outside the agent runner, and is refused
+  while paid models are off. Voice transcription still uses OpenAI.
+- **Tests.** `npm test` sets `PAID_MODELS=true`, because most of the suite was
+  written before the switch. Run a single file as
+  `PAID_MODELS=true node --test test/<file>`.
+
 ## The consultant: a daily briefing on how ready this company is
 
 Every morning at 08:00 Bangkok time, on its own schedule (it does not wait for the

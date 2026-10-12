@@ -38,6 +38,9 @@ import {
   GROK_TIER,
   DEFAULT_TIER,
   CHEAP_TIER,
+  specAllowed,
+  freeSpec,
+  paidModelsOffError,
 } from './models.js';
 import { recordFallback } from '../degradation.js';
 import { recordContribution } from '../finance/profitShare.js';
@@ -353,7 +356,9 @@ async function failOverToBackup(anthropic, modelSpec, params, err) {
   // makes exactly those agents 401 while everything else keeps working.
   // Nothing is lost by the swap — tiered agents are leaves by construction,
   // and the default model is the better one.
-  if (modelSpec.provider !== 'anthropic') {
+  // Claude as the fallback for a failed tier is a paid call like any other: not
+  // while paid models are off.
+  if (modelSpec.provider !== 'anthropic' && specAllowed(MODELS[DEFAULT_TIER])) {
     const fallback = MODELS[DEFAULT_TIER];
     console.warn(
       `${modelSpec.provider} rejected the request (${err.message}); running this agent on ${fallback.model} instead.`
@@ -383,7 +388,7 @@ async function failOverToBackup(anthropic, modelSpec, params, err) {
 
   const candidates = backupProviders().filter(
     // No point asking the provider that just refused us to try again.
-    (provider) => provider.available() && provider.provider !== modelSpec.provider
+    (provider) => provider.available() && provider.provider !== modelSpec.provider && specAllowed(MODELS[provider.tier])
   );
   if (!candidates.length) throw err;
 
@@ -432,6 +437,17 @@ async function failOverToBackup(anthropic, modelSpec, params, err) {
 // and should not carry its own copy of the provider dispatch.
 export async function createMessage(anthropic, modelSpec, params) {
   assertUnderDailyCap();
+
+  // The last place the paid-models switch is enforced, for callers that choose a
+  // model themselves (the fact check and the review pick the cheap tier by name).
+  // A paid model becomes the first free one; with none, it is refused here by
+  // name, and the refusal is not an outage so it does not fall through to
+  // another paid provider.
+  if (!specAllowed(modelSpec)) {
+    const free = freeSpec();
+    if (!free) throw paidModelsOffError(modelSpec);
+    modelSpec = free;
+  }
 
   // Both providers are called through here so neither can slip past the
   // spend cap, and the retry policy is identical because openrouter.js
@@ -677,9 +693,17 @@ export async function runAgent({
   // breakpoint instead of adding a third block that invalidates nothing.
   const skillMenu = describeSkillsForAgent(agent.id);
   const mcpNote = describeMcpForAgent(agent);
+  // An agent built around web search, running on a model that cannot search (the
+  // paid-models switch is off, or Claude is down), would otherwise answer from
+  // memory in the voice of someone who looked. Said once, here, so it applies on
+  // every route that ends up on a model without Anthropic's server tools.
+  const noSearchNote =
+    (agent.serverTools || []).length && modelSpec.provider !== 'anthropic'
+      ? 'Web search is not available in this run. Do not state market facts, prices, competitor details or statistics you cannot support from the context you were given. Say what you could not check, and what the founder or a later run should look up.'
+      : '';
   const system = buildSystemBlocks({
     extraContext,
-    agentPrompt: [agent.systemPrompt, skillMenu, mcpNote].filter(Boolean).join('\n\n'),
+    agentPrompt: [agent.systemPrompt, skillMenu, mcpNote, noSearchNote].filter(Boolean).join('\n\n'),
     ownContext,
     // A leaf's single call cannot read back what it writes. See
     // buildSystemBlocks for why that made caching a surcharge rather than a

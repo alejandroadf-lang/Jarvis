@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "node --watch index.js",
     "start": "node index.js",
-    "test": "node --test"
+    "test": "PAID_MODELS=true node --test"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",

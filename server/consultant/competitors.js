@@ -19,6 +19,7 @@ import { readJson, writeJson } from '../store.js';
 import { runAgent } from '../agents/agentRunner.js';
 import { AGENTS as COMPANY_AGENTS, ROOT_AGENT_ID as COMPANY_ROOT } from '../agents/orgChart.js';
 import { WEB_SEARCH } from '../agents/serverTools.js';
+import { webSearchAvailable } from '../agents/models.js';
 import { withSpendContext } from '../spend.js';
 import { listVentures, serviceUrl } from '../finance/ventures.js';
 import { probeSite, scoreProbe, describeProbe, QUALITY_RUBRIC, INNOVATION_RUBRIC } from './siteProbe.js';
@@ -73,6 +74,13 @@ Reply with JSON only, an object keyed by the id: {"<id>": [{"name": "…", "url"
 }
 
 async function defaultDiscover({ ventures, anthropic, budget, now }) {
+  // Finding competitors needs Claude's web search. Without it (paid models off, or
+  // no Claude key) a model asked for "direct competitors" invents plausible ones,
+  // and the benchmark would then probe and rank invented sites. Keep last week's
+  // list instead; the founder's own list in the vault still takes precedence.
+  if (!webSearchAvailable()) {
+    return Object.fromEntries((getBenchmark()?.ventures || []).map((v) => [v.id, (v.competitors || []).map((c) => ({ name: c.name, url: c.url }))]));
+  }
   const agents = { ...COMPANY_AGENTS, [COMPANY_ROOT]: { ...COMPANY_AGENTS[COMPANY_ROOT], reports: [], actions: [], serverTools: [WEB_SEARCH] } };
   const result = await withSpendContext({ source: 'consultant', agentId: 'competitor-search' }, () =>
     runAgent({ anthropic, agents, agentId: COMPANY_ROOT, messages: [{ role: 'user', content: discoveryPrompt(ventures, now) }], actionHandlers: {}, extraContext: '', budgetUsd: budget ? budget.remaining() : null }),

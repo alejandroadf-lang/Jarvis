@@ -39,6 +39,7 @@ import { refreshPlaybook, getPlaybook, playbookIsStale, renderPlaybook } from '.
 import { scoutModels, getModelScout, modelScoutIsStale, scoutFacts } from './modelScout.js';
 import { briefingHealth, improvementCandidates, panelImprovements, improvementsText, renderSelfReview, getFeedback, feedbackText, founderSources } from './selfReview.js';
 import { runPanel } from './panel.js';
+import { describeModelPolicy } from '../agents/models.js';
 import { createBudget, panelMembers } from './models.js';
 
 const FILE = 'consultant.json';
@@ -63,7 +64,7 @@ export function lastDigest() {
 }
 
 /** The email, assembled: the model's review first, then everything a person needs to check it. Pure. */
-export function composeDigest({ date, review, scorecard, kpis, engineering, benchmark, practice, fixes, selfReview, playbook, vibe, tech, panel, budgetUsd, readingUsd = 0 }) {
+export function composeDigest({ date, review, scorecard, kpis, engineering, benchmark, practice, fixes, selfReview, playbook, vibe, tech, panel, budgetUsd, readingUsd = 0, policyLine = '' }) {
   const parts = [];
   parts.push(`# Your AI-company briefing, ${date}`, '', review.trim(), '', '---');
   parts.push('', "## KPIs and maturity (computed by code from the company's records, not written by any model)", '', renderKpis(kpis));
@@ -92,7 +93,10 @@ export function composeDigest({ date, review, scorecard, kpis, engineering, benc
     '',
     '## How this was produced',
     '',
-    panel.singleModel
+    ...(policyLine ? [policyLine, ''] : []),
+    panel.failed
+      ? `No model wrote the written review: ${panel.failed}. Every number, table and fact in this email is computed by code from the company's records and is not affected.`
+      : panel.singleModel
       ? `One model wrote this review (${panel.members.filter((m) => m.ok).map((m) => `${m.name}, ${m.model}`).join('; ')}). It is NOT an independent panel: one model reviewing a company will be wrong in its own consistent way. Set more model keys (OPENAI_API_KEY, GEMINI_API_KEY, XAI_API_KEY) for a real panel.`
       : `${drafters.length} models each reviewed the company alone (${drafters.map((m) => `${m.name}, ${m.model}`).join('; ')}) and one merged them, listing where they disagreed.`,
     ...(bad.length ? [`Did not answer: ${bad.map((m) => `${m.name} (${String(m.error).replace(/\s+/g, ' ').slice(0, 140)})`).join('; ')}.`] : []),
@@ -243,13 +247,25 @@ async function buildAndSend({
       // Everything that is not an E fact and may be cited: sources and KPIs.
       playbookIds: [...(playbook?.items || []).map((i) => i.id), ...(vibe?.items || []).map((i) => i.id), ...(tech?.items || []).map((i) => i.id), ...candidates.map((c) => c.id), ...kpis.kpis.map((k) => k.id), ...(practice?.actions || []).map((a) => a.id)],
     };
-    const panel = await runPanel({ anthropic, budget, inputs, members });
+    // If no model can write the review (none configured, none allowed while paid
+    // models are off, or all failing), the computed sections are still worth
+    // sending. Before this, that case threw and no briefing went out at all.
+    let panel;
+    try {
+      panel = await runPanel({ anthropic, budget, inputs, members });
+    } catch (err) {
+      const why = members.length ? err.message : 'no model is available: paid models are off and no free model is configured, or no model key is set';
+      panel = { text: `## No written review today\n\nNo model wrote the review (${why}). The KPIs, benchmark, scorecard and facts below are computed by code and are unaffected.\n\n${describeModelPolicy()}`, members: [], singleModel: false, cited: 0, unknown: 0, usd: 0, failed: why };
+    }
 
     // What the panel actually did, now that it has run: a model that did not
     // answer becomes an improvement with the fix its own error names.
     selfReview.candidates = [...candidates, ...panelImprovements(panel.members, candidates.length)];
+    if (panel.failed) {
+      selfReview.candidates.push({ id: `B${selfReview.candidates.length + 1}`, text: 'No model wrote the review. To get one for free: set GEMINI_INPUT_PRICE_PER_MTOK=0 and GEMINI_OUTPUT_PRICE_PER_MTOK=0 if your Gemini key is on the free tier, or point OPENROUTER_MODEL at a ":free" model with both OPENROUTER price variables 0. To allow paid models instead, send PAID MODELS ON.' });
+    }
 
-    const text = composeDigest({ date, review: panel.text, scorecard, kpis, engineering, benchmark, practice, fixes, selfReview, playbook, vibe, tech, panel, budgetUsd: budget.limit, readingUsd: reading.spent });
+    const text = composeDigest({ date, review: panel.text, scorecard, kpis, engineering, benchmark, practice, fixes, selfReview, playbook, vibe, tech, panel, budgetUsd: budget.limit, readingUsd: reading.spent, policyLine: describeModelPolicy() });
     const subject = subjectLine({ date, scorecard, kpis });
 
     let emailed = false;
