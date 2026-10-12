@@ -51,10 +51,9 @@ beforeEach(() => {
   fs.rmSync(path.join(tmpDir, 'model-policy.json'), { force: true });
 });
 
+// Gemini is priced at 0 by default, so a key alone is the free-tier case.
 const freeGemini = () => {
   process.env.GEMINI_API_KEY = 'g-test';
-  process.env.GEMINI_INPUT_PRICE_PER_MTOK = '0';
-  process.env.GEMINI_OUTPUT_PRICE_PER_MTOK = '0';
 };
 
 test('paid models are off by default, the variable sets the default, and the founder\'s command wins and survives', () => {
@@ -79,10 +78,16 @@ test('free is a price of zero on both sides, nothing else', () => {
   assert.equal(models.isFreeSpec(models.MODELS[models.DEFAULT_TIER]), false, 'Claude is paid');
 });
 
-test('a free-tier Gemini key is declared free by its prices, and then it is what a paid model becomes', () => {
+test('Gemini is free by default, stops being free the day real prices are set, and is what a paid model becomes while it is free', () => {
+  assert.equal(models.freeSpec(), null, 'no key, no free model');
   process.env.GEMINI_API_KEY = 'g-test';
-  assert.equal(models.freeSpec(), null, 'a key alone does not make it free: its default prices are not zero');
-  freeGemini();
+  process.env.GEMINI_INPUT_PRICE_PER_MTOK = '0.1';
+  process.env.GEMINI_OUTPUT_PRICE_PER_MTOK = '0.4';
+  assert.equal(models.freeSpec(), null, 'with real prices set (billing turned on) it is paid, and the switch treats it so');
+  delete process.env.GEMINI_INPUT_PRICE_PER_MTOK;
+  delete process.env.GEMINI_OUTPUT_PRICE_PER_MTOK;
+  assert.equal(models.MODELS[models.GEMINI_TIER].inputPricePerMTok, 0);
+  assert.equal(models.MODELS[models.GEMINI_TIER].outputPricePerMTok, 0);
   const free = models.freeSpec();
   assert.equal(free.provider, 'gemini');
   const agent = { id: 'ceo', reports: ['a'], actions: [], serverTools: [] };
@@ -116,7 +121,7 @@ test('with no free model, a paid call is refused by name, and the refusal is not
     (err) => {
       assert.equal(err.code, 'PAID_MODELS_OFF');
       assert.match(err.message, /Paid models are switched off and no free model is available/);
-      assert.match(err.message, /GEMINI_INPUT_PRICE_PER_MTOK=0/);
+      assert.match(err.message, /Gemini is priced at 0 by default, so set GEMINI_API_KEY/);
       assert.match(err.message, /PAID MODELS ON/);
       // The patterns agentRunner treats as "the provider is down, try another":
       assert.doesNotMatch(err.message, /credit balance|billing|quota/i);
@@ -147,7 +152,7 @@ test('a caller that names a paid model itself (the fact check does) gets the fre
 test('the briefing panel lists only models that are allowed', () => {
   process.env.ANTHROPIC_API_KEY = 'a-test';
   process.env.OPENAI_API_KEY = 'o-test';
-  assert.deepEqual(panelModels.panelMembers({ anthropic: {} }).map((m) => m.name), [], 'nothing is free yet');
+  assert.deepEqual(panelModels.panelMembers({ anthropic: {} }).map((m) => m.name), [], 'nothing is free yet: Claude and OpenAI are paid, and there is no Gemini key');
   freeGemini();
   assert.deepEqual(panelModels.panelMembers({ anthropic: {} }).map((m) => m.name), ['Gemini']);
   policy.setPaidModels(true);

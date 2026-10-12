@@ -262,7 +262,7 @@ async function buildAndSend({
     // answer becomes an improvement with the fix its own error names.
     selfReview.candidates = [...candidates, ...panelImprovements(panel.members, candidates.length)];
     if (panel.failed) {
-      selfReview.candidates.push({ id: `B${selfReview.candidates.length + 1}`, text: 'No model wrote the review. To get one for free: set GEMINI_INPUT_PRICE_PER_MTOK=0 and GEMINI_OUTPUT_PRICE_PER_MTOK=0 if your Gemini key is on the free tier, or point OPENROUTER_MODEL at a ":free" model with both OPENROUTER price variables 0. To allow paid models instead, send PAID MODELS ON.' });
+      selfReview.candidates.push({ id: `B${selfReview.candidates.length + 1}`, text: 'No model wrote the review. To get one for free: set GEMINI_API_KEY (Gemini is priced at 0 by default, for a free-tier key), or point OPENROUTER_MODEL at a ":free" model with both OPENROUTER price variables 0. To allow paid models instead, send PAID MODELS ON.' });
     }
 
     const text = composeDigest({ date, review: panel.text, scorecard, kpis, engineering, benchmark, practice, fixes, selfReview, playbook, vibe, tech, panel, budgetUsd: budget.limit, readingUsd: reading.spent, policyLine: describeModelPolicy() });

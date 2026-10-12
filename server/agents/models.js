@@ -117,16 +117,24 @@ export const MODELS = {
     },
   },
   // Read at call time for the same reason as the OpenAI tier above.
+  //
+  // Priced at 0 by default, for the time being: this company's Gemini key is on
+  // the free tier (it answers 429 at the free tier's limits), and a price of 0 is
+  // what makes it "free" to the paid-models switch (see modelPolicy.js). That makes
+  // the default an assumption about the account, so it fails in one direction: if
+  // billing is ever turned on for this key, the spend meter under-counts Gemini
+  // and the switch treats it as free. Set both variables to the real prices
+  // (previously 0.1 in / 0.4 out) when that happens.
   [GEMINI_TIER]: {
     provider: 'gemini',
     get model() {
       return (process.env.GEMINI_MODEL || '').trim() || 'gemini-2.0-flash';
     },
     get inputPricePerMTok() {
-      return numberFromEnv('GEMINI_INPUT_PRICE_PER_MTOK', 0.1);
+      return numberFromEnv('GEMINI_INPUT_PRICE_PER_MTOK', 0);
     },
     get outputPricePerMTok() {
-      return numberFromEnv('GEMINI_OUTPUT_PRICE_PER_MTOK', 0.4);
+      return numberFromEnv('GEMINI_OUTPUT_PRICE_PER_MTOK', 0);
     },
   },
 };
@@ -413,7 +421,7 @@ export function webSearchAvailable() {
 export function paidModelsOffError(spec) {
   const err = new Error(
     `Paid models are switched off and no free model is available, so ${spec?.model || 'this model'} was not used. ` +
-      'A model is free when its input and output price variables are both 0: set GEMINI_INPUT_PRICE_PER_MTOK=0 and GEMINI_OUTPUT_PRICE_PER_MTOK=0 for a free-tier Gemini key, ' +
+      'A model is free when its input and output price variables are both 0. Gemini is priced at 0 by default, so set GEMINI_API_KEY (a free-tier key), ' +
       'or point OPENROUTER_MODEL at a ":free" model with both OPENROUTER price variables 0. To allow paid models, send PAID MODELS ON.'
   );
   // 400, and worded to avoid the outage patterns in agentRunner's isProviderOutage.

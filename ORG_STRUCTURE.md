@@ -1271,9 +1271,10 @@ The company runs on free models unless you say otherwise, and pays for the rest
 only when you decide that makes sense. One switch decides it:
 
 - **What counts as free.** A model whose provider's input and output price
-  variables are both 0. You declare a free-tier Gemini key with
-  `GEMINI_INPUT_PRICE_PER_MTOK=0` and `GEMINI_OUTPUT_PRICE_PER_MTOK=0`, and an
-  OpenRouter free model with `OPENROUTER_MODEL=...:free` and both OpenRouter
+  variables are both 0. Gemini is priced at 0 by default, for the time being,
+  because the company's key is on the free tier; if billing is ever turned on for
+  it, set `GEMINI_INPUT_PRICE_PER_MTOK` and `GEMINI_OUTPUT_PRICE_PER_MTOK` to the
+  real prices, or the meter under-counts it. An OpenRouter free model is declared with `OPENROUTER_MODEL=...:free` and both OpenRouter
   price variables 0. The spend meter then reads $0 for it, which is also what
   keeps it honest.
 - **The switch.** `PAID MODELS ON`, `PAID MODELS OFF` and `PAID MODELS` (status)

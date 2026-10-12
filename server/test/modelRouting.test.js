@@ -290,10 +290,20 @@ test('spend from an OpenRouter call is recorded against the same daily ledger', 
 // Second time this exact trap has bitten here. The first was a blank
 // profit-share percentage silently zeroing every agent's earnings.
 
-test('every tier has a real price with nothing configured', async () => {
-  const { MODELS } = await import('../agents/models.js');
+test('every tier has a real price with nothing configured, except the ones declared free on purpose', async () => {
+  const { MODELS, GEMINI_TIER } = await import('../agents/models.js');
+  // Gemini is priced at 0 by default for now: the company's key is on the free
+  // tier, and 0 is what the paid-models switch (agents/modelPolicy.js) reads as
+  // free. Listed here by name so a tier cannot become free by accident, which is
+  // what this test was written to catch.
+  const FREE_ON_PURPOSE = new Set([GEMINI_TIER]);
 
   for (const [tier, spec] of Object.entries(MODELS)) {
+    if (FREE_ON_PURPOSE.has(tier)) {
+      assert.equal(spec.inputPricePerMTok, 0, `${tier} is meant to be free by default`);
+      assert.equal(spec.outputPricePerMTok, 0, `${tier} is meant to be free by default`);
+      continue;
+    }
     assert.ok(spec.inputPricePerMTok > 0, `${tier} input price was ${spec.inputPricePerMTok}`);
     assert.ok(spec.outputPricePerMTok > 0, `${tier} output price was ${spec.outputPricePerMTok}`);
   }
