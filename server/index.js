@@ -69,6 +69,7 @@ import { startDailyMeetingScheduler, runDailyMeetingNow, isDailyMeetingRunning }
 import { startWorkSessionScheduler } from './workSession.js';
 import { startConsultantScheduler } from './consultant/schedule.js';
 import { paidModelsAllowed } from './agents/modelPolicy.js';
+import { MODELS, DEFAULT_TIER } from './agents/models.js';
 import { studioActionHandlers } from './dailyMeeting.js';
 import { getKillSwitch, haltRealActions, resumeRealActions } from './killSwitch.js';
 import { getSpendSummary } from './spend.js';
@@ -204,7 +205,9 @@ app.post('/api/chat', async (req, res) => {
 
   try {
     const stream = anthropic.messages.stream({
-      model: 'claude-sonnet-5',
+      // The same model (and ANTHROPIC_MODEL override) the agents use, so one
+      // variable moves the whole company when a newer model is worth it.
+      model: MODELS[DEFAULT_TIER].model,
       max_tokens: 1024,
       system: SYSTEM_PROMPT,
       messages: history,

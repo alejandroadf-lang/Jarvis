@@ -39,6 +39,7 @@ import {
   DEFAULT_TIER,
   CHEAP_TIER,
   specAllowed,
+  isFreeSpec,
   freeSpec,
   paidModelsOffError,
 } from './models.js';
@@ -389,7 +390,12 @@ async function failOverToBackup(anthropic, modelSpec, params, err) {
   const candidates = backupProviders().filter(
     // No point asking the provider that just refused us to try again.
     (provider) => provider.available() && provider.provider !== modelSpec.provider && specAllowed(MODELS[provider.tier])
-  );
+  )
+    // Free before paid: when the paid provider is the one that failed (an empty
+    // balance is the usual reason), the next call should not spend another
+    // account's money while a free model sits idle. The sort is stable, so each
+    // group keeps the order above.
+    .sort((a, b) => Number(isFreeSpec(MODELS[b.tier])) - Number(isFreeSpec(MODELS[a.tier])));
   if (!candidates.length) throw err;
 
   let lastError = err;

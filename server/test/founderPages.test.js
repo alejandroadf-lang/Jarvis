@@ -87,7 +87,9 @@ test('an unanswered decision expires as a no, an answer is remembered, and both 
   await fp.syncDecisions(notes, { now: NOW });
   assert.match(vault.files['Inbox/Decisions/2026-10-01 Old ask.md'], /decision: expired/);
   assert.match(vault.files['Inbox/Decisions/2026-10-02 Answered.md'], /decision: approved/, 'an answer is never touched');
-  const ctx = fp.buildDecisionsContext();
+  // Pinned to NOW: the 14-day window is measured from the clock, and this test
+  // started failing on the real date once the fixtures aged out of it.
+  const ctx = fp.buildDecisionsContext(NOW);
   assert.match(ctx, /EXPIRED: Old ask/);
   assert.match(ctx, /APPROVED: Answered/);
   assert.match(ctx, /Still waiting on the founder[\s\S]*PENDING: Open ask/);

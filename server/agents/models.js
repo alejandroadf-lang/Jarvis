@@ -315,7 +315,10 @@ function priced(spec) {
 export function describeModelMode() {
   const mode = getModelMode();
   const claude = priced(MODELS[DEFAULT_TIER]);
-  const lines = [`Model mode: ${mode.toUpperCase()}.`];
+  // A saved mode outlives deploys, so say when it was chosen: ECO from weeks ago
+  // looks like a hardcoded default if nothing shows it was a command.
+  const setAt = readJson(MODE_FILE, {})?.setAt;
+  const lines = [`Model mode: ${mode.toUpperCase()}${setAt ? `, set by your MODE command on ${String(setAt).slice(0, 10)}` : ' (the default; no MODE command given)'}.`];
   if (mode === 'max') {
     lines.push(`Every agent runs on ${claude}.`);
   } else if (mode === 'eco') {

@@ -1265,10 +1265,13 @@ failure, which made "this file doesn't exist yet" — a normal state — look
 identical to "the token is wrong". It now carries `.status`, so a 404 reads
 as absence and everything else still throws.
 
-## Free models by default
+## Free models as the fallback
 
-The company runs on free models unless you say otherwise, and pays for the rest
-only when you decide that makes sense. One switch decides it:
+Paid models are on by default, because the Anthropic API credit exists to be spent
+(starting with free-only stalled every agent the day Gemini's free quota ran out).
+When a paid provider fails, the fallback chain tries free models before another
+paid one. Say `PAID MODELS OFF` for the opposite stance, free only, and the
+sections below describe what that does. One switch decides it:
 
 - **What counts as free.** A model whose provider's input and output price
   variables are both 0. Gemini is priced at 0 by default, for the time being,
@@ -1280,7 +1283,7 @@ only when you decide that makes sense. One switch decides it:
 - **The switch.** `PAID MODELS ON`, `PAID MODELS OFF` and `PAID MODELS` (status)
   from WhatsApp. They are parsed by code and cost no model tokens. Your answer is
   kept in the data directory and wins over the `PAID_MODELS` variable, which is
-  only the default (unset means off). `SPEND` shows the position.
+  only the default (unset means on; `false` means off). `SPEND` shows the position.
 - **What happens when it is off.** A paid model is replaced by the first free one
   that has a key. If there is none, the call is refused by name, and the message
   says which variables to set; it is not treated as an outage, so the fallback
@@ -1299,9 +1302,12 @@ only when you decide that makes sense. One switch decides it:
   through one. Check the provider's current terms before relying on this.
 - **`/api/chat`** calls Claude directly, outside the agent runner, and is refused
   while paid models are off. Voice transcription still uses OpenAI.
-- **Tests.** `npm test` sets `PAID_MODELS=true`, because most of the suite was
-  written before the switch. Run a single file as
-  `PAID_MODELS=true node --test test/<file>`.
+- **Tests.** The suite runs with the default (paid on); `modelPolicy.test.js`
+  sets `PAID_MODELS=false` itself for the off position.
+- **Which model an agent runs on** is the MODE (`MODE` shows it and the date you
+  chose it), with `modelTier` in the org chart as the default for specialists and
+  `AGENT_MODEL_TIERS` per agent. `MODE MAX` overrides the pins and puts everything
+  on Claude.
 
 ## The consultant: a daily briefing on how ready this company is
 

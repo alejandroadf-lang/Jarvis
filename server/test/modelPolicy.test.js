@@ -8,8 +8,8 @@
 // models; the founder's PAID MODELS command wins over the environment, is parsed
 // by code, and is visible in SPEND; and turning paid models on restores everything.
 //
-// These tests run with PAID_MODELS unset on purpose (npm test sets it to true for
-// the rest of the suite, which was written before the switch existed).
+// Paid models are on by default; most tests here are about the OFF position, so
+// beforeEach sets PAID_MODELS=false and the first test clears it to check the default.
 
 import { test, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -49,6 +49,9 @@ after(() => {
 beforeEach(() => {
   for (const k of ENV) delete process.env[k];
   fs.rmSync(path.join(tmpDir, 'model-policy.json'), { force: true });
+  // Most tests below are about the OFF position, so they start there; the first
+  // one is about the default and clears this itself.
+  process.env.PAID_MODELS = 'false';
 });
 
 // Gemini is priced at 0 by default, so a key alone is the free-tier case.
@@ -56,18 +59,44 @@ const freeGemini = () => {
   process.env.GEMINI_API_KEY = 'g-test';
 };
 
-test('paid models are off by default, the variable sets the default, and the founder\'s command wins and survives', () => {
+test('paid models are on by default, the variable sets the default, and the founder\'s command wins and survives', () => {
+  delete process.env.PAID_MODELS;
+  assert.equal(policy.paidModelsAllowed(), true, 'the API credit is there to be spent; free models are the fallback');
+  assert.match(policy.paidModelsSource(), /default \(on\)/);
+  process.env.PAID_MODELS = 'false';
   assert.equal(policy.paidModelsAllowed(), false);
-  assert.match(policy.paidModelsSource(), /default \(off\)/);
+  assert.match(policy.paidModelsSource(), /PAID_MODELS variable/);
   process.env.PAID_MODELS = 'true';
   assert.equal(policy.paidModelsAllowed(), true);
-  assert.match(policy.paidModelsSource(), /PAID_MODELS variable/);
   policy.setPaidModels(false);
   assert.equal(policy.paidModelsAllowed(), false, 'the command beats the variable');
   assert.match(policy.paidModelsSource(), /your PAID MODELS command/);
   policy.setPaidModels(true);
-  delete process.env.PAID_MODELS;
+  process.env.PAID_MODELS = 'false';
   assert.equal(policy.paidModelsAllowed(), true, 'and it does not need the variable');
+});
+
+test('when a paid provider is down, free models are tried before another paid one', async () => {
+  // Claude is out of credit; OpenAI (paid) is listed before Gemini (free) in the chain.
+  process.env.PAID_MODELS = 'true';
+  process.env.ANTHROPIC_API_KEY = 'a-test';
+  process.env.OPENAI_API_KEY = 'o-test';
+  process.env.GEMINI_API_KEY = 'g-test';
+  const seen = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    seen.push(String(url));
+    return { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: 'free answer' }] }, finishReason: 'STOP' }], usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 5 } }), text: async () => '' };
+  };
+  const broke = Object.assign(new Error('Your credit balance is too low'), { status: 400 });
+  const anthropic = { messages: { create: async () => { throw broke; } } };
+  try {
+    const res = await runner.createMessage(anthropic, models.MODELS[models.DEFAULT_TIER], { max_tokens: 20, system: 's', messages: [{ role: 'user', content: 'hi' }] });
+    assert.ok(seen.length >= 1 && /generativelanguage|gemini/i.test(seen[0]), `the first backup asked was Gemini, got ${seen[0]}`);
+    assert.equal(res.costUsd, 0);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 });
 
 test('free is a price of zero on both sides, nothing else', () => {
