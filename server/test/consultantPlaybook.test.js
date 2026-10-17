@@ -101,7 +101,30 @@ test('the week\'s sources are read by the server, verified, stored, and the unre
   assert.match(pb.renderPlaybook(pb.getPlaybook()), /\[P1\] .*\(A Founder, read 2026-10-10, first hand revenue\) — “charged customers a flat monthly fee from day one” https:\/\/good\.example\.com\/a/);
 });
 
+test('without Claude web search, discovery is skipped instead of letting a model invent pages', async () => {
+  const saved = process.env.ANTHROPIC_API_KEY;
+  delete process.env.ANTHROPIC_API_KEY;
+  let asked = 0;
+  const anthropic = { messages: { create: async () => { asked += 1; return { stop_reason: 'end_turn', content: [{ type: 'text', text: '[{"url":"https://made-up.example.com"}]' }], usage: { input_tokens: 1, output_tokens: 1 } }; } } };
+  try {
+    const found = await pb.__discoverForTest({ anthropic, budget: null, now: new Date('2026-10-10T00:00:00Z'), topic: 'company' });
+    assert.deepEqual(found, []);
+    assert.equal(asked, 0, 'no model call was made');
+  } finally {
+    if (saved === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = saved;
+  }
+});
+
+test('with no model at all, the last reading is left in place', async () => {
+  const before = pb.getPlaybook();
+  const out = await pb.refreshPlaybook({ member: undefined, now: new Date('2026-10-20T00:00:00Z'), discover: async () => [{ url: 'https://good.example.com/a' }], fetchText: async () => 'x'.repeat(2000), publish: async () => true });
+  assert.equal(out, null);
+  assert.deepEqual(pb.getPlaybook(), before);
+});
+
 test('the search step keeps only https pages, without duplicates', async () => {
+  process.env.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || 'sk-ant-test';
   const anthropic = {
     messages: {
       create: async () => ({

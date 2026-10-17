@@ -127,9 +127,13 @@ test('it can be switched off, has a budget with a default, and does nothing to f
   console.error = (...a) => errors.push(a.join(' '));
   const failed = await digest.runConsultantDigest({ now: NOW, members: [member('Claude', 'frontier', () => { throw new Error('the API is down'); })], refresh: async () => {} });
   console.error = savedErr;
-  assert.equal(failed.sent, false);
-  assert.match(failed.reason, /no model produced a review .*the API is down/);
-  assert.equal(digest.lastDigest(), null, 'a failed briefing is not recorded as sent');
+  // Every model failing no longer means no briefing: the computed sections are
+  // still the point of the email, and the reason is printed where the review would be.
+  assert.equal(failed.sent, true);
+  assert.match(failed.text, /## No written review today/);
+  assert.match(failed.text, /no model produced a review .*the API is down/);
+  assert.match(failed.text, /Every number, table and fact in this email is computed by code/);
+  assert.match(failed.text, /^## KPIs and maturity/m);
 });
 
 test('without email it still writes the vault note; with neither it says it emailed nothing', async () => {

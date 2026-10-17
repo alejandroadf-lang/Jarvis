@@ -127,6 +127,8 @@ test('DeepSeek is priced, because a tier that looks free stops being capped', ()
   // providers at nothing. Every tier gets the same check from now on.
   for (const tier of Object.keys(models.MODELS)) {
     const spec = models.MODELS[tier];
+    // Gemini alone is free on purpose (see MODELS in models.js); no other tier may be.
+    if (tier === models.GEMINI_TIER) continue;
     assert.ok(spec.inputPricePerMTok > 0, `${tier} input price is not real`);
     assert.ok(spec.outputPricePerMTok > 0, `${tier} output price is not real`);
   }

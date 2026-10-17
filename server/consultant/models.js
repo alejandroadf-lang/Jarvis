@@ -10,7 +10,7 @@
 // budget. Nothing here has tools: a consultant reads and writes, it acts on
 // nothing.
 
-import { MODELS, DEFAULT_TIER, CHEAP_TIER, OPENAI_TIER, GEMINI_TIER, DEEPSEEK_TIER, GROK_TIER } from '../agents/models.js';
+import { MODELS, DEFAULT_TIER, CHEAP_TIER, OPENAI_TIER, GEMINI_TIER, DEEPSEEK_TIER, GROK_TIER, specAllowed } from '../agents/models.js';
 import { isOpenAIConfigured, createCompletion as openai } from '../agents/openai.js';
 import { isGeminiConfigured, createCompletion as gemini } from '../agents/gemini.js';
 import { isGrokConfigured, createCompletion as grok } from '../agents/xai.js';
@@ -47,8 +47,9 @@ const tokens = (u = {}) => ({
 const textOf = (res) => (res?.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
 
 /**
- * The models to ask, most trusted first. Claude is always there (the company
- * cannot run without it); the others are there when their keys are.
+ * The models to ask, most trusted first. Claude leads when it is allowed (paid
+ * models on) and has a key; the others are there when their keys are and, with
+ * paid models off, only if they are priced at 0.
  */
 export function panelMembers({ anthropic } = {}) {
   const members = [
@@ -66,7 +67,10 @@ export function panelMembers({ anthropic } = {}) {
   add('Grok', GROK_TIER, isGrokConfigured, grok);
   add('DeepSeek', DEEPSEEK_TIER, isDeepSeekConfigured, deepseek);
   add('Hermes (OpenRouter)', CHEAP_TIER, isOpenRouterConfigured, openrouter);
-  return members;
+  // While paid models are off, only those priced at 0 sit on the panel. The list
+  // can then be empty (no free model is configured); the briefing still goes out
+  // with its computed sections and says so, instead of failing to send at all.
+  return members.filter((m) => specAllowed(MODELS[m.tier]));
 }
 
 /**

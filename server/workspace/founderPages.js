@@ -67,10 +67,10 @@ export async function syncDecisions(notes, { now = new Date() } = {}) {
 }
 
 /** What the founder has decided lately, and what is still open, for the shared context. */
-export function buildDecisionsContext() {
+export function buildDecisionsContext(now = new Date()) {
   const items = readJson(DECISIONS_FILE, { items: [] }).items;
   if (!items.length) return '';
-  const cutoff = plusDays(-14);
+  const cutoff = plusDays(-14, now);
   const answered = items.filter((i) => ['approved', 'rejected', 'expired'].includes(i.decision) && (i.created || '') >= cutoff);
   const open = items.filter((i) => i.decision === 'pending');
   const line = (i) => `- ${i.decision.toUpperCase()}: ${i.title}${i.venture ? ` (${i.venture})` : ''}`;

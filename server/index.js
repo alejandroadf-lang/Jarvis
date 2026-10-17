@@ -68,6 +68,8 @@ import { listDailyReports, getDailyReport, getLatestDailyReport } from './dailyR
 import { startDailyMeetingScheduler, runDailyMeetingNow, isDailyMeetingRunning } from './scheduler.js';
 import { startWorkSessionScheduler } from './workSession.js';
 import { startConsultantScheduler } from './consultant/schedule.js';
+import { paidModelsAllowed } from './agents/modelPolicy.js';
+import { MODELS, DEFAULT_TIER } from './agents/models.js';
 import { studioActionHandlers } from './dailyMeeting.js';
 import { getKillSwitch, haltRealActions, resumeRealActions } from './killSwitch.js';
 import { getSpendSummary } from './spend.js';
@@ -192,13 +194,20 @@ app.post('/api/chat', async (req, res) => {
   if (!process.env.ANTHROPIC_API_KEY) {
     return res.status(500).json({ error: 'Server is missing ANTHROPIC_API_KEY' });
   }
+  // This endpoint calls Claude directly, outside the agent runner that applies the
+  // paid-models switch, so it applies it itself.
+  if (!paidModelsAllowed()) {
+    return res.status(403).json({ error: 'Paid models are switched off and this chat calls Claude directly. Send PAID MODELS ON, or use the Executive Team chat, which can run on a free model.' });
+  }
 
   const history = sessions.get(sessionId) || [];
   history.push({ role: 'user', content: message });
 
   try {
     const stream = anthropic.messages.stream({
-      model: 'claude-sonnet-5',
+      // The same model (and ANTHROPIC_MODEL override) the agents use, so one
+      // variable moves the whole company when a newer model is worth it.
+      model: MODELS[DEFAULT_TIER].model,
       max_tokens: 1024,
       system: SYSTEM_PROMPT,
       messages: history,

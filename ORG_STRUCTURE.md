@@ -1265,6 +1265,50 @@ failure, which made "this file doesn't exist yet" — a normal state — look
 identical to "the token is wrong". It now carries `.status`, so a 404 reads
 as absence and everything else still throws.
 
+## Free models as the fallback
+
+Paid models are on by default, because the Anthropic API credit exists to be spent
+(starting with free-only stalled every agent the day Gemini's free quota ran out).
+When a paid provider fails, the fallback chain tries free models before another
+paid one. Say `PAID MODELS OFF` for the opposite stance, free only, and the
+sections below describe what that does. One switch decides it:
+
+- **What counts as free.** A model whose provider's input and output price
+  variables are both 0. Gemini is priced at 0 by default, for the time being,
+  because the company's key is on the free tier; if billing is ever turned on for
+  it, set `GEMINI_INPUT_PRICE_PER_MTOK` and `GEMINI_OUTPUT_PRICE_PER_MTOK` to the
+  real prices, or the meter under-counts it. An OpenRouter free model is declared with `OPENROUTER_MODEL=...:free` and both OpenRouter
+  price variables 0. The spend meter then reads $0 for it, which is also what
+  keeps it honest.
+- **The switch.** `PAID MODELS ON`, `PAID MODELS OFF` and `PAID MODELS` (status)
+  from WhatsApp. They are parsed by code and cost no model tokens. Your answer is
+  kept in the data directory and wins over the `PAID_MODELS` variable, which is
+  only the default (unset means on; `false` means off). `SPEND` shows the position.
+- **What happens when it is off.** A paid model is replaced by the first free one
+  that has a key. If there is none, the call is refused by name, and the message
+  says which variables to set; it is not treated as an outage, so the fallback
+  chain does not quietly use another paid account instead. The fallback chain
+  skips paid providers, and the briefing's panel lists only free models.
+- **What free models cannot do.** Eight research agents are built around Claude's
+  web search, which only Claude has. Without it they run without search and are
+  told so, so they say what they could not check instead of answering from
+  memory. The weekly search for new sources and for competitors is skipped
+  rather than handed to a model that would invent them: last week's competitors
+  stay, and pages you list in a `briefing-sources` note are still read.
+- **If no model can write the briefing's review,** the email still goes out with
+  everything computed by code and says why. Before, it did not go out at all.
+- **Privacy.** Free tiers often log what they receive and may train on it. Keep
+  personal and health data, WHOOP data especially, out of anything routed
+  through one. Check the provider's current terms before relying on this.
+- **`/api/chat`** calls Claude directly, outside the agent runner, and is refused
+  while paid models are off. Voice transcription still uses OpenAI.
+- **Tests.** The suite runs with the default (paid on); `modelPolicy.test.js`
+  sets `PAID_MODELS=false` itself for the off position.
+- **Which model an agent runs on** is the MODE (`MODE` shows it and the date you
+  chose it), with `modelTier` in the org chart as the default for specialists and
+  `AGENT_MODEL_TIERS` per agent. `MODE MAX` overrides the pins and puts everything
+  on Claude.
+
 ## The consultant: a daily briefing on how ready this company is
 
 Every morning at 08:00 Bangkok time, on its own schedule (it does not wait for the

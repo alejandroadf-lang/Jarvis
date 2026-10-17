@@ -60,7 +60,8 @@ import { getLatestDailyReport } from '../dailyReports.js';
 import { getLatestRoadmap } from '../roadmapStore.js';
 import { withdrawPlan, getApprovedPlan } from '../dailyPlan.js';
 import { listAffordableModels } from '../agents/openrouter.js';
-import { describeModelMode, setModelMode, getModelMode } from '../agents/models.js';
+import { describeModelMode, setModelMode, getModelMode, describeModelPolicy } from '../agents/models.js';
+import { setPaidModels } from '../agents/modelPolicy.js';
 import { listTasks } from '../tasks.js';
 import { describePerformance, describeAgent, KEEP_DAYS } from '../activityLog.js';
 import { capacityReport, describeCapacity } from '../capacity.js';
@@ -107,6 +108,9 @@ const COMMANDS = [
   // command, and hijacking it would swallow a real message to the team — the
   // exact failure the venture-id requirement above exists to prevent.
   { kind: 'ready', re: /^(ready|blocked)(?:\s+(v_\S+))?$/i, arg: 'ventureId' },
+  // Whether the company may pay for models at all. Spelled out ("paid models") so a
+  // sentence that merely contains the word "paid" can never be taken for it.
+  { kind: 'paid_models', re: /^paid\s+models(?:\s+(on|off|status))?$/i, arg: 'mode' },
   { kind: 'models', re: /^models(?:\s+(\S+))?$/i, arg: 'search' },
   // The switch between models: cheap, default, or Claude for everything. See
   // agents/models.js for what each position does.
@@ -479,6 +483,7 @@ SPEND — today's model spend against the cap
 VAULT — is the team's notebook being used: lessons, reads, decisions
 DIGEST — build the consultant's briefing now and email it (also sent each morning)
 BRIEFING FEEDBACK <text> — tell the briefing what to change about itself (style, order, what to add)
+PAID MODELS [ON|OFF|STATUS] — free models only by default; ON lets the company use the paid ones too
 AUTOFIX [ON|OFF|STATUS] — the consultant's automatic corrections: pull requests, tasks, drafts (never merges, deploys, sends or spends)
 INTEGRATIONS — what's actually connected
 MODELS [search] — live OpenRouter models and their prices
@@ -560,6 +565,14 @@ export async function runFounderCommand(command, deps = {}) {
     case 'vault':
       return buildVaultReport();
 
+    case 'paid_models': {
+      const mode = String(command.mode || 'status').toLowerCase();
+      if (mode === 'on') setPaidModels(true);
+      if (mode === 'off') setPaidModels(false);
+      const head = mode === 'on' ? 'Paid models switched ON. Agents and the briefing may now use any configured model, and the spend cap still applies.\n\n' : mode === 'off' ? 'Paid models switched OFF. Only models priced at 0 will be used from the next call.\n\n' : '';
+      return `${head}${describeModelPolicy()}`;
+    }
+
     case 'autofix': {
       // Loaded on demand: it pulls in the whole unattended cycle, and this module is read by most of the app.
       const { setAutofix, autofixStatus } = await import('../consultant/autofix.js');
@@ -606,7 +619,7 @@ export async function runFounderCommand(command, deps = {}) {
       // Where it went, so the next cut is chosen from numbers. Last seven days,
       // and only since spend began being attributed.
       const where = describeSpendBreakdown(spendBreakdown(7));
-      return [headline + cacheLine, where, mode, degraded].filter(Boolean).join('\n\n');
+      return [headline + cacheLine, where, mode, describeModelPolicy(), degraded].filter(Boolean).join('\n\n');
     }
 
     case 'ventures': {

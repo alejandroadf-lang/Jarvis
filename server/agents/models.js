@@ -1,5 +1,6 @@
 import { hasSecret } from '../env.js';
 import { readJson, writeJson } from '../store.js';
+import { paidModelsAllowed, paidModelsSource } from './modelPolicy.js';
 // Which model each agent actually runs on, and what that model costs.
 //
 // Every agent used to run on claude-sonnet-5, which was the right default
@@ -116,16 +117,24 @@ export const MODELS = {
     },
   },
   // Read at call time for the same reason as the OpenAI tier above.
+  //
+  // Priced at 0 by default, for the time being: this company's Gemini key is on
+  // the free tier (it answers 429 at the free tier's limits), and a price of 0 is
+  // what makes it "free" to the paid-models switch (see modelPolicy.js). That makes
+  // the default an assumption about the account, so it fails in one direction: if
+  // billing is ever turned on for this key, the spend meter under-counts Gemini
+  // and the switch treats it as free. Set both variables to the real prices
+  // (previously 0.1 in / 0.4 out) when that happens.
   [GEMINI_TIER]: {
     provider: 'gemini',
     get model() {
       return (process.env.GEMINI_MODEL || '').trim() || 'gemini-2.0-flash';
     },
     get inputPricePerMTok() {
-      return numberFromEnv('GEMINI_INPUT_PRICE_PER_MTOK', 0.1);
+      return numberFromEnv('GEMINI_INPUT_PRICE_PER_MTOK', 0);
     },
     get outputPricePerMTok() {
-      return numberFromEnv('GEMINI_OUTPUT_PRICE_PER_MTOK', 0.4);
+      return numberFromEnv('GEMINI_OUTPUT_PRICE_PER_MTOK', 0);
     },
   },
 };
@@ -306,7 +315,10 @@ function priced(spec) {
 export function describeModelMode() {
   const mode = getModelMode();
   const claude = priced(MODELS[DEFAULT_TIER]);
-  const lines = [`Model mode: ${mode.toUpperCase()}.`];
+  // A saved mode outlives deploys, so say when it was chosen: ECO from weeks ago
+  // looks like a hardcoded default if nothing shows it was a command.
+  const setAt = readJson(MODE_FILE, {})?.setAt;
+  const lines = [`Model mode: ${mode.toUpperCase()}${setAt ? `, set by your MODE command on ${String(setAt).slice(0, 10)}` : ' (the default; no MODE command given)'}.`];
   if (mode === 'max') {
     lines.push(`Every agent runs on ${claude}.`);
   } else if (mode === 'eco') {
@@ -327,7 +339,7 @@ export function describeModelMode() {
   return lines.join('\n');
 }
 
-export function resolveModelForAgent(agent, alternativeAvailable) {
+function resolveBeforePolicy(agent, alternativeAvailable) {
   // The founder's assignment wins over the org chart's. Still subject to
   // every rule below, so moving an orchestrator onto a cheap tier is
   // ignored rather than quietly stripping its ability to delegate.
@@ -352,6 +364,83 @@ export function resolveModelForAgent(agent, alternativeAvailable) {
     return MODELS[DEFAULT_TIER];
   }
   return spec;
+}
+
+/**
+ * The model an agent runs on, with the founder's paid-models switch applied last.
+ * Everything above this decides what the agent *would* run on; this decides
+ * whether the company may pay for it.
+ */
+export function resolveModelForAgent(agent, alternativeAvailable) {
+  return applyModelPolicy(resolveBeforePolicy(agent, alternativeAvailable));
+}
+
+// --- free by default -------------------------------------------------------------
+//
+// "Free" is a price, not a list of providers: a model is free when its input and
+// output prices are both 0. A free-tier Gemini key or an OpenRouter ":free" model
+// is declared free by setting its price variables to 0, which is also what makes
+// the spend meter read $0 for it. See modelPolicy.js for the switch itself.
+
+/** True when running this model costs nothing. */
+export function isFreeSpec(spec) {
+  return spec?.inputPricePerMTok === 0 && spec?.outputPricePerMTok === 0;
+}
+
+/** May this model be used right now: the switch is on, or the model is free. */
+export function specAllowed(spec) {
+  return paidModelsAllowed() || isFreeSpec(spec);
+}
+
+// The order a free model is looked for in. Gemini first only because its free
+// tier is the one with a key most likely to exist; any tier priced at 0 counts.
+const FREE_ORDER = [GEMINI_TIER, CHEAP_TIER, OPENAI_TIER, DEEPSEEK_TIER, GROK_TIER, DEFAULT_TIER];
+
+/** The first free model that has a key, or null. */
+export function freeSpec() {
+  for (const tier of FREE_ORDER) {
+    const spec = MODELS[tier];
+    if (spec && isFreeSpec(spec) && isProviderAvailable(spec.provider, hasSecret('OPENROUTER_API_KEY'))) return spec;
+  }
+  return null;
+}
+
+/**
+ * A paid model while paid models are off becomes the first free one. When there
+ * is none the paid spec is returned unchanged and createMessage refuses it with
+ * a message that names the fix, rather than this quietly picking a paid model.
+ */
+export function applyModelPolicy(spec) {
+  if (specAllowed(spec)) return spec;
+  return freeSpec() || spec;
+}
+
+/** Whether Claude's web search can be used: it needs Claude, and Claude must be allowed. */
+export function webSearchAvailable() {
+  return specAllowed(MODELS[DEFAULT_TIER]) && hasSecret('ANTHROPIC_API_KEY');
+}
+
+/** The refusal for a paid model with no free alternative. Not an outage: it must not trigger failover. */
+export function paidModelsOffError(spec) {
+  const err = new Error(
+    `Paid models are switched off and no free model is available, so ${spec?.model || 'this model'} was not used. ` +
+      'A model is free when its input and output price variables are both 0. Gemini is priced at 0 by default, so set GEMINI_API_KEY (a free-tier key), ' +
+      'or point OPENROUTER_MODEL at a ":free" model with both OPENROUTER price variables 0. To allow paid models, send PAID MODELS ON.'
+  );
+  // 400, and worded to avoid the outage patterns in agentRunner's isProviderOutage.
+  err.status = 400;
+  err.code = 'PAID_MODELS_OFF';
+  return err;
+}
+
+/** The switch and what it leaves usable, for SPEND and PAID MODELS. */
+export function describeModelPolicy() {
+  const on = paidModelsAllowed();
+  const free = FREE_ORDER.map((t) => MODELS[t]).filter((spec, i, all) => spec && isFreeSpec(spec) && isProviderAvailable(spec.provider, hasSecret('OPENROUTER_API_KEY')) && all.indexOf(spec) === i);
+  const freeList = free.length ? free.map((spec) => spec.model).join(', ') : 'none configured';
+  return on
+    ? `Paid models: ON (from ${paidModelsSource()}). Every configured model may be used. Free models available: ${freeList}. PAID MODELS OFF returns to free only.`
+    : `Paid models: OFF (from ${paidModelsSource()}). Only models priced at 0 are used. Free models available: ${freeList}. PAID MODELS ON allows the rest.`;
 }
 
 // `alternativeAvailable` predates there being more than one alternative, and
