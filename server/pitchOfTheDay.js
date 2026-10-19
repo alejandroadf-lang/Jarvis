@@ -186,6 +186,11 @@ export const PITCH_TOOL = {
         type: 'string',
         description: 'What changed recently that makes this possible or necessary now and not three years ago. If nothing changed, say so — that is a real answer and usually a fatal one.',
       },
+      why_you: {
+        type: 'string',
+        description:
+          "Why THIS founder can win it: which of their skills, experience, contacts or places it uses, and what they would have to learn or borrow. Mark anything you are assuming about them as an assumption, so they can correct it.",
+      },
       agent_native_edge: {
         type: 'string',
         description: "Why an agent-run company wins at this specifically, and not just 'it is cheaper for us'. A funded team can absorb cheaper.",
@@ -209,6 +214,7 @@ export const PITCH_TOOL = {
       'hook',
       'problem',
       'why_now',
+      'why_you',
       'agent_native_edge',
       'path_to_a_million',
       'what_would_have_to_be_true',
@@ -228,7 +234,13 @@ export function formatPitchEmail(pitch, { note = '' } = {}) {
     };
   }
 
-  const slide = (n, heading, body) => [`── ${n} · ${heading.toUpperCase()} ──`, '', body, ''].join('\n');
+  // Numbered as it is laid out, so a pitch saved before "Why you" existed (no
+  // such field) still reads 1 to 7 without a gap.
+  let count = 0;
+  const slide = (heading, body) => {
+    count += 1;
+    return [`── ${count} · ${heading.toUpperCase()} ──`, '', body, ''].join('\n');
+  };
   // Built with nulls for "omit" rather than empty strings, because a blank
   // line is content here and filtering on '' ate the one under the title.
   const text = [
@@ -236,13 +248,14 @@ export function formatPitchEmail(pitch, { note = '' } = {}) {
     pitch.oneLiner,
     '',
     note ? `${note}\n` : null,
-    slide(1, 'The hook', pitch.hook),
-    slide(2, 'The problem', pitch.problem),
-    slide(3, 'Why now', pitch.why_now),
-    slide(4, 'Why us', pitch.agent_native_edge),
-    slide(5, 'The path to €1M', pitch.path_to_a_million),
-    slide(6, 'What would have to be true', pitch.what_would_have_to_be_true),
-    slide(7, 'How to kill it this week', pitch.how_to_kill_it_this_week),
+    slide('The hook', pitch.hook),
+    slide('The problem', pitch.problem),
+    slide('Why now', pitch.why_now),
+    pitch.why_you ? slide('Why you', pitch.why_you) : null,
+    slide('Why an agent-run company', pitch.agent_native_edge),
+    slide('The path to €1M', pitch.path_to_a_million),
+    slide('What would have to be true', pitch.what_would_have_to_be_true),
+    slide('How to kill it this week', pitch.how_to_kill_it_this_week),
     '───',
     'This is a provocation, not a proposal. Nothing was started — a pitch never creates a venture.',
     'If you want it built, say so and the Studio will work it up properly.',
@@ -253,11 +266,45 @@ export function formatPitchEmail(pitch, { note = '' } = {}) {
   return { subject: `Pitch of the day: ${pitch.title}`, text };
 }
 
+// --- Who it is pitched to ---------------------------------------------------------------
+
+// The headings a founder would use for a note about themselves, in the vault's
+// Steering.md (the one page the company already reads on every turn, so no new
+// place to configure).
+const ABOUT_HEADING = /^#{1,4}\s*(about me|about the founder|my background|background|skills(?: and experience)?|experience)\b.*$/im;
+
+/** The founder's own account of themselves, from their steering note, or ''. Pure. */
+export function aboutTheFounder(steering) {
+  const text = String(steering || '');
+  const start = text.search(ABOUT_HEADING);
+  if (start < 0) return '';
+  const rest = text.slice(start).replace(/^.*\n?/, '');
+  const next = rest.search(/^#{1,4}\s/m);
+  return (next < 0 ? rest : rest.slice(0, next)).trim().slice(0, 3000);
+}
+
+/**
+ * What the pitch generator is told about the person it pitches to, and whether
+ * anything real was found. `steering` is the vault's Steering.md as the agents
+ * read it; `memory` is what Honcho has learned across conversations ('' when it
+ * is not configured). Standing direction is included as constraints, but only
+ * the founder's own account of themselves or learned memory counts as knowing
+ * them: direction about prices and repos says nothing about what they are good at.
+ */
+export function describeFounderForPitch({ steering = '', memory = '' } = {}) {
+  const about = aboutTheFounder(steering);
+  const parts = [];
+  if (about) parts.push(`What the founder says about themselves:\n${about}`);
+  if (memory) parts.push(memory.trim());
+  if (steering.trim()) parts.push(`Their standing direction, which is a constraint on any idea:\n${steering.trim().slice(0, 2500)}`);
+  return { text: parts.join('\n\n'), known: Boolean(about || memory.trim()) };
+}
+
 // --- Running it -------------------------------------------------------------------------
 
 const MAX_ATTEMPTS = 2;
 
-function kickoff(previous, building) {
+function kickoff(previous, building, founder = '') {
   return `Pitch one idea this morning, as an elevator pitch to an investor who has four minutes.
 
 One idea, not three. Argue it properly and aim high: something that could be a
@@ -265,6 +312,17 @@ One idea, not three. Argue it properly and aim high: something that could be a
 funded, conventionally-staffed competitor. Be specific and be willing to be
 wrong — a sharp idea that might fail is worth more over coffee than a safe one
 nobody would act on.
+
+The idea must fit the person it is pitched to. Choose it by where THIS founder
+can win — the skills they have, what they have built and sold, who they know, the
+languages and places they work in, what they will still enjoy doing in year three
+— not by where the market is hottest. The business they are in today is evidence
+of what they are good at, not a boundary: pitch outside it whenever that is where
+they would win. Below is everything written about them. Where it is thin, say
+what you are assuming in "Why you" so they can correct it, rather than writing
+something generic that would suit anyone.
+
+${founder || 'Nothing has been written about this founder yet. Infer from the company below, and say so in "Why you".'}
 
 Two slides decide whether this is worth reading on day thirty rather than day
 one. "What would have to be true" names the single assumption that kills it if
@@ -278,12 +336,12 @@ built.
 
 ${building}
 
-Prefer an idea that compounds with what is being built: the same buyer reached
-again, the same distribution used twice, the same data sold a second way. That
-is where an agent-run company's edge is largest, because the first venture has
-already paid for the door. If today's best idea is genuinely unrelated, pitch
-it anyway — but say in the hook why it beats building next to what exists.
-Do not re-pitch a live venture under a new name; that is a repeat, not a link.
+An idea that compounds with what is being built (the same buyer reached again,
+the same distribution used twice, the same data sold a second way) is a bonus,
+not a requirement: the first venture has already paid for that door. If the
+founder would win more somewhere unrelated, pitch it, and say in the hook why it
+beats building next to what exists. Do not re-pitch a live venture under a new
+name; that is a repeat, not a link.
 
 ${previous}
 
@@ -295,8 +353,13 @@ Call present_pitch once. No preamble.`;
  *
  * @returns {Promise<{pitch: object|null, note: string, attempts: number}>}
  */
-export async function generatePitch({ anthropic, runAgent, agents, agentId }) {
+export async function generatePitch({ anthropic, runAgent, agents, agentId, founder = '', founderKnown = Boolean(founder) }) {
   let lastRepeat = null;
+  // Said on the email of a good pitch too: a "Why you" slide written without
+  // anything to go on is a guess, and the founder should know that is what it is.
+  const guessNote = founderKnown
+    ? ''
+    : 'Nothing was written about your skills and experience, so "Why you" is a guess. Add an "## About me" section to Steering.md in your vault (what you have built and sold, what you are good at, who you know, languages, what you want to avoid) and tomorrow\'s pitch will be chosen for you.';
   // Why the last attempt produced no pitch when it was not a repeat: the model
   // answered in prose instead of calling the tool, or the call failed. Kept so
   // the email can say which, and so the second attempt can be told. "Nothing
@@ -339,7 +402,7 @@ export async function generatePitch({ anthropic, runAgent, agents, agentId }) {
         anthropic,
         agents: roster,
         agentId,
-        messages: [{ role: 'user', content: kickoff(previous, describeWhatWeAreBuilding()) }],
+        messages: [{ role: 'user', content: kickoff(previous, describeWhatWeAreBuilding(), founder) }],
         actionHandlers: {
           present_pitch: (input) => {
             captured = input;
@@ -366,7 +429,7 @@ export async function generatePitch({ anthropic, runAgent, agents, agentId }) {
       lastRepeat = { candidate: captured, match };
       continue;
     }
-    return { pitch: savePitch(captured), note: '', attempts: attempt };
+    return { pitch: savePitch(captured), note: guessNote, attempts: attempt };
   }
 
   // Said plainly rather than sending the repeat anyway. A founder who reads the

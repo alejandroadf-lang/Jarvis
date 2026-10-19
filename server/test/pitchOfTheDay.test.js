@@ -212,6 +212,73 @@ test('a second attempt that succeeds after a miss is accepted', async () => {
   assert.equal(result.attempts, 2);
 });
 
+// --- Who it is pitched to ----------------------------------------------------------------------
+// The founder's correction: the pitch is not about the current projects, it is
+// about what they can win at given their skills, experience and reach.
+
+const STEERING = `Standing direction from the founder, written in their own notes:
+# Steering
+
+- Duty-of-Care's price is a working assumption.
+
+## About me
+
+Ten years in B2B sales in Germany. Runs on WHOOP data daily. Speaks German and English.
+
+## Rules
+
+- Quote no price.`;
+
+test('the founder\'s own account is taken from their steering note, up to the next heading', () => {
+  const about = pitch.aboutTheFounder(STEERING);
+  assert.match(about, /Ten years in B2B sales in Germany/);
+  assert.doesNotMatch(about, /Quote no price/, 'stops at the next heading');
+  assert.equal(pitch.aboutTheFounder('# Steering\n\n- A rule.'), '');
+  assert.equal(pitch.aboutTheFounder(''), '');
+});
+
+test('direction about prices and repos is not knowing the founder; their own account or learned memory is', () => {
+  const direction = pitch.describeFounderForPitch({ steering: '# Steering\n\n- Quote no price.' });
+  assert.equal(direction.known, false);
+  assert.match(direction.text, /constraint on any idea/, 'but it is still passed on as a constraint');
+  assert.equal(pitch.describeFounderForPitch({ steering: STEERING }).known, true);
+  assert.equal(pitch.describeFounderForPitch({ memory: 'What you know about the founder: likes ops.' }).known, true);
+  assert.equal(pitch.describeFounderForPitch({}).known, false);
+});
+
+test('the kickoff tells the generator to pitch where this founder can win, and shows it what is known', async () => {
+  const prompts = [];
+  const runAgent = async ({ messages, actionHandlers }) => {
+    prompts.push(messages[0].content);
+    actionHandlers.present_pitch(fullPitch({ why_you: 'Ten years selling B2B in Germany.' }));
+    return { text: '', trace: [] };
+  };
+  const founder = pitch.describeFounderForPitch({ steering: STEERING });
+  const result = await pitch.generatePitch({ anthropic: {}, runAgent, agents: {}, agentId: 'venture_partner', founder: founder.text, founderKnown: founder.known });
+  assert.match(prompts[0], /where THIS founder\s+can win/);
+  assert.match(prompts[0], /not a boundary/, 'the current ventures are evidence, not a limit');
+  assert.match(prompts[0], /Ten years in B2B sales in Germany/);
+  assert.equal(result.note, '', 'nothing to apologise for when the founder is known');
+});
+
+test('with nothing written about the founder the email says the fit is a guess and how to fix it', async () => {
+  const result = await pitch.generatePitch({ anthropic: {}, runAgent: generatorOf(fullPitch()), agents: {}, agentId: 'venture_partner' });
+  assert.ok(result.pitch);
+  assert.match(result.note, /"Why you" is a guess/);
+  assert.match(result.note, /## About me/);
+  assert.match(result.note, /Steering\.md/);
+});
+
+test('the pitch asks for a Why you slide, and the email shows it and numbers the slides as laid out', () => {
+  assert.ok(pitch.PITCH_TOOL.input_schema.required.includes('why_you'));
+  const withFit = pitch.formatPitchEmail(fullPitch({ why_you: 'Ten years selling B2B in Germany.' })).text;
+  assert.match(withFit, /── 4 · WHY YOU ──/);
+  assert.match(withFit, /── 8 · HOW TO KILL IT THIS WEEK ──/);
+  const older = pitch.formatPitchEmail(fullPitch()).text;
+  assert.doesNotMatch(older, /WHY YOU/, 'a pitch saved before the slide existed has none');
+  assert.match(older, /── 7 · HOW TO KILL IT THIS WEEK ──/, 'and no gap in the numbering');
+});
+
 // --- What keeps it honest --------------------------------------------------------------------
 
 // A daily "revolutionary idea" generator is a hype machine by default. The
@@ -347,7 +414,7 @@ test('the kickoff tells the generator what the company is building, with buyer a
   assert.match(prompt, /USD 29\.00\/month/);
   assert.match(prompt, /no customers yet/);
   assert.match(prompt, /compounds with what is being built/, 'and is asked to build next to it');
-  assert.match(prompt, /Do not re-pitch a live venture under a new name/, 'without simply re-pitching it');
+  assert.match(prompt, /Do not re-pitch a live venture under a new\s+name/, 'without simply re-pitching it');
   fs.rmSync(path.join(tmpDir, 'ventures.json'), { force: true });
 });
 

@@ -26,7 +26,8 @@
 
 import { unsupportedClaims } from './claimCheck.js';
 import { describeSearchBalance } from './searchLog.js';
-import { generatePitch, formatPitchEmail } from './pitchOfTheDay.js';
+import { generatePitch, formatPitchEmail, describeFounderForPitch } from './pitchOfTheDay.js';
+import { buildFounderContext } from './memory/honcho.js';
 import { runAgent } from './agents/agentRunner.js';
 import { AGENTS as COMPANY_AGENTS, ROOT_AGENT_ID as COMPANY_ROOT } from './agents/orgChart.js';
 import { AGENTS as STUDIO_AGENTS, ROOT_AGENT_ID as STUDIO_ROOT } from './agents/ideationTeam.js';
@@ -428,11 +429,20 @@ quick daily check-in, not a full brainstorming session.`;
  * directly; the email is sent regardless.
  */
 export async function runPitchNow({ anthropic }) {
+  // Both builders return '' on any failure, so a vault or memory outage costs the
+  // pitch its personal fit (and the email says so) rather than the pitch.
+  const [steering, memory] = await Promise.all([
+    readFounderSteering().catch(() => ''),
+    buildFounderContext('pitch').catch(() => ''),
+  ]);
+  const founder = describeFounderForPitch({ steering, memory });
   const { pitch, note } = await withSpendContext({ source: 'pitch' }, () => generatePitch({
     anthropic,
     runAgent,
     agents: STUDIO_AGENTS,
     agentId: STUDIO_ROOT,
+    founder: founder.text,
+    founderKnown: founder.known,
   }));
   const email = formatPitchEmail(pitch || {}, { note });
   let sent = false;

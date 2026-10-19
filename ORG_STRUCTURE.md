@@ -3908,6 +3908,22 @@ pitch**, and says so:
 Sending the repeat anyway would be the easy behaviour and the wrong one: a
 founder who reads the same idea twice stops reading.
 
+**Chosen for the founder, not for the portfolio.** The pitch is judged on where
+*this founder* can win: their skills, experience, contacts, languages, and what
+they will still enjoy in year three. The live ventures are evidence of what they
+are good at and a bonus when an idea compounds with them, not a boundary. The
+generator is shown what the founder wrote about themselves (an `## About me`
+section in `Steering.md`, the page the company already reads), what Honcho has
+learned about them, and their standing direction as constraints. Each pitch has a
+"Why you" slide naming the skill it uses and what they would have to learn or
+borrow. Direction about prices and repos does not count as knowing the founder: if
+there is no `## About me` and no memory, the email says "Why you" is a guess and
+how to fix it, rather than presenting a generic idea as a personal one.
+
+When there is no pitch the email says why: a model that wrote the idea as text
+instead of calling the tool (it is told to call it on the second attempt, and the
+email quotes what it wrote), or a failed model call (the error is named).
+
 The similarity check is deliberately crude — token overlap, with startup filler
 (`platform`, `agent`, `solution`, `market`) in the stopword list so generic
 vocabulary cannot manufacture a match. Embeddings would be better and would
