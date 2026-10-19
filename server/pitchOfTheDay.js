@@ -297,15 +297,25 @@ Call present_pitch once. No preamble.`;
  */
 export async function generatePitch({ anthropic, runAgent, agents, agentId }) {
   let lastRepeat = null;
+  // Why the last attempt produced no pitch when it was not a repeat: the model
+  // answered in prose instead of calling the tool, or the call failed. Kept so
+  // the email can say which, and so the second attempt can be told. "Nothing
+  // usable" alone read the same whether the model was out of credit, rate
+  // limited or simply ignored the tool, and only the first two are fixable
+  // from Railway.
+  let lastMiss = null;
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
     let captured = null;
-    // Only a *repeat* gets the corrective steer. An attempt that produced
-    // nothing at all has nothing to be steered away from, and reaching into
-    // lastRepeat there was a crash on the one path nobody watches.
+    // A repeat gets the corrective steer naming what it repeated. An attempt
+    // that produced nothing has nothing to be steered away from (reaching into
+    // lastRepeat there was a crash on the one path nobody watches), but a model
+    // that wrote the pitch as text is told to call the tool.
     const previous = lastRepeat
       ? `${describePreviousPitches()}\n\nYour last attempt ("${lastRepeat.candidate.title}") was too close to "${lastRepeat.match.pitch.title}" from ${lastRepeat.match.pitch.at.slice(0, 10)}. Pitch something genuinely different — a different buyer, a different problem, not the same idea renamed.`
-      : describePreviousPitches();
+      : lastMiss?.kind === 'prose'
+        ? `${describePreviousPitches()}\n\nYour last attempt answered in plain text and did not call present_pitch, so nothing was received. Present the pitch by calling the present_pitch tool; text is discarded.`
+        : describePreviousPitches();
 
     // The bug that made every morning empty: present_pitch was passed as a
     // handler and never as a tool. runAgent offers the model only what is in
@@ -323,20 +333,34 @@ export async function generatePitch({ anthropic, runAgent, agents, agentId }) {
       [agentId]: { ...(agents[agentId] || {}), actions: [PITCH_TOOL], reports: [] },
     };
 
-    await runAgent({
-      anthropic,
-      agents: roster,
-      agentId,
-      messages: [{ role: 'user', content: kickoff(previous, describeWhatWeAreBuilding()) }],
-      actionHandlers: {
-        present_pitch: (input) => {
-          captured = input;
-          return 'Noted.';
+    let result = null;
+    try {
+      result = await runAgent({
+        anthropic,
+        agents: roster,
+        agentId,
+        messages: [{ role: 'user', content: kickoff(previous, describeWhatWeAreBuilding()) }],
+        actionHandlers: {
+          present_pitch: (input) => {
+            captured = input;
+            return 'Noted.';
+          },
         },
-      },
-    });
+      });
+    } catch (err) {
+      // Named in the email instead of ending the morning without one: silence
+      // reads as the scheduler having died.
+      lastMiss = { kind: 'error', detail: String(err?.message || err) };
+      console.error(`Pitch attempt ${attempt} failed:`, lastMiss.detail);
+      continue;
+    }
 
-    if (!captured) continue;
+    if (!captured) {
+      const said = String(result?.text || '').replace(/\s+/g, ' ').trim();
+      lastMiss = said ? { kind: 'prose', detail: said.slice(0, 160) } : { kind: 'empty', detail: '' };
+      continue;
+    }
+    lastMiss = null;
     const match = closestPrevious(captured);
     if (match && match.score >= SIMILARITY_LIMIT) {
       lastRepeat = { candidate: captured, match };
@@ -355,5 +379,10 @@ export async function generatePitch({ anthropic, runAgent, agents, agentId }) {
       attempts: MAX_ATTEMPTS,
     };
   }
-  return { pitch: null, note: 'No pitch today — the generator returned nothing usable.', attempts: MAX_ATTEMPTS };
+  const why = {
+    error: `the model call failed: ${lastMiss?.detail}. Send SPEND to see which models are available, and MODE to see which one the Studio is set to`,
+    prose: `the model wrote the idea as text instead of calling the pitch tool twice, so it was discarded (it said: "${lastMiss?.detail}"). That usually means a small or free model is answering; MODE MAX puts it on Claude`,
+    empty: 'the model answered with nothing, twice',
+  }[lastMiss?.kind] || 'the model returned nothing';
+  return { pitch: null, note: `No pitch today — the generator returned nothing usable: ${why}.`, attempts: MAX_ATTEMPTS };
 }

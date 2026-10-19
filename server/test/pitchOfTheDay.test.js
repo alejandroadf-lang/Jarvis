@@ -170,6 +170,48 @@ test('a generator that returns nothing does not crash the morning', async () => 
   assert.match(result.note, /nothing usable/);
 });
 
+// The email used to say only "nothing usable", the same for a model that was out
+// of credit, one that was rate limited and one that wrote the pitch as prose.
+test('a model that answers in prose is told to call the tool, and the email says that is what happened', async () => {
+  const prompts = [];
+  const runAgent = async ({ messages }) => {
+    prompts.push(messages[0].content);
+    return { text: 'Here is my pitch: SleepSync, a thing for sleepers.', trace: [] };
+  };
+  const result = await pitch.generatePitch({ anthropic: {}, runAgent, agents: {}, agentId: 'venture_partner' });
+  assert.equal(result.pitch, null);
+  assert.equal(prompts.length, 2);
+  assert.match(prompts[1], /did not call present_pitch/);
+  assert.doesNotMatch(prompts[0], /did not call present_pitch/);
+  assert.match(result.note, /nothing usable/);
+  assert.match(result.note, /wrote the idea as text instead of calling the pitch tool/);
+  assert.match(result.note, /Here is my pitch: SleepSync/);
+  assert.match(result.note, /MODE MAX/);
+});
+
+test('a failed model call is named in the email instead of ending the morning without one', async () => {
+  const runAgent = async () => {
+    throw new Error('Your credit balance is too low');
+  };
+  const result = await pitch.generatePitch({ anthropic: {}, runAgent, agents: {}, agentId: 'venture_partner' });
+  assert.equal(result.pitch, null);
+  assert.equal(result.attempts, 2);
+  assert.match(result.note, /the model call failed: Your credit balance is too low/);
+  assert.match(result.note, /SPEND/);
+});
+
+test('a second attempt that succeeds after a miss is accepted', async () => {
+  let calls = 0;
+  const runAgent = async ({ actionHandlers }) => {
+    calls += 1;
+    if (calls === 2) actionHandlers.present_pitch(fullPitch());
+    return { text: calls === 1 ? 'prose' : '', trace: [] };
+  };
+  const result = await pitch.generatePitch({ anthropic: {}, runAgent, agents: {}, agentId: 'venture_partner' });
+  assert.equal(result.pitch.title, 'SleepSync');
+  assert.equal(result.attempts, 2);
+});
+
 // --- What keeps it honest --------------------------------------------------------------------
 
 // A daily "revolutionary idea" generator is a hype machine by default. The
