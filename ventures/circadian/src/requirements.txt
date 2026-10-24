@@ -7,4 +7,4 @@ tzdata==2025.2
 pywebpush==2.0.3
 # WHOOP calls (whoop.py). Already installed with pywebpush; named here because
 # whoop.py imports it directly.
-requests>=2.31,<3
+requests>=2.34.2,<3
