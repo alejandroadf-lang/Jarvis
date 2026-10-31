@@ -23,6 +23,9 @@ import { paidModelsAllowed, paidModelsSource } from './modelPolicy.js';
 
 export const DEFAULT_TIER = 'frontier';
 export const CHEAP_TIER = 'specialist';
+// Claude Haiku: the cheap tier on the same Anthropic account as everything else. See
+// leavesOnClaude() for when specialists use it instead of OpenRouter.
+export const LIGHT_TIER = 'light';
 // A third option for leaf agents, for when OpenAI is the provider with credit
 // on it. Same leaf-only rule as the others — see canUseAlternativeModel.
 export const OPENAI_TIER = 'assistant';
@@ -39,17 +42,37 @@ export const MODELS = {
   // newest model an account can call moves faster than this file is edited (the
   // daily briefing's model check reports it). Moving to a newer model means
   // setting its price beside it, or the spend meter mis-counts the company's
-  // biggest cost; claude-sonnet-5-5 is priced the same as claude-sonnet-5.
+  // biggest cost. Sonnet 5.5 is the default now: it is priced the same as Sonnet 5
+  // ($2 in / $10 out per million tokens), so the move costs nothing on the meter.
   [DEFAULT_TIER]: {
     provider: 'anthropic',
     get model() {
-      return (process.env.ANTHROPIC_MODEL || '').trim() || 'claude-sonnet-5';
+      return (process.env.ANTHROPIC_MODEL || '').trim() || 'claude-sonnet-5-5';
     },
     get inputPricePerMTok() {
       return numberFromEnv('ANTHROPIC_INPUT_PRICE_PER_MTOK', 2.0);
     },
     get outputPricePerMTok() {
       return numberFromEnv('ANTHROPIC_OUTPUT_PRICE_PER_MTOK', 10.0);
+    },
+  },
+  // Haiku 5.5, for the specialists. The cheapest Claude: $0.10 in / $0.50 out per
+  // million tokens (for prompts up to 100K tokens), which is below the OpenRouter
+  // default this company used for them ($0.13 / $0.40 is the same order, but it needs a
+  // second funded account and its own failure modes). Haiku runs on the Anthropic
+  // account and credit that already exist, takes the same tool calls as Sonnet, and
+  // accepts the adaptive thinking and effort this runner already sends. A different
+  // ANTHROPIC_LEAF_MODEL needs its prices set beside it, or the spend meter mis-counts.
+  [LIGHT_TIER]: {
+    provider: 'anthropic',
+    get model() {
+      return (process.env.ANTHROPIC_LEAF_MODEL || '').trim() || 'claude-haiku-5-5';
+    },
+    get inputPricePerMTok() {
+      return numberFromEnv('ANTHROPIC_LEAF_INPUT_PRICE_PER_MTOK', 0.1);
+    },
+    get outputPricePerMTok() {
+      return numberFromEnv('ANTHROPIC_LEAF_OUTPUT_PRICE_PER_MTOK', 0.5);
     },
   },
   // Read at call time like the other two alternatives. OpenRouter retires
@@ -300,11 +323,31 @@ export function ecoTier() {
   return available.reduce((best, tier) => (cost(tier) < cost(best) ? tier : best));
 }
 
+/**
+ * Whether the specialists run on Claude Haiku rather than on OpenRouter. On whenever there
+ * is an Anthropic key, because that account (and its monthly credit) is the one already
+ * paid for; LEAVES_ON_CLAUDE=false returns them to OpenRouter. Haiku is a paid model, so
+ * the paid-models switch still applies to it like any other.
+ */
+export function leavesOnClaude(env = process.env) {
+  return hasSecret('ANTHROPIC_API_KEY') && !/^(0|false|no|off)$/i.test((env.LEAVES_ON_CLAUDE || '').trim());
+}
+
+/** The spec for "a cheap call": Haiku when specialists run on Claude, else the OpenRouter tier. */
+export const leafSpec = () => MODELS[leavesOnClaude() ? LIGHT_TIER : CHEAP_TIER];
+
+// The org chart pins its specialists to CHEAP_TIER (OpenRouter). That pin means "the cheap
+// tier", so it is read through here: where Haiku is available the cheap tier is Haiku.
+const throughLeafChoice = (tier) => (tier === CHEAP_TIER && leavesOnClaude() ? LIGHT_TIER : tier);
+
 function tierForMode(agent) {
   const mode = getModelMode();
   if (mode === 'max') return DEFAULT_TIER;
   if (mode === 'eco' && canUseAlternativeModel(agent)) return ecoTier() || DEFAULT_TIER;
-  return agent.modelTier || defaultTierFor(agent);
+  const tier = agent.modelTier || defaultTierFor(agent);
+  // Only an agent with no server tool moves: web search runs inside Anthropic and is offered
+  // per model, so a searching agent keeps the main model it was already on.
+  return canUseAlternativeModel(agent) ? throughLeafChoice(tier) : tier;
 }
 
 function priced(spec) {
@@ -329,7 +372,7 @@ export function describeModelMode() {
         : 'No cheaper provider has a key, so every agent is still on Claude. Set DEEPSEEK_API_KEY (the cheapest) or OPENROUTER_API_KEY in Railway to make ECO save money.'
     );
   } else {
-    const leaves = hasSecret('OPENROUTER_API_KEY') ? priced(MODELS[CHEAP_TIER]) : `${claude}, because OPENROUTER_API_KEY is not set`;
+    const leaves = leavesOnClaude() ? priced(MODELS[LIGHT_TIER]) : hasSecret('OPENROUTER_API_KEY') ? priced(MODELS[CHEAP_TIER]) : `${claude}, because OPENROUTER_API_KEY is not set`;
     lines.push(`Specialists run on ${leaves}. Managers and agents that search the web run on ${claude}.`);
   }
   if (Object.keys(agentTierOverrides()).length) {

@@ -85,7 +85,7 @@ test('the email leads with the review, then the code-computed numbers, facts, so
   assert.match(t, /## The facts behind the numbers\n\n\[E1\]/);
   assert.match(t, /## Sources read and verified[\s\S]*- https:\/\/good\.example\.com\/a[\s\S]*- https:\/\/vibe\.example\.com\/tests/);
   assert.match(t, /Could not be read or verified[\s\S]*blocked\.example\.com\/b: HTTP 403/);
-  assert.match(t, /2 models each reviewed the company alone \(Claude, claude-sonnet-5; OpenAI, /);
+  assert.match(t, /2 models each reviewed the company alone \(Claude, claude-sonnet-5-5; OpenAI, /);
   assert.match(t, /1 pointed at nothing and were replaced with \[\?\]/);
   assert.match(t, /Cost: \$0\.\d+ for the review \(budget \$0\.75\)/);
   assert.match(sent[0].subject, /KPI health \d+%/);

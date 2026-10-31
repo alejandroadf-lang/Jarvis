@@ -23,7 +23,7 @@
 //      and a review that fires on every draft becomes a rubber stamp.
 
 import { listObjectives, describePricing, monthlyValue } from './finance/ventures.js';
-import { CHEAP_TIER, MODELS } from './agents/models.js';
+import { leafSpec, MODELS } from './agents/models.js';
 import { createMessage } from './agents/agentRunner.js';
 
 /** Whether the founder has turned the judgment layer on. */
@@ -110,7 +110,7 @@ VETO — it gives something away, promises something not on the record, misstate
 Then one sentence of reason. Veto only for those specific problems; a message that is merely plain, short or imperfect is approved. You are the last check before a real person reads this.`;
 
   try {
-    const spec = MODELS[CHEAP_TIER] || MODELS.frontier;
+    const spec = leafSpec() || MODELS.frontier;
     const response = await createMessage(anthropic, spec, {
       max_tokens: 200,
       system: 'You review outbound actions for a small company. You are terse and you do not hedge.',

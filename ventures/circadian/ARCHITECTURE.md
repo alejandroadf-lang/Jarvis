@@ -217,3 +217,12 @@ yet, on purpose.
 Signals to watch before any of these: the minute tick's duration, and the
 database size on the volume. Both are cheap to log when the first one
 matters.
+
+## Open: WHOOP access beyond a pilot
+
+Checked October 2026 (secondary sources; confirm with WHOOP before relying on it): the developer
+platform is free but needs a WHOOP device and membership, and one source says development access is
+limited to 10 members until an app is approved. Before promising a launch date or onboarding customers'
+users, ask WHOOP what approval is needed and how long it takes. This code is already on API v2, so the
+November 2025 retirement of V1 webhooks does not affect it. Webhooks cover sleep, recovery and workouts;
+cycles and body measurements are polled.
