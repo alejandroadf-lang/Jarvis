@@ -57,7 +57,7 @@ jobs:
       FORGE_API_TOKEN: ${{ secrets.FORGE_API_TOKEN }}
       FORGE_APP_ID: ${{ vars.FORGE_APP_ID }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Check Forge credentials and app id
         id: config
@@ -81,7 +81,7 @@ jobs:
           fi
           echo "::notice::$msg"
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         if: steps.config.outputs.ready == 'true'
         with:
           node-version: 22
