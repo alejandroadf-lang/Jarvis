@@ -729,6 +729,7 @@ export async function runAgent({
   // caller can offer the deeper version rather than passing off a rushed
   // answer as the considered one.
   let ranOutOfTime = false;
+  let servedBy = modelSpec;
 
   for (let round = 0; round < MAX_ROUNDS; round++) {
     // Checked between rounds rather than mid-call: a round already underway
@@ -757,6 +758,8 @@ export async function runAgent({
     );
 
     addUsage(usage, response);
+    // The model that actually answered, which differs from modelSpec when a fallback ran.
+    servedBy = response.__pricedAs || modelSpec;
 
     // What this agent searched for, taken from the response rather than from
     // its own account of itself. The hosted web_search tool reports back as a
@@ -993,5 +996,5 @@ export async function runAgent({
     usage,
   });
 
-  return { text: finalText, trace, usage, ranOutOfTime, durationMs: Date.now() - startedAt };
+  return { text: finalText, trace, usage, ranOutOfTime, durationMs: Date.now() - startedAt, model: servedBy.model, provider: servedBy.provider };
 }
