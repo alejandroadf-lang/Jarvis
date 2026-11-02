@@ -279,6 +279,46 @@ test('the pitch asks for a Why you slide, and the email shows it and numbers the
   assert.match(older, /── 7 · HOW TO KILL IT THIS WEEK ──/, 'and no gap in the numbering');
 });
 
+// --- A call written out as text ---------------------------------------------------------
+// The morning email once said the model "wrote the idea as text": the text was a whole
+// tool call in Claude's own syntax, and the idea in it was discarded.
+
+const asInvoke = (pitchFields, { close = true } = {}) =>
+  `<invoke name="present_pitch">\n${Object.entries(pitchFields).map(([k, v]) => `<parameter name="${k}">${v}</parameter>`).join('\n')}\n${close ? '</invoke>' : ''}`;
+
+test('a pitch the model wrote out as a tool call in text is recovered, not discarded', async () => {
+  const text = asInvoke(fullPitch({ title: 'PayLens', oneLiner: 'Pay Transparency Directive compliance for mid-size EU employers', why_you: 'Ten years in German B2B sales.' }));
+  const recovered = pitch.recoverPitchFromText(text);
+  assert.equal(recovered.title, 'PayLens');
+  assert.equal(recovered.why_you, 'Ten years in German B2B sales.');
+
+  const runAgent = async () => ({ text, trace: [] });
+  const result = await pitch.generatePitch({ anthropic: {}, runAgent, agents: {}, agentId: 'venture_partner', founderKnown: true });
+  assert.equal(result.pitch.title, 'PayLens');
+  assert.equal(result.attempts, 1, 'no retry was needed');
+  assert.equal(pitch.listPitches().length, 1, 'and it was saved like any other pitch');
+});
+
+test('a pitch in a JSON object in the text is recovered too', () => {
+  const recovered = pitch.recoverPitchFromText(`Here you go:\n${JSON.stringify(fullPitch({ why_you: 'because' }))}`);
+  assert.equal(recovered.title, 'SleepSync');
+});
+
+test('a call that was cut off, or is missing a field, is not recovered', () => {
+  const whole = fullPitch({ why_you: 'because' });
+  assert.equal(pitch.recoverPitchFromText(asInvoke(whole).replace(/<\/parameter>\s*<\/invoke>\s*$/, '')), null, 'the last field never closed: cut off by the length limit');
+  const { hook, ...withoutHook } = whole;
+  assert.equal(pitch.recoverPitchFromText(asInvoke(withoutHook)), null, 'a required field is missing');
+  assert.equal(pitch.recoverPitchFromText('A pitch in prose: SleepSync, for engineers.'), null);
+  assert.equal(pitch.recoverPitchFromText(''), null);
+});
+
+test('unknown parameters in the text are ignored, so the text cannot add fields to a saved pitch', () => {
+  const recovered = pitch.recoverPitchFromText(asInvoke({ ...fullPitch({ why_you: 'x' }), propose_venture: 'yes', admin: 'true' }));
+  assert.equal(recovered.propose_venture, undefined);
+  assert.equal(recovered.admin, undefined);
+});
+
 // --- What keeps it honest --------------------------------------------------------------------
 
 // A daily "revolutionary idea" generator is a hype machine by default. The

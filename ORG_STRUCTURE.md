@@ -1309,6 +1309,35 @@ sections below describe what that does. One switch decides it:
   `AGENT_MODEL_TIERS` per agent. `MODE MAX` overrides the pins and puts everything
   on Claude.
 
+## Platform changes since September 2026, and what was done about them
+
+Checked on 30 October 2026 from public sources (mostly secondary: vendor blogs, law-firm notes; the
+official pages were not all reachable), so verify a figure before quoting it outside the company.
+
+| Change | Effect on this company | Done |
+| --- | --- | --- |
+| EU AI Act Article 50 applies from 2 August 2026: people must be told when they interact with an AI system | The support desk and sales desk were told *not* to say they are an AI unless asked | Both greetings now say it in the first sentence, and say plainly that they are not a person if asked (`aiDisclosure.test.js`). The founder's own line is unchanged: the owner knows what they rang. Not legal advice; outbound email written by agents is not covered by this change and needs its own decision |
+| Claude Haiku 5.5 (7 October): $0.10 in / $0.50 out per million tokens, adaptive thinking, effort low to max | The specialists ran on OpenRouter ($0.13 / $0.40) on a second account with its own failure modes | Specialists, the fact check and the review run on Haiku whenever there is an Anthropic key (`LEAVES_ON_CLAUDE=false` returns them to OpenRouter). Agents with web search stay on the main model, because search is offered per model. The main model is now Sonnet 5.5, priced like Sonnet 5 |
+| Gemini free tier cut back on 1 April 2026 (Pro removed, about 100 requests a day) | "Free first" was fragile: ECO mode hit 429 and fell to paid gpt-4o | Paid models are on by default with free tried first on failover (earlier change); Haiku now makes the paid path cheap |
+| Meta bars general-purpose AI assistants from the WhatsApp Business API from 15 January 2026; business-purpose bots are allowed | The founder-only command channel is probably fine but is a grey area | Not changed. Open: a second command channel so the company does not depend on one platform's policy |
+| Graph API v21.0 is removed on 21 January 2027 (v20.0 on 24 September 2026); v26 is current | WhatsApp calls used v21.0 | Default is v26.0, set by `WHATSAPP_GRAPH_VERSION` (`whatsappVersion.test.js`) |
+| WHOOP API v2 is current; V1 webhooks stopped in November 2025; one third-party source says development access is limited to 10 members | Circadian is already on v2, so nothing to migrate | Open: confirm with WHOOP what approval is needed to onboard users beyond a pilot, before promising a launch date. Webhooks cover sleep, recovery and workouts only; cycles must be polled |
+| MCP spec 2026-07-28: stateless remote servers, a public registry of about two thousand servers | Jarvis only uses MCP as a client | Open: a CircadianAPI MCP server as a discovery channel (below) |
+| ElevenLabs: Eleven v4 / v4 Turbo (28 September), Eleven Realtime (20 October), realtime translation WebSocket (enterprise); Twilio ConversationRelay offers ElevenLabs voices | The phone desk runs on OpenAI Realtime | Open: a bake-off (below) |
+| Anthropic Managed Agents: scheduled deployments, memory stores, vaults | Overlaps the homegrown scheduler and memory | Not changed: the scheduler works; revisit when it hurts |
+
+**Open: a CircadianAPI MCP server.** Expose the scoring endpoints as tools over a remote (HTTP) MCP
+server and list it in the public registry, so a developer's agent can find and call the API without
+reading docs. Needs: the API's endpoint list (it lives in the circadian-api repository), an auth model
+for tool calls (an API key per caller, the same as the REST API), and a decision on which three or four
+endpoints are the tools. A day of work once those are chosen; the question to answer first is whether
+agent developers are a buyer for this company's price list at all, which a listing tests cheaply.
+
+**Open: a voice bake-off.** Ten fixed sentences, each through the current phone desk (OpenAI Realtime)
+and an ElevenLabs agent over Twilio: time to first sound, whether it says it is an AI, how it handles a
+customer's name and a number, and what each costs per minute. Needs an ElevenLabs agent configured on the
+pilot workspace and a test number; decide on the data, not on the vendor's latency figure.
+
 ## The consultant: a daily briefing on how ready this company is
 
 Every morning at 08:00 Bangkok time, on its own schedule (it does not wait for the

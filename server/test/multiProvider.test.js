@@ -70,9 +70,9 @@ test('orchestrators stay on Anthropic until the founder says otherwise', () => {
   process.env.DEEPSEEK_API_KEY = 'd';
   delete process.env.AGENT_MODEL_TIERS;
 
-  assert.equal(resolve('ceo'), 'claude-sonnet-5');
-  assert.equal(resolve('cto'), 'claude-sonnet-5');
-  assert.equal(resolve('engineering_lead'), 'claude-sonnet-5');
+  assert.equal(resolve('ceo'), 'claude-sonnet-5-5');
+  assert.equal(resolve('cto'), 'claude-sonnet-5-5');
+  assert.equal(resolve('engineering_lead'), 'claude-sonnet-5-5');
 });
 
 // The one lock that remains. web_search runs inside Anthropic's own
@@ -82,8 +82,8 @@ test('an agent with a web-search server tool cannot be moved at all', () => {
   process.env.DEEPSEEK_API_KEY = 'd';
   process.env.AGENT_MODEL_TIERS = 'solutions_architect:reasoner,seo_specialist:analyst';
 
-  assert.equal(resolve('solutions_architect'), 'claude-sonnet-5');
-  assert.equal(resolve('seo_specialist'), 'claude-sonnet-5');
+  assert.equal(resolve('solutions_architect'), 'claude-sonnet-5-5');
+  assert.equal(resolve('seo_specialist'), 'claude-sonnet-5-5');
 });
 
 test('an agent with web search stays on the frontier model', () => {
@@ -94,14 +94,14 @@ test('an agent with web search stays on the frontier model', () => {
   process.env.AGENT_MODEL_TIERS = 'seo_specialist:analyst';
   const agent = orgChart.AGENTS.seo_specialist;
   if ((agent.serverTools || []).length) {
-    assert.equal(resolve('seo_specialist'), 'claude-sonnet-5');
+    assert.equal(resolve('seo_specialist'), 'claude-sonnet-5-5');
   }
 });
 
 test('an assignment whose provider has no key falls back rather than failing', () => {
   // Setting the variable before the key is the obvious order to do it in.
   process.env.AGENT_MODEL_TIERS = 'qa_engineer:reasoner';
-  assert.equal(resolve('qa_engineer'), 'claude-sonnet-5');
+  assert.equal(resolve('qa_engineer'), 'claude-sonnet-5-5');
 });
 
 test('a malformed entry is dropped, not fatal', () => {
@@ -119,7 +119,7 @@ test('a mistyped agent id is harmless but silent — pinned so it stays known', 
   process.env.DEEPSEEK_API_KEY = 'd';
   process.env.AGENT_MODEL_TIERS = 'qa_enginer:reasoner';
   assert.deepEqual(models.agentTierOverrides(), { qa_enginer: 'reasoner' });
-  assert.equal(resolve('qa_engineer'), 'claude-sonnet-5', 'the real agent is untouched');
+  assert.equal(resolve('qa_engineer'), 'claude-sonnet-5-5', 'the real agent is untouched');
 });
 
 test('DeepSeek is priced, because a tier that looks free stops being capped', () => {

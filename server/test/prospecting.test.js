@@ -70,10 +70,11 @@ test('the agents who sell can see the internet', () => {
 test('giving them eyes moved nobody onto a more expensive model', () => {
   process.env.OPENROUTER_API_KEY = 'test-key';
   for (const id of ['sales_commercial_manager', 'cmo']) {
-    assert.equal(resolveModelForAgent(COMPANY_AGENTS[id], true).model, 'claude-sonnet-5');
+    assert.equal(resolveModelForAgent(COMPANY_AGENTS[id], true).model, 'claude-sonnet-5-5');
   }
   // And the one deliberately left without tools is still cheap.
-  assert.notEqual(resolveModelForAgent(COMPANY_AGENTS.marketing_manager, true).provider, 'anthropic');
+  // (cheap now means not the frontier model: Haiku on Claude, or OpenRouter where Claude has no key)
+  assert.notEqual(resolveModelForAgent(COMPANY_AGENTS.marketing_manager, true).model, 'claude-sonnet-5-5');
   delete process.env.OPENROUTER_API_KEY;
 });
 

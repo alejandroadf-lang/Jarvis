@@ -266,6 +266,50 @@ export function formatPitchEmail(pitch, { note = '' } = {}) {
   return { subject: `Pitch of the day: ${pitch.title}`, text };
 }
 
+// --- A call written out as text -------------------------------------------------------
+
+/**
+ * Recovers a pitch from a model that was given the tool and wrote the call out as
+ * text instead of making it, e.g.
+ *
+ *   <invoke name="present_pitch"> <parameter name="title">PayLens: ...</parameter> ...
+ *
+ * (Claude's own call syntax, seen in the morning email when some model in the chain
+ * could not make the call properly.) The idea was complete and was thrown away, so it
+ * is read back instead. Only a call that is whole is accepted: every required field
+ * present, and every <parameter> closed, because a reply cut off by the length limit
+ * ends mid-sentence and a pitch that stops in the middle of a field is worse than none.
+ * A JSON object holding the same fields is accepted too. Pure; returns null when there
+ * is nothing whole to recover.
+ */
+export function recoverPitchFromText(text) {
+  const raw = String(text || '');
+  const known = Object.keys(PITCH_TOOL.input_schema.properties);
+  const fields = {};
+
+  const opened = (raw.match(/<parameter\s+name=/g) || []).length;
+  const closed = (raw.match(/<\/parameter>/g) || []).length;
+  if (opened && opened === closed) {
+    for (const m of raw.matchAll(/<parameter\s+name=["'](\w+)["']\s*>([\s\S]*?)<\/parameter>/g)) {
+      if (known.includes(m[1])) fields[m[1]] = m[2].trim();
+    }
+  } else if (!opened) {
+    const from = raw.indexOf('{');
+    const to = raw.lastIndexOf('}');
+    if (from >= 0 && to > from) {
+      try {
+        const parsed = JSON.parse(raw.slice(from, to + 1));
+        for (const key of known) if (typeof parsed?.[key] === 'string') fields[key] = parsed[key].trim();
+      } catch {
+        // Not JSON: nothing to recover.
+      }
+    }
+  }
+
+  const missing = PITCH_TOOL.input_schema.required.filter((key) => typeof fields[key] !== 'string' || !fields[key]);
+  return missing.length ? null : fields;
+}
+
 // --- Who it is pitched to ---------------------------------------------------------------
 
 // The headings a founder would use for a note about themselves, in the vault's
@@ -416,6 +460,14 @@ export async function generatePitch({ anthropic, runAgent, agents, agentId, foun
       lastMiss = { kind: 'error', detail: String(err?.message || err) };
       console.error(`Pitch attempt ${attempt} failed:`, lastMiss.detail);
       continue;
+    }
+
+    if (!captured) {
+      const recovered = recoverPitchFromText(result?.text);
+      if (recovered) {
+        console.warn('Pitch recovered from a tool call the model wrote as text.');
+        captured = recovered;
+      }
     }
 
     if (!captured) {

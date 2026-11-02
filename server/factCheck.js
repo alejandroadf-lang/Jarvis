@@ -26,7 +26,7 @@
 
 import { fetchCitedPage } from './claimVerify.js';
 import { createMessage } from './agents/agentRunner.js';
-import { CHEAP_TIER, MODELS } from './agents/models.js';
+import { leafSpec, MODELS } from './agents/models.js';
 import { listDailyReports } from './dailyReports.js';
 import { listVentures } from './finance/ventures.js';
 
@@ -133,7 +133,7 @@ UNSUPPORTED — the page does not say this, or is about something else.
 The page being on the right topic is not support. If the claim contains a figure, that figure has to appear.`;
 
   try {
-    const spec = MODELS[CHEAP_TIER] || MODELS.frontier;
+    const spec = leafSpec() || MODELS.frontier;
     const response = await createMessage(anthropic, spec, {
       max_tokens: 200,
       system: 'You check claims against sources. You are literal and you do not give benefit of the doubt.',

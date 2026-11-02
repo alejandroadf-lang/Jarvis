@@ -50,10 +50,13 @@ export function deskGreetingLanguage() {
  * recording.
  */
 export function deskGreeting(venture) {
+  // Says it is an AI up front: callers in the EU must be told when they are dealing with an AI
+  // system (EU AI Act Article 50, applicable from 2 August 2026). This used to say not to
+  // mention it unless asked.
   return (
-    `Open the call. Say hello, give the desk's name — "${deskName(venture)}" — and ask how you can help, ` +
-    `in ${deskGreetingLanguage()}. One sentence. Do not list services, do not explain what you are, ` +
-    'and do not say you are an AI unless they ask directly, in which case say so plainly.'
+    `Open the call. Say hello, give the desk's name — "${deskName(venture)}" — say plainly that you are an automated AI assistant, ` +
+    `and ask how you can help, in ${deskGreetingLanguage()}. One sentence, with the disclosure inside it. Do not list services. ` +
+    'If they ask whether they are speaking to a person, say plainly that you are not, and offer to arrange for a human to follow up.'
   );
 }
 

@@ -419,10 +419,14 @@ export async function runSupportTool(name, args = {}, { from = '', language = ''
 // --- The brief -----------------------------------------------------------------------------
 
 export function supportGreeting({ language = '' } = {}) {
+  // The caller is told they are talking to an AI in the first sentence. Customers in the EU
+  // must be told when they interact with an AI system (EU AI Act Article 50, applicable from
+  // 2 August 2026), and it is also the sentence that stops a caller asking a machine for a favour
+  // a person would grant. This used to say the opposite, "do not say you are an AI unless they ask".
   return (
-    `Open the call. Say hello, give the desk's name — "${supportDeskName()}" — and ask what the problem is, ` +
-    `in ${supportLanguage(language)}. One sentence. Do not list what you can do, and do not say you are an AI unless they ask ` +
-    'directly, in which case say so plainly.'
+    `Open the call. Say hello, give the desk's name — "${supportDeskName()}" — say plainly that you are an automated AI assistant, ` +
+    `and ask what the problem is, in ${supportLanguage(language)}. One sentence, with the disclosure inside it. Do not list what you can do. ` +
+    'If they ask whether they are speaking to a person, say plainly that you are not, and offer to log a request for a human to call back.'
   );
 }
 

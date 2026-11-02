@@ -24,7 +24,17 @@
 
 import crypto from 'node:crypto';
 
-export const GRAPH_API = 'https://graph.facebook.com/v21.0';
+// Meta retires each Graph API version about two years after it ships: v21.0 is removed on
+// 21 January 2027, and v20.0 on 24 September 2026. The version is a variable so moving it, or
+// moving back after a surprise, is a Railway edit and not a deploy. Anything that is not
+// "v<number>.<number>" is ignored, because a typo here would send every message to a URL that does
+// not exist. v26.0 is the current version (Meta announced it on 29 July 2026).
+export function graphVersion(env = process.env) {
+  const configured = (env.WHATSAPP_GRAPH_VERSION || '').trim();
+  return /^v\d+\.\d+$/.test(configured) ? configured : 'v26.0';
+}
+
+export const GRAPH_API = `https://graph.facebook.com/${graphVersion()}`;
 
 export function isWhatsAppConfigured() {
   return Boolean(
