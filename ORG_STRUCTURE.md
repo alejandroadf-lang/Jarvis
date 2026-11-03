@@ -3949,6 +3949,8 @@ borrow. Direction about prices and repos does not count as knowing the founder: 
 there is no `## About me` and no memory, the email says "Why you" is a guess and
 how to fix it, rather than presenting a generic idea as a personal one.
 
+A pitch the model writes out as a tool call in text (Claude's `<invoke>` syntax) is recovered when the call is whole, and field spellings are normalised (`one_liner`, `oneLiner` and `one-liner` are one field: the tool asks for snake_case throughout, because its one camelCase field was the one models got "wrong"). The failure email also names the model that answered.
+
 When there is no pitch the email says why: a model that wrote the idea as text
 instead of calling the tool (it is told to call it on the second attempt, and the
 email quotes what it wrote), or a failed model call (the error is named).

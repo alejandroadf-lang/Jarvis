@@ -319,6 +319,48 @@ test('unknown parameters in the text are ignored, so the text cannot add fields 
   assert.equal(recovered.admin, undefined);
 });
 
+// The tool used to ask for "oneLiner" among nine snake_case fields, and the models wrote
+// "one_liner": a complete call was rejected for a spelling.
+
+test('the tool asks for every field in snake_case, so there is no odd one out to get wrong', () => {
+  for (const key of Object.keys(pitch.PITCH_TOOL.input_schema.properties)) assert.match(key, /^[a-z]+(_[a-z]+)*$/, key);
+  assert.ok(pitch.PITCH_TOOL.input_schema.required.includes('one_liner'));
+});
+
+test('a field spelled one_liner, oneLiner or one-liner is the same field, and is saved as oneLiner', () => {
+  for (const spelling of ['one_liner', 'oneLiner', 'one-liner', 'ONE_LINER']) {
+    const out = pitch.normalisePitch({ title: 'X', [spelling]: ' a line ' });
+    assert.equal(out.oneLiner, 'a line', spelling);
+  }
+  assert.equal(pitch.normalisePitch({ title: 'X', admin: 'true', n: 3 }).admin, undefined, 'unknown keys are dropped');
+});
+
+test('a call written as text with one_liner is recovered and saved with the name everything else reads', async () => {
+  const { oneLiner, ...rest } = fullPitch({ why_you: 'Ten years in B2B sales.' });
+  const text = asInvoke({ ...rest, one_liner: oneLiner });
+  const runAgent = async () => ({ text, trace: [] });
+  const result = await pitch.generatePitch({ anthropic: {}, runAgent, agents: {}, agentId: 'venture_partner', founderKnown: true });
+  assert.equal(result.pitch.oneLiner, oneLiner);
+  assert.equal(pitch.listPitches()[0].oneLiner, oneLiner, 'the similarity check and the history can read it');
+});
+
+test('a real tool call that used one_liner is saved the same way', async () => {
+  const { oneLiner, ...rest } = fullPitch({ why_you: 'because' });
+  const runAgent = async ({ actionHandlers }) => {
+    actionHandlers.present_pitch({ ...rest, one_liner: oneLiner });
+    return { text: '', trace: [] };
+  };
+  const result = await pitch.generatePitch({ anthropic: {}, runAgent, agents: {}, agentId: 'venture_partner', founderKnown: true });
+  assert.equal(result.pitch.oneLiner, oneLiner);
+});
+
+test('when there is still no pitch, the email says which model answered', async () => {
+  const runAgent = async () => ({ text: 'Here is an idea in prose.', trace: [], model: 'claude-sonnet-5-5', provider: 'anthropic' });
+  const result = await pitch.generatePitch({ anthropic: {}, runAgent, agents: {}, agentId: 'venture_partner' });
+  assert.equal(result.pitch, null);
+  assert.match(result.note, /\[answered by claude-sonnet-5-5, anthropic\]/);
+});
+
 // --- What keeps it honest --------------------------------------------------------------------
 
 // A daily "revolutionary idea" generator is a hype machine by default. The

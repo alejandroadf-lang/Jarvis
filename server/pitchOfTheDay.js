@@ -160,6 +160,27 @@ export function describeWhatWeAreBuilding() {
   ].join('\n');
 }
 
+// The names a saved pitch uses. The tool asks for snake_case throughout (it used to ask for
+// "oneLiner" among nine snake_case fields, and models wrote "one_liner" more often than not), but
+// everything that reads a saved pitch, the history and the similarity check among them, uses these.
+const CANONICAL = ['title', 'oneLiner', 'hook', 'problem', 'why_now', 'why_you', 'agent_native_edge', 'path_to_a_million', 'what_would_have_to_be_true', 'how_to_kill_it_this_week'];
+const squash = (key) => String(key).toLowerCase().replace(/[^a-z0-9]/g, '');
+const BY_SQUASH = new Map(CANONICAL.map((key) => [squash(key), key]));
+
+/**
+ * A pitch under the names it is saved with, whichever way the model spelled them: one_liner,
+ * oneLiner and one-liner are the same field. Unknown keys are dropped, so nothing a model (or
+ * text it wrote) adds can become part of a saved pitch. Pure.
+ */
+export function normalisePitch(input) {
+  const out = {};
+  for (const [key, value] of Object.entries(input || {})) {
+    const name = BY_SQUASH.get(squash(key));
+    if (name && typeof value === 'string' && value.trim()) out[name] = value.trim();
+  }
+  return out;
+}
+
 /**
  * The slides, as a tool schema.
  *
@@ -176,7 +197,7 @@ export const PITCH_TOOL = {
     type: 'object',
     properties: {
       title: { type: 'string', description: 'What it is called. A name, not a description.' },
-      oneLiner: { type: 'string', description: 'One sentence: what it is and who it is for.' },
+      one_liner: { type: 'string', description: 'One sentence: what it is and who it is for.' },
       hook: {
         type: 'string',
         description: 'The opening line you would actually say. The thing that makes someone look up — a number, a contradiction, a specific moment of pain.',
@@ -210,7 +231,7 @@ export const PITCH_TOOL = {
     },
     required: [
       'title',
-      'oneLiner',
+      'one_liner',
       'hook',
       'problem',
       'why_now',
@@ -284,30 +305,26 @@ export function formatPitchEmail(pitch, { note = '' } = {}) {
  */
 export function recoverPitchFromText(text) {
   const raw = String(text || '');
-  const known = Object.keys(PITCH_TOOL.input_schema.properties);
-  const fields = {};
+  let found = {};
 
   const opened = (raw.match(/<parameter\s+name=/g) || []).length;
   const closed = (raw.match(/<\/parameter>/g) || []).length;
   if (opened && opened === closed) {
-    for (const m of raw.matchAll(/<parameter\s+name=["'](\w+)["']\s*>([\s\S]*?)<\/parameter>/g)) {
-      if (known.includes(m[1])) fields[m[1]] = m[2].trim();
-    }
+    for (const m of raw.matchAll(/<parameter\s+name=["']([\w-]+)["']\s*>([\s\S]*?)<\/parameter>/g)) found[m[1]] = m[2];
   } else if (!opened) {
     const from = raw.indexOf('{');
     const to = raw.lastIndexOf('}');
     if (from >= 0 && to > from) {
       try {
-        const parsed = JSON.parse(raw.slice(from, to + 1));
-        for (const key of known) if (typeof parsed?.[key] === 'string') fields[key] = parsed[key].trim();
+        found = JSON.parse(raw.slice(from, to + 1));
       } catch {
         // Not JSON: nothing to recover.
       }
     }
   }
 
-  const missing = PITCH_TOOL.input_schema.required.filter((key) => typeof fields[key] !== 'string' || !fields[key]);
-  return missing.length ? null : fields;
+  const fields = normalisePitch(found);
+  return CANONICAL.every((key) => fields[key]) ? fields : null;
 }
 
 // --- Who it is pitched to ---------------------------------------------------------------
@@ -449,7 +466,7 @@ export async function generatePitch({ anthropic, runAgent, agents, agentId, foun
         messages: [{ role: 'user', content: kickoff(previous, describeWhatWeAreBuilding(), founder) }],
         actionHandlers: {
           present_pitch: (input) => {
-            captured = input;
+            captured = normalisePitch(input);
             return 'Noted.';
           },
         },
@@ -472,7 +489,8 @@ export async function generatePitch({ anthropic, runAgent, agents, agentId, foun
 
     if (!captured) {
       const said = String(result?.text || '').replace(/\s+/g, ' ').trim();
-      lastMiss = said ? { kind: 'prose', detail: said.slice(0, 160) } : { kind: 'empty', detail: '' };
+      const by = result?.model ? ` [answered by ${result.model}${result.provider ? `, ${result.provider}` : ''}]` : '';
+      lastMiss = said ? { kind: 'prose', detail: `${said.slice(0, 160)}${by}` } : { kind: 'empty', detail: by };
       continue;
     }
     lastMiss = null;
