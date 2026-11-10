@@ -34,8 +34,11 @@ Atlassian Community groups for your city.
 > it. In return: a 30-minute call once a month on whether what it flags
 > matches what the team feels, and permission to quote you anonymously.
 >
-> Setup is five minutes for a Jira admin. If it is useful, I would love
-> [team] to be one of the three. Could we talk for 15 minutes this week?
+> The app is not installable yet. Once the private install link exists, a
+> Jira admin installs it from that link; I will walk you through it on a
+> call and will not ask you to install anything before then. If it is
+> useful, I would love [team] to be one of the three. Could we talk for 15
+> minutes this week?
 >
 > [your name]
 
@@ -51,8 +54,9 @@ Atlassian Community groups for your city.
 
 ## Kickoff checklist (week 0)
 
-1. The Jira admin installs from the private listing link (and in Confluence,
-   if they use it).
+1. Once the private install link exists, the Jira admin installs from it
+   (and in Confluence, if they use it). Until a staging install has been
+   verified, do not send the invitation or ask anyone to install.
 2. A project admin opens Team health, sets the team time zone, quiet hours,
    weekend days and public holidays.
 3. If there is a works council: send `WORKS_COUNCIL.md` first, and switch off
